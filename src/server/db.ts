@@ -18,7 +18,10 @@ export function createDatabase(options: CreateDatabaseOptions): DatabaseHandle {
   sqlite.exec("PRAGMA journal_mode = WAL;");
   sqlite.exec("PRAGMA foreign_keys = ON;");
   migrate(sqlite);
-  if (options.seed) seedDemoData(sqlite);
+  if (options.seed) {
+    seedDemoData(sqlite);
+    seedDemoEvidence(sqlite);
+  }
   return {
     path,
     sqlite,
@@ -186,21 +189,6 @@ function seedDemoData(db: DatabaseSync): void {
     componentStmt.run(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], json(c[9]), json(c[10]));
   }
 
-  const evidenceStmt = db.prepare(`
-    INSERT INTO evidence_records
-      (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const evidenceRecords = [
-    ["ev_combat_goal", "pkg_legacy_core", "cmp_wiki_combat", "srcv_design_core_a1", "战斗目标以 3 分钟单局体验为基准。", "支撑战斗框架页面的核心设计目标。", 0.88],
-    ["ev_combat_loop", "pkg_legacy_core", "cmp_wiki_combat", "srcv_design_core_a1", "核心循环包含入场、技能、结算三个阶段。", "补充战斗流程证据。", 0.84],
-    ["ev_table_ref", "pkg_legacy_core", "cmp_index_table_ref", "srcv_tables_core_b2", "items 表作为道具字段的主引用表。", "支撑表引用索引。", 0.91],
-    ["ev_items_schema", "pkg_legacy_core", "cmp_table_items", "srcv_tables_core_b2", "item_id、quality、stack_limit 为必填字段。", "支撑道具表结构。", 0.93]
-  ] as const;
-  for (const record of evidenceRecords) {
-    evidenceStmt.run(record[0], record[1], record[2], record[3], record[4], record[5], record[6], "2026-06-10T03:30:00Z");
-  }
-
   const taskStmt = db.prepare(`
     INSERT INTO review_tasks
       (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
@@ -235,4 +223,24 @@ function seedDemoData(db: DatabaseSync): void {
 
 function json(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function seedDemoEvidence(db: DatabaseSync): void {
+  const packageRow = db.prepare("SELECT COUNT(*) AS count FROM asset_packages WHERE package_id = ?").get("pkg_legacy_core") as { count: number };
+  if (packageRow.count === 0) return;
+
+  const evidenceStmt = db.prepare(`
+    INSERT OR IGNORE INTO evidence_records
+      (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const evidenceRecords = [
+    ["ev_combat_goal", "pkg_legacy_core", "cmp_wiki_combat", "srcv_design_core_a1", "战斗目标以 3 分钟单局体验为基准。", "支撑战斗框架页面的核心设计目标。", 0.88],
+    ["ev_combat_loop", "pkg_legacy_core", "cmp_wiki_combat", "srcv_design_core_a1", "核心循环包含入场、技能、结算三个阶段。", "补充战斗流程证据。", 0.84],
+    ["ev_table_ref", "pkg_legacy_core", "cmp_index_table_ref", "srcv_tables_core_b2", "items 表作为道具字段的主引用表。", "支撑表引用索引。", 0.91],
+    ["ev_items_schema", "pkg_legacy_core", "cmp_table_items", "srcv_tables_core_b2", "item_id、quality、stack_limit 为必填字段。", "支撑道具表结构。", 0.93]
+  ] as const;
+  for (const record of evidenceRecords) {
+    evidenceStmt.run(record[0], record[1], record[2], record[3], record[4], record[5], record[6], "2026-06-10T03:30:00Z");
+  }
 }
