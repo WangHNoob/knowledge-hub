@@ -27,14 +27,56 @@ export interface UserRecord {
   displayName: string;
 }
 
-export interface SourceRecord {
-  sourceId: string;
-  sourceVersionId: string;
-  title: string;
-  sourceType: string;
-  status: string;
+export type SourceCategory = "gamedata" | "gamedocs";
+
+export interface SourceBlob {
   contentHash: string;
+  byteSize: number;
   storageUri: string;
+  firstSeenAt: string;
+}
+
+export interface SourceBundle {
+  bundleId: string;
+  name: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface SourceBundleVersion {
+  versionId: string;
+  bundleId: string;
+  parentVersionId: string | null;
+  label: string;
+  note: string;
+  createdBy: string;
+  createdAt: string;
+  fileCount: number;
+  addedCount: number;
+  modifiedCount: number;
+  removedCount: number;
+  unchangedCount: number;
+  totalBytes: number;
+}
+
+export interface SourceFileEntry {
+  versionId: string;
+  logicalPath: string;
+  category: SourceCategory;
+  contentHash: string;
+  byteSize: number;
+}
+
+export type SourceFileChange =
+  | { kind: "added"; logicalPath: string; category: SourceCategory; contentHash: string }
+  | { kind: "modified"; logicalPath: string; category: SourceCategory; contentHash: string; previousHash: string }
+  | { kind: "removed"; logicalPath: string; category: SourceCategory; previousHash: string };
+
+export interface ImportBundleResult {
+  bundle: SourceBundle;
+  version: SourceBundleVersion;
+  changes: SourceFileChange[];
+  newBlobCount: number;
 }
 
 export interface AssetPackage {

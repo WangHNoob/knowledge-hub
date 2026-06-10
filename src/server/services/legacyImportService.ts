@@ -1,8 +1,7 @@
-import { basename, extname, join, parse } from "node:path";
+import { basename, extname, parse } from "node:path";
 
-import type { AssetComponent, AssetGroup, AssetPackage, DatabaseHandle, SourceRecord } from "../types";
+import type { AssetComponent, AssetGroup, AssetPackage, DatabaseHandle } from "../types";
 import { scanLegacyKbBuilder } from "./legacyScanner";
-import { createSourceImportService } from "./sourceImportService";
 
 export interface LegacyImportResult {
   created: boolean;
@@ -11,7 +10,7 @@ export interface LegacyImportResult {
   createdComponents: number;
 }
 
-export function importLegacyAsDraftPackage(db: DatabaseHandle, dataDir: string, legacyRoot: string): LegacyImportResult {
+export function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: string, legacyRoot: string): LegacyImportResult {
   const scan = scanLegacyKbBuilder(legacyRoot);
   const existing = db.sqlite.prepare("SELECT * FROM asset_packages WHERE package_id = ?").get(scan.recommendedPackageId);
   if (existing) {
@@ -23,14 +22,8 @@ export function importLegacyAsDraftPackage(db: DatabaseHandle, dataDir: string, 
     };
   }
 
-  const importer = createSourceImportService(db, dataDir);
-  const importedSources: SourceRecord[] = [];
-  for (const rel of scan.sources.files) {
-    const source = importer.importFile(join(scan.root, ...rel.split("/")), parse(rel).name).source;
-    importedSources.push(source);
-  }
+  const legacySourcePaths = Array.from(new Set(scan.sources.files));
   const packageSlug = slug(scan.recommendedPackageId);
-  const sourceVersionIds = Array.from(new Set(importedSources.map((source) => source.sourceVersionId)));
   const now = new Date().toISOString();
   const qualitySummary = {
     overallScore: scan.warnings.length === 0 ? 0.7 : 0.55,
@@ -39,10 +32,10 @@ export function importLegacyAsDraftPackage(db: DatabaseHandle, dataDir: string, 
   };
 
   const componentInputs = [
-    ...scan.wiki.files.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "wiki", path, sourceVersionIds)),
-    ...scan.index.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "index", path, sourceVersionIds)),
-    ...scan.graph.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "graph", path, sourceVersionIds)),
-    ...scan.tables.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "table", path, sourceVersionIds))
+    ...scan.wiki.files.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "wiki", path, legacySourcePaths)),
+    ...scan.index.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "index", path, legacySourcePaths)),
+    ...scan.graph.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "graph", path, legacySourcePaths)),
+    ...scan.tables.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "table", path, legacySourcePaths))
   ];
 
   db.sqlite.exec("BEGIN");
@@ -58,7 +51,7 @@ export function importLegacyAsDraftPackage(db: DatabaseHandle, dataDir: string, 
       "draft",
       "由旧 kb-builder data 目录扫描生成的草稿资产包。",
       `run_legacy_${Date.now()}`,
-      JSON.stringify(sourceVersionIds),
+      JSON.stringify(legacySourcePaths),
       JSON.stringify(["gamedocs", "gamedata", "wiki", "wiki/_meta", "graph", "tables"]),
       JSON.stringify(qualitySummary),
       now
@@ -93,7 +86,7 @@ export function importLegacyAsDraftPackage(db: DatabaseHandle, dataDir: string, 
   return {
     created: true,
     package: mapPackage(db.sqlite.prepare("SELECT * FROM asset_packages WHERE package_id = ?").get(scan.recommendedPackageId) as unknown as PackageRow),
-    importedSources: importedSources.filter((source, index, all) => all.findIndex((s) => s.sourceVersionId === source.sourceVersionId) === index).length,
+    importedSources: legacySourcePaths.length,
     createdComponents: componentInputs.length
   };
 }

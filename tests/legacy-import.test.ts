@@ -17,7 +17,7 @@ describe("legacy import service", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "knowledge-hub-legacy-import-"));
     legacy = join(dir, "legacy-data");
-    db = createDatabase({ dataDir: dir, seed: false });
+    db = createDatabase({ dataDir: dir, seedUsers: false });
     buildLegacyFixture(legacy);
   });
 
@@ -59,7 +59,6 @@ describe("legacy import service", () => {
     expect(second.package.packageId).toBe(first.package.packageId);
     expect(service.listPackages()).toHaveLength(1);
     expect(service.listComponents({ packageId: first.package.packageId })).toHaveLength(5);
-    expect(service.listSources()).toHaveLength(2);
   });
 });
 

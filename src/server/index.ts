@@ -12,7 +12,7 @@ const jwtSecret = process.env.KH_JWT_SECRET ?? "dev-secret-change-me";
 const port = Number(process.env.PORT ?? 4174);
 const host = process.env.HOST ?? "0.0.0.0";
 
-const db = createDatabase({ dataDir, seed: true });
+const db = createDatabase({ dataDir });
 const app = await buildApp({ db, jwtSecret });
 
 const clientDist = join(root, "dist", "client");

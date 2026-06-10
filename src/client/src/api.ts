@@ -4,13 +4,64 @@ export interface LoginResponse {
 }
 
 export interface DashboardSummary {
-  sources: { total: number; active: number };
+  sources: SourceBundleDashboard;
   packages: { total: number; byStatus: Record<string, number> };
   components: { total: number; byGroup: Record<string, number> };
   review: { open: number; blocking: number; warning: number };
   release: { current: ReleaseRecord | null; total: number };
   agent: { recentQueries: number; misses: number; lowQualityHits: number };
   evidence: EvidenceCoverage;
+}
+
+export interface SourceBundleDashboard {
+  bundles: number;
+  versions: number;
+  blobs: number;
+  totalBytes: number;
+  latest: { versionId: string; label: string; createdAt: string; fileCount: number } | null;
+}
+
+export interface SourceBundle {
+  bundleId: string;
+  name: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface SourceBundleVersion {
+  versionId: string;
+  bundleId: string;
+  parentVersionId: string | null;
+  label: string;
+  note: string;
+  createdBy: string;
+  createdAt: string;
+  fileCount: number;
+  addedCount: number;
+  modifiedCount: number;
+  removedCount: number;
+  unchangedCount: number;
+  totalBytes: number;
+}
+
+export interface SourceFileEntry {
+  versionId: string;
+  logicalPath: string;
+  category: "gamedata" | "gamedocs";
+  contentHash: string;
+  byteSize: number;
+}
+
+export type SourceFileChange =
+  | { kind: "added"; logicalPath: string; category: string; contentHash: string }
+  | { kind: "modified"; logicalPath: string; category: string; contentHash: string; previousHash: string }
+  | { kind: "removed"; logicalPath: string; category: string; previousHash: string };
+
+export interface ImportBundleResult {
+  bundle: SourceBundle;
+  version: SourceBundleVersion;
+  changes: SourceFileChange[];
+  newBlobCount: number;
 }
 
 export interface AssetPackage {
@@ -34,11 +85,6 @@ export interface SourceRecord {
   status: string;
   contentHash: string;
   storageUri: string;
-}
-
-export interface SourceImportResult {
-  created: boolean;
-  source: SourceRecord;
 }
 
 export interface LegacyImportResult {
@@ -156,18 +202,39 @@ export async function getDashboard(): Promise<DashboardSummary> {
   return getJson("/api/dashboard");
 }
 
-export async function listSources(): Promise<SourceRecord[]> {
-  return (await getJson<{ sources: SourceRecord[] }>("/api/sources")).sources;
+export async function listSourceBundles(): Promise<SourceBundle[]> {
+  return (await getJson<{ bundles: SourceBundle[] }>("/api/source-bundles")).bundles;
 }
 
-export async function uploadSource(file: File, title: string): Promise<SourceImportResult> {
-  const form = new FormData();
-  form.append("file", file);
-  if (title.trim()) form.append("title", title.trim());
-  const response = await fetch("/api/sources/upload", {
+export async function listBundleVersions(bundleId: string): Promise<SourceBundleVersion[]> {
+  return (
+    await getJson<{ versions: SourceBundleVersion[] }>(
+      `/api/source-bundles/${encodeURIComponent(bundleId)}/versions`
+    )
+  ).versions;
+}
+
+export async function getBundleVersion(
+  bundleId: string,
+  versionId: string
+): Promise<{ version: SourceBundleVersion; files: SourceFileEntry[]; changes: SourceFileChange[] }> {
+  return getJson(
+    `/api/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}`
+  );
+}
+
+export async function importSourceBundle(
+  bundleId: string,
+  rootPath: string,
+  note?: string
+): Promise<ImportBundleResult> {
+  const response = await fetch(`/api/source-bundles/${encodeURIComponent(bundleId)}/versions`, {
     method: "POST",
-    headers: authHeaders(),
-    body: form
+    headers: {
+      ...authHeaders(),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ rootPath, note })
   });
   return parseResponse(response);
 }

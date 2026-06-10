@@ -9,7 +9,6 @@ import type {
   ReleaseRecord,
   ReviewSeverity,
   ReviewTask,
-  SourceRecord,
   UserRecord
 } from "../types";
 
@@ -26,7 +25,7 @@ export class KnowledgeService {
   }
 
   getDashboardSummary() {
-    const sources = this.listSources();
+    const sourceSummary = this.getSourceBundleSummary();
     const packages = this.listPackages();
     const components = this.listComponents();
     const tasks = this.listReviewTasks({});
@@ -34,10 +33,7 @@ export class KnowledgeService {
     const agentEvents = this.listAgentEvents();
 
     return {
-      sources: {
-        total: sources.length,
-        active: sources.filter((s) => s.status === "active").length
-      },
+      sources: sourceSummary,
       packages: {
         total: packages.length,
         byStatus: countBy(packages, (p) => p.status)
@@ -66,8 +62,31 @@ export class KnowledgeService {
     };
   }
 
-  listSources(): SourceRecord[] {
-    return this.db.sqlite.prepare("SELECT * FROM sources ORDER BY title").all().map((row) => mapSource(row as unknown as SourceRow));
+  getSourceBundleSummary() {
+    const bundles = this.db.sqlite.prepare("SELECT COUNT(*) AS c FROM source_bundles").get() as { c: number };
+    const versions = this.db.sqlite.prepare("SELECT COUNT(*) AS c FROM source_bundle_versions").get() as { c: number };
+    const blobs = this.db.sqlite
+      .prepare("SELECT COUNT(*) AS c, COALESCE(SUM(byte_size), 0) AS bytes FROM source_blobs")
+      .get() as { c: number; bytes: number };
+    const latest = this.db.sqlite
+      .prepare(
+        "SELECT version_id, label, created_at, file_count FROM source_bundle_versions ORDER BY created_at DESC LIMIT 1"
+      )
+      .get() as { version_id: string; label: string; created_at: string; file_count: number } | undefined;
+    return {
+      bundles: bundles.c,
+      versions: versions.c,
+      blobs: blobs.c,
+      totalBytes: blobs.bytes,
+      latest: latest
+        ? {
+            versionId: latest.version_id,
+            label: latest.label,
+            createdAt: latest.created_at,
+            fileCount: latest.file_count
+          }
+        : null
+    };
   }
 
   listPackages(): AssetPackage[] {
@@ -202,28 +221,6 @@ function mapUser(row: UserRow): UserRecord {
     passwordHash: row.password_hash,
     role: row.role,
     displayName: row.display_name
-  };
-}
-
-interface SourceRow {
-  source_id: string;
-  source_version_id: string;
-  title: string;
-  source_type: string;
-  status: string;
-  content_hash: string;
-  storage_uri: string;
-}
-
-function mapSource(row: SourceRow): SourceRecord {
-  return {
-    sourceId: row.source_id,
-    sourceVersionId: row.source_version_id,
-    title: row.title,
-    sourceType: row.source_type,
-    status: row.status,
-    contentHash: row.content_hash,
-    storageUri: row.storage_uri
   };
 }
 

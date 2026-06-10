@@ -10,7 +10,7 @@ import type { DatabaseHandle, UserRecord } from "./types";
 import { importLegacyAsDraftPackage } from "./services/legacyImportService";
 import { createKnowledgeService } from "./services/knowledgeService";
 import { scanLegacyKbBuilder } from "./services/legacyScanner";
-import { createSourceImportService } from "./services/sourceImportService";
+import { createSourceBundleService } from "./services/sourceBundleService";
 
 declare module "@fastify/jwt" {
   interface FastifyJWT {
@@ -34,11 +34,17 @@ const legacyScanSchema = z.object({
   path: z.string().min(1)
 });
 
+const importBundleSchema = z.object({
+  rootPath: z.string().min(1),
+  bundleId: z.string().min(1).optional(),
+  note: z.string().max(1024).optional()
+});
+
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const service = createKnowledgeService(options.db);
   const dataDir = options.dataDir ?? dirname(options.db.path);
-  const sourceImporter = createSourceImportService(options.db, dataDir);
+  const bundleService = createSourceBundleService(options.db, dataDir);
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -73,23 +79,57 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   }));
 
   app.get("/api/dashboard", { preHandler: app.authenticate }, async () => service.getDashboardSummary());
-  app.get("/api/sources", { preHandler: app.authenticate }, async () => ({ sources: service.listSources() }));
-  app.post("/api/sources/upload", { preHandler: app.authenticate }, async (request, reply) => {
-    const file = await request.file();
-    if (!file) return reply.code(400).send({ error: "请选择要导入的资料文件。" });
-    const chunks: Buffer[] = [];
-    for await (const chunk of file.file) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+
+  // 资料集（source bundle）
+  app.get("/api/source-bundles", { preHandler: app.authenticate }, async () => ({
+    bundles: bundleService.listBundles()
+  }));
+
+  app.get<{ Params: { bundleId: string } }>(
+    "/api/source-bundles/:bundleId/versions",
+    { preHandler: app.authenticate },
+    async (request) => ({ versions: bundleService.listVersions(request.params.bundleId) })
+  );
+
+  app.get<{ Params: { bundleId: string; versionId: string } }>(
+    "/api/source-bundles/:bundleId/versions/:versionId",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const version = bundleService.getVersion(request.params.versionId);
+      if (!version || version.bundleId !== request.params.bundleId) {
+        return reply.code(404).send({ error: "未找到该资料版本。" });
+      }
+      return {
+        version,
+        files: bundleService.listFiles(version.versionId),
+        changes: bundleService.diff(version.versionId)
+      };
     }
-    const fields = file.fields as Record<string, { value?: unknown }>;
-    const title = typeof fields.title?.value === "string" ? fields.title.value : undefined;
-    const result = sourceImporter.importBuffer({
-      filename: file.filename,
-      content: Buffer.concat(chunks),
-      title
-    });
-    return result;
-  });
+  );
+
+  app.post<{ Params: { bundleId: string } }>(
+    "/api/source-bundles/:bundleId/versions",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const parsed = importBundleSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "请提供 rootPath。" });
+      }
+      try {
+        const result = bundleService.importDirectoryAsVersion({
+          rootPath: parsed.data.rootPath,
+          bundleId: parsed.data.bundleId ?? request.params.bundleId,
+          note: parsed.data.note,
+          createdBy: request.user.username
+        });
+        return result;
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "导入失败。" });
+      }
+    }
+  );
+
+  // 资产包 / 审核 / 证据 / 发布 / Agent 反馈（沿用）
   app.get("/api/packages", { preHandler: app.authenticate }, async () => ({ packages: service.listPackages() }));
   app.get<{ Params: { packageId: string } }>(
     "/api/packages/:packageId",

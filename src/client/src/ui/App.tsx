@@ -14,20 +14,23 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  getBundleVersion,
   getDashboard,
   getPackage,
   getToken,
   importLegacy,
+  importSourceBundle,
   listAgentEvents,
+  listBundleVersions,
   listPackages,
   listReleases,
   listReviewTasks,
-  listSources,
   login,
   scanLegacy,
   setToken,
-  uploadSource,
-  type AssetPackage
+  type AssetPackage,
+  type SourceBundleVersion,
+  type SourceFileChange
 } from "../api";
 
 type View = "dashboard" | "sources" | "assets" | "review" | "release" | "agent" | "maintenance";
@@ -158,7 +161,7 @@ function Dashboard() {
   return (
     <Page title="知识库进化飞轮" subtitle="从资料进入到 Agent 反馈，所有资产都保留来源、版本、质量与追溯。">
       <div className="metrics">
-        <Metric label="资料库" value={data.sources.total} hint={`${data.sources.active} 份 active`} />
+        <Metric label="资料版本" value={data.sources.versions} hint={data.sources.latest ? `最新 ${data.sources.latest.label}` : "尚未导入"} />
         <Metric label="知识资产包" value={data.packages.total} hint={formatCounts(data.packages.byStatus)} />
         <Metric label="待修问题" value={data.review.open} hint={`${data.review.blocking} 个阻断`} tone={data.review.blocking > 0 ? "hot" : "ok"} />
         <Metric label="Agent 查询" value={data.agent.recentQueries} hint={`${data.agent.misses} 次未命中`} tone={data.agent.misses > 0 ? "warn" : "ok"} />
@@ -189,58 +192,160 @@ function Dashboard() {
 }
 
 function Sources() {
-  const [file, setFile] = useState<File | null>(null);
-  const [title, setTitle] = useState("");
-  const [message, setMessage] = useState("");
   const queryClient = useQueryClient();
-  const sources = useQuery({ queryKey: ["sources"], queryFn: listSources });
+  const bundleId = "default";
+  const [rootPath, setRootPath] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string>("");
+  const [error, setError] = useState<string>("");
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+
+  const versions = useQuery({
+    queryKey: ["bundle-versions", bundleId],
+    queryFn: () => listBundleVersions(bundleId)
+  });
+  const detail = useQuery({
+    queryKey: ["bundle-version", bundleId, selectedVersion],
+    queryFn: () => getBundleVersion(bundleId, selectedVersion!),
+    enabled: Boolean(selectedVersion)
+  });
 
   return (
-    <Page title="资料库" subtitle="原始资料保持不可变，后续知识资产都应能追溯回这里。">
+    <Page
+      title="资料库"
+      subtitle="批量导入 gamedata/ 与 gamedocs/，按内容哈希去重并按时间生成版本。"
+    >
       <section className="upload-box">
         <div>
-          <h2>导入资料</h2>
-          <p>文件会按内容哈希写入 storage，并生成不可变 source version。</p>
+          <h2>批量导入新版本</h2>
+          <p>
+            指向服务器上一个包含 <code>gamedata/</code> 与 <code>gamedocs/</code> 的目录；
+            未变化的文件会自动复用已有 blob，仅记录清单引用。
+          </p>
         </div>
         <div className="upload-form">
-          <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
-          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="资料标题（可选）" />
+          <input
+            value={rootPath}
+            onChange={(event) => setRootPath(event.target.value)}
+            placeholder="例：D:/raw/2026-06-10"
+            style={{ minWidth: 320 }}
+          />
+          <input
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="备注（可选）"
+          />
           <button
-            disabled={!file}
+            disabled={!rootPath.trim() || busy}
             onClick={async () => {
-              if (!file) return;
-              const result = await uploadSource(file, title);
-              setMessage(result.created ? `已导入 ${result.source.title}` : `已存在 ${result.source.title}`);
-              setFile(null);
-              setTitle("");
-              await queryClient.invalidateQueries({ queryKey: ["sources"] });
-              await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+              setBusy(true);
+              setMessage("");
+              setError("");
+              try {
+                const result = await importSourceBundle(bundleId, rootPath.trim(), note.trim() || undefined);
+                setMessage(
+                  `已生成版本 ${result.version.label}：新增 ${result.version.addedCount}，修改 ${result.version.modifiedCount}，删除 ${result.version.removedCount}，未变 ${result.version.unchangedCount}（新增 blob ${result.newBlobCount}）。`
+                );
+                setSelectedVersion(result.version.versionId);
+                setNote("");
+                await queryClient.invalidateQueries({ queryKey: ["bundle-versions", bundleId] });
+                await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "导入失败。");
+              } finally {
+                setBusy(false);
+              }
             }}
           >
-            导入资料
+            {busy ? "导入中..." : "导入新版本"}
           </button>
         </div>
         {message && <p className="notice">{message}</p>}
+        {error && <p className="error">{error}</p>}
       </section>
-      <div className="source-list">
-        {(sources.data ?? []).map((source) => (
-          <article className="source-row" key={source.sourceVersionId}>
-            <div>
-              <strong>{source.title}</strong>
-              <span>{source.sourceType} · {source.storageUri}</span>
-            </div>
-            <code>{source.sourceVersionId}</code>
-          </article>
-        ))}
+
+      <div className="package-grid">
+        <section className="package-list">
+          <h3 style={{ margin: "0 0 8px" }}>历史版本</h3>
+          {(versions.data ?? []).length === 0 && <p>尚未导入任何版本。</p>}
+          {(versions.data ?? []).map((version: SourceBundleVersion) => (
+            <button
+              key={version.versionId}
+              className={selectedVersion === version.versionId ? "package-row selected" : "package-row"}
+              onClick={() => setSelectedVersion(version.versionId)}
+            >
+              <strong>{version.label}</strong>
+              <span>
+                文件 {version.fileCount}　+{version.addedCount}　~{version.modifiedCount}　-{version.removedCount}
+              </span>
+              <small>{version.versionId}</small>
+            </button>
+          ))}
+        </section>
+        <section className="package-detail">
+          {detail.data ? (
+            <>
+              <div className="detail-head">
+                <div>
+                  <h2>{detail.data.version.label}</h2>
+                  <p>
+                    {detail.data.version.note || "无备注"}
+                    　·　创建于 {detail.data.version.createdAt}
+                    　·　共 {detail.data.version.fileCount} 个文件，{(detail.data.version.totalBytes / 1024).toFixed(1)} KiB
+                  </p>
+                </div>
+                <Badge label={detail.data.version.parentVersionId ? "增量版本" : "首版"} />
+              </div>
+              <div className="evidence-panel">
+                <Metric label="新增" value={detail.data.version.addedCount} hint="本版相对上一版" />
+                <Metric label="修改" value={detail.data.version.modifiedCount} hint="内容哈希变化" />
+                <Metric label="删除" value={detail.data.version.removedCount} hint="本版不再包含" />
+                <Metric label="未变" value={detail.data.version.unchangedCount} hint="复用 blob" />
+              </div>
+              <h3>变更明细</h3>
+              {detail.data.changes.length === 0 ? (
+                <p>与上一版相比无变更。</p>
+              ) : (
+                <div className="source-list">
+                  {detail.data.changes.map((change: SourceFileChange) => (
+                    <article className="source-row" key={`${change.kind}:${change.logicalPath}`}>
+                      <div>
+                        <strong>{kindLabel(change.kind)} · {change.logicalPath}</strong>
+                        <span>{change.category}</span>
+                      </div>
+                      <code>{"contentHash" in change ? change.contentHash.slice(7, 19) : change.previousHash.slice(7, 19)}</code>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : selectedVersion ? (
+            <Loading title="读取版本详情" />
+          ) : (
+            <p>选择左侧版本查看变更详情。</p>
+          )}
+        </section>
       </div>
     </Page>
   );
 }
 
+function kindLabel(kind: SourceFileChange["kind"]): string {
+  if (kind === "added") return "新增";
+  if (kind === "modified") return "修改";
+  return "删除";
+}
+
 function Assets() {
-  const [selected, setSelected] = useState("pkg_legacy_core");
+  const [selected, setSelected] = useState<string>("");
   const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
-  const detail = useQuery({ queryKey: ["package", selected], queryFn: () => getPackage(selected), enabled: Boolean(selected) });
+  const effectiveSelected = selected || packages.data?.[0]?.packageId || "";
+  const detail = useQuery({
+    queryKey: ["package", effectiveSelected],
+    queryFn: () => getPackage(effectiveSelected),
+    enabled: Boolean(effectiveSelected)
+  });
   const byGroup = useMemo(() => groupBy(detail.data?.components ?? [], (component) => component.group), [detail.data]);
   const evidenceByComponent = useMemo(() => groupBy(detail.data?.evidenceRecords ?? [], (record) => record.componentId), [detail.data]);
 
@@ -251,7 +356,7 @@ function Assets() {
           {(packages.data ?? []).map((pkg: AssetPackage) => (
             <button
               key={pkg.packageId}
-              className={selected === pkg.packageId ? "package-row selected" : "package-row"}
+              className={effectiveSelected === pkg.packageId ? "package-row selected" : "package-row"}
               onClick={() => setSelected(pkg.packageId)}
             >
               <strong>{pkg.name}</strong>
