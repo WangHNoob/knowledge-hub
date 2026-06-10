@@ -40,6 +40,14 @@ export interface SourceImportResult {
   source: SourceRecord;
 }
 
+export interface LegacyImportResult {
+  created: boolean;
+  package: AssetPackage;
+  importedSources: number;
+  createdComponents: number;
+  detail: PackageDetail;
+}
+
 export interface AssetComponent {
   componentId: string;
   packageId: string;
@@ -165,6 +173,18 @@ export async function listAgentEvents(): Promise<AgentEvent[]> {
 
 export async function scanLegacy(path: string): Promise<LegacyScanSummary> {
   const response = await fetch("/api/legacy/scan", {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ path })
+  });
+  return parseResponse(response);
+}
+
+export async function importLegacy(path: string): Promise<LegacyImportResult> {
+  const response = await fetch("/api/legacy/import", {
     method: "POST",
     headers: {
       ...authHeaders(),

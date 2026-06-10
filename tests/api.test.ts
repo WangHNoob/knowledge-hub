@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -69,6 +69,45 @@ describe("knowledge hub api", () => {
     });
     expect(review.statusCode).toBe(200);
     expect(review.json().tasks).toHaveLength(2);
+
+    await app.close();
+  });
+
+  it("imports a legacy directory into a draft package through the api", async () => {
+    const db = createDatabase({ dataDir: dir, seed: true });
+    const legacy = join(dir, "legacy-api");
+    mkdirSync(join(legacy, "gamedocs"), { recursive: true });
+    mkdirSync(join(legacy, "wiki", "systems"), { recursive: true });
+    mkdirSync(join(legacy, "wiki", "_meta"), { recursive: true });
+    writeFileSync(join(legacy, "gamedocs", "equipment.docx"), "equipment source");
+    writeFileSync(join(legacy, "wiki", "systems", "equipment.md"), "# Equipment");
+    writeFileSync(join(legacy, "wiki", "_meta", "topic_index.json"), "{}");
+
+    const app = await buildApp({ db, jwtSecret: "test-secret" });
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "admin", password: "adminpw" }
+    });
+    const token = login.json<{ token: string }>().token;
+
+    const imported = await app.inject({
+      method: "POST",
+      url: "/api/legacy/import",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { path: legacy }
+    });
+
+    expect(imported.statusCode).toBe(200);
+    expect(imported.json().package.status).toBe("draft");
+    expect(imported.json().createdComponents).toBe(2);
+
+    const packages = await app.inject({
+      method: "GET",
+      url: "/api/packages",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(packages.json().packages.some((pkg: { packageId: string }) => pkg.packageId === imported.json().package.packageId)).toBe(true);
 
     await app.close();
   });

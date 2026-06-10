@@ -53,6 +53,7 @@ Internal identifiers remain visible for administrators and lead developers:
 - Login with seeded users.
 - Source upload with content hash, immutable storage and idempotent source versions.
 - Legacy `kb-builder` directory scan preview for source, Wiki, Index, Graph and Table assets.
+- Legacy scan-to-package import that keeps original files untouched and creates a draft asset package.
 - Dashboard for the knowledge evolution flywheel.
 - Asset package browser with Wiki / Index / Graph / Table grouping.
 - Blocking review task view.
@@ -62,8 +63,7 @@ Internal identifiers remain visible for administrators and lead developers:
 
 ## Next Milestones
 
-1. Legacy scan-to-package import.
-2. Evidence records and evidence coverage views.
-3. Package publish workflow with immutable manifest hash.
-4. Standard MCP server and expanded `kb_*` tools.
-5. Multi-user management screens for admin accounts.
+1. Evidence records and evidence coverage views.
+2. Package publish workflow with immutable manifest hash.
+3. Standard MCP server and expanded `kb_*` tools.
+4. Multi-user management screens for admin accounts.

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, extname, join, parse } from "node:path";
 
 import type { DatabaseHandle, SourceRecord } from "../types";
@@ -24,6 +24,14 @@ export class SourceImportService {
     private readonly db: DatabaseHandle,
     private readonly dataDir: string
   ) {}
+
+  importFile(path: string, title?: string): SourceImportResult {
+    return this.importBuffer({
+      filename: basename(path),
+      content: readFileSync(path),
+      title
+    });
+  }
 
   importBuffer(input: SourceImportInput): SourceImportResult {
     const cleanName = basename(input.filename || "source.bin");

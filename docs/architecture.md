@@ -26,7 +26,7 @@ The first version keeps the stack small. The important boundary is that UI route
 - `agent_events`: feedback from Agent reads, misses and quality flags.
 - `users`: local account store for small-team access.
 
-## Legacy Preview
+## Legacy Preview And Import
 
 `scanLegacyKbBuilder()` inspects a legacy `kb-builder data/` directory without mutating it. It reports:
 
@@ -36,7 +36,7 @@ The first version keeps the stack small. The important boundary is that UI route
 - graph snapshots under `graph/`
 - table/schema assets under `tables/` and `wiki/tables/`
 
-The scan result is a preview for administrators. A later import step will convert the preview into a first-class asset package.
+The scan result is a preview for administrators and lead developers. `importLegacyAsDraftPackage()` can then convert the same directory into a draft `asset_package` while leaving the original knowledge base assets untouched. The package contains grouped components for Wiki pages, index files, graph snapshots and table/schema files, plus source references imported from `gamedocs/` and `gamedata/`.
 
 ## Product Flow
 

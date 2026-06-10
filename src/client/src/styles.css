@@ -232,6 +232,32 @@ nav {
   gap: 16px;
 }
 
+.detail-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.primary-action {
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--ink);
+  color: #fffdf6;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.primary-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .badge {
   border: 1px solid var(--line);
   border-radius: 999px;

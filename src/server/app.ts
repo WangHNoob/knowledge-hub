@@ -7,6 +7,7 @@ import { z } from "zod";
 import { dirname } from "node:path";
 
 import type { DatabaseHandle, UserRecord } from "./types";
+import { importLegacyAsDraftPackage } from "./services/legacyImportService";
 import { createKnowledgeService } from "./services/knowledgeService";
 import { scanLegacyKbBuilder } from "./services/legacyScanner";
 import { createSourceImportService } from "./services/sourceImportService";
@@ -36,7 +37,8 @@ const legacyScanSchema = z.object({
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const service = createKnowledgeService(options.db);
-  const sourceImporter = createSourceImportService(options.db, options.dataDir ?? dirname(options.db.path));
+  const dataDir = options.dataDir ?? dirname(options.db.path);
+  const sourceImporter = createSourceImportService(options.db, dataDir);
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -119,6 +121,19 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       return scanLegacyKbBuilder(parsed.data.path);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : "扫描失败。" });
+    }
+  });
+  app.post("/api/legacy/import", { preHandler: app.authenticate }, async (request, reply) => {
+    const parsed = legacyScanSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "请提供旧知识库 data 目录路径。" });
+    try {
+      const result = importLegacyAsDraftPackage(options.db, dataDir, parsed.data.path);
+      return {
+        ...result,
+        detail: service.getPackageDetail(result.package.packageId)
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "导入失败。" });
     }
   });
 

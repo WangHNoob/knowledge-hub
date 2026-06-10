@@ -7,6 +7,7 @@ import {
   Database,
   GitBranch,
   LogOut,
+  PackagePlus,
   SearchCheck
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -16,6 +17,7 @@ import {
   getDashboard,
   getPackage,
   getToken,
+  importLegacy,
   listAgentEvents,
   listPackages,
   listReleases,
@@ -358,7 +360,10 @@ function Maintenance() {
   const [path, setPath] = useState("D:/projects/knowledge/data");
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof scanLegacy>> | null>(null);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const queryClient = useQueryClient();
 
   return (
     <Page title="高级维护" subtitle="给管理员和主开发者查看底层 ID、迁移、审计和调试入口。">
@@ -373,6 +378,7 @@ function Maintenance() {
             onClick={async () => {
               setLoading(true);
               setError("");
+              setMessage("");
               try {
                 setSummary(await scanLegacy(path));
               } catch (err) {
@@ -386,6 +392,7 @@ function Maintenance() {
           </button>
         </div>
         {error && <p className="error">{error}</p>}
+        {message && <p className="notice">{message}</p>}
       </section>
       {summary && (
         <section className="legacy-summary">
@@ -394,7 +401,38 @@ function Maintenance() {
               <h2>{summary.recommendedPackageId}</h2>
               <p>{summary.root}</p>
             </div>
-            <Badge label={`${summary.warnings.length} warnings`} tone={summary.warnings.length ? "warn" : "ok"} />
+            <div className="detail-actions">
+              <Badge label={`${summary.warnings.length} warnings`} tone={summary.warnings.length ? "warn" : "ok"} />
+              <button
+                className="primary-action"
+                disabled={importing}
+                onClick={async () => {
+                  setImporting(true);
+                  setError("");
+                  setMessage("");
+                  try {
+                    const result = await importLegacy(summary.root);
+                    setMessage(
+                      result.created
+                        ? `已生成草稿资产包：${result.package.name}，包含 ${result.createdComponents} 个资产组件、${result.importedSources} 份资料。`
+                        : `草稿资产包已存在：${result.package.name}`
+                    );
+                    await Promise.all([
+                      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+                      queryClient.invalidateQueries({ queryKey: ["packages"] }),
+                      queryClient.invalidateQueries({ queryKey: ["sources"] })
+                    ]);
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  } finally {
+                    setImporting(false);
+                  }
+                }}
+              >
+                <PackagePlus size={16} />
+                {importing ? "生成中..." : "生成草稿资产包"}
+              </button>
+            </div>
           </div>
           <div className="metrics compact">
             <Metric label="资料" value={summary.sources.total} hint="gamedocs / gamedata" />
