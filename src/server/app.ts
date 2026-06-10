@@ -1,11 +1,14 @@
 import cors from "@fastify/cors";
 import jwt from "@fastify/jwt";
+import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { dirname } from "node:path";
 
 import type { DatabaseHandle, UserRecord } from "./types";
 import { createKnowledgeService } from "./services/knowledgeService";
+import { createSourceImportService } from "./services/sourceImportService";
 
 declare module "@fastify/jwt" {
   interface FastifyJWT {
@@ -17,6 +20,7 @@ declare module "@fastify/jwt" {
 export interface BuildAppOptions {
   db: DatabaseHandle;
   jwtSecret: string;
+  dataDir?: string;
 }
 
 const loginSchema = z.object({
@@ -27,9 +31,11 @@ const loginSchema = z.object({
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const service = createKnowledgeService(options.db);
+  const sourceImporter = createSourceImportService(options.db, options.dataDir ?? dirname(options.db.path));
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
+  await app.register(multipart);
   app.decorate("authenticate", async (request: FastifyRequest) => {
     await request.jwtVerify();
   });
@@ -61,6 +67,22 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.get("/api/dashboard", { preHandler: app.authenticate }, async () => service.getDashboardSummary());
   app.get("/api/sources", { preHandler: app.authenticate }, async () => ({ sources: service.listSources() }));
+  app.post("/api/sources/upload", { preHandler: app.authenticate }, async (request, reply) => {
+    const file = await request.file();
+    if (!file) return reply.code(400).send({ error: "请选择要导入的资料文件。" });
+    const chunks: Buffer[] = [];
+    for await (const chunk of file.file) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const fields = file.fields as Record<string, { value?: unknown }>;
+    const title = typeof fields.title?.value === "string" ? fields.title.value : undefined;
+    const result = sourceImporter.importBuffer({
+      filename: file.filename,
+      content: Buffer.concat(chunks),
+      title
+    });
+    return result;
+  });
   app.get("/api/packages", { preHandler: app.authenticate }, async () => ({ packages: service.listPackages() }));
   app.get<{ Params: { packageId: string } }>(
     "/api/packages/:packageId",

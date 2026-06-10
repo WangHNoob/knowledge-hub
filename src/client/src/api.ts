@@ -25,6 +25,21 @@ export interface AssetPackage {
   createdAt: string;
 }
 
+export interface SourceRecord {
+  sourceId: string;
+  sourceVersionId: string;
+  title: string;
+  sourceType: string;
+  status: string;
+  contentHash: string;
+  storageUri: string;
+}
+
+export interface SourceImportResult {
+  created: boolean;
+  source: SourceRecord;
+}
+
 export interface AssetComponent {
   componentId: string;
   packageId: string;
@@ -98,6 +113,22 @@ export async function login(username: string, password: string): Promise<LoginRe
 
 export async function getDashboard(): Promise<DashboardSummary> {
   return getJson("/api/dashboard");
+}
+
+export async function listSources(): Promise<SourceRecord[]> {
+  return (await getJson<{ sources: SourceRecord[] }>("/api/sources")).sources;
+}
+
+export async function uploadSource(file: File, title: string): Promise<SourceImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  if (title.trim()) form.append("title", title.trim());
+  const response = await fetch("/api/sources/upload", {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
+  });
+  return parseResponse(response);
 }
 
 export async function listPackages(): Promise<AssetPackage[]> {

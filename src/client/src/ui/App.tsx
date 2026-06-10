@@ -20,8 +20,10 @@ import {
   listPackages,
   listReleases,
   listReviewTasks,
+  listSources,
   login,
   setToken,
+  uploadSource,
   type AssetPackage
 } from "../api";
 
@@ -183,9 +185,50 @@ function Dashboard() {
 }
 
 function Sources() {
+  const [file, setFile] = useState<File | null>(null);
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const queryClient = useQueryClient();
+  const sources = useQuery({ queryKey: ["sources"], queryFn: listSources });
+
   return (
     <Page title="资料库" subtitle="原始资料保持不可变，后续知识资产都应能追溯回这里。">
-      <EmptyWork title="资料导入 MVP" body="第一版已建立数据库模型和 API 骨架；后续接入上传、旧 kb-builder 扫描和内容哈希。" />
+      <section className="upload-box">
+        <div>
+          <h2>导入资料</h2>
+          <p>文件会按内容哈希写入 storage，并生成不可变 source version。</p>
+        </div>
+        <div className="upload-form">
+          <input type="file" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="资料标题（可选）" />
+          <button
+            disabled={!file}
+            onClick={async () => {
+              if (!file) return;
+              const result = await uploadSource(file, title);
+              setMessage(result.created ? `已导入 ${result.source.title}` : `已存在 ${result.source.title}`);
+              setFile(null);
+              setTitle("");
+              await queryClient.invalidateQueries({ queryKey: ["sources"] });
+              await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+            }}
+          >
+            导入资料
+          </button>
+        </div>
+        {message && <p className="notice">{message}</p>}
+      </section>
+      <div className="source-list">
+        {(sources.data ?? []).map((source) => (
+          <article className="source-row" key={source.sourceVersionId}>
+            <div>
+              <strong>{source.title}</strong>
+              <span>{source.sourceType} · {source.storageUri}</span>
+            </div>
+            <code>{source.sourceVersionId}</code>
+          </article>
+        ))}
+      </div>
     </Page>
   );
 }

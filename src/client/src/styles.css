@@ -153,6 +153,8 @@ nav {
 .package-list,
 .package-detail,
 .empty,
+.upload-box,
+.source-row,
 .task,
 .event,
 .table-row {
@@ -293,17 +295,65 @@ small {
 .asset-list,
 .task-list,
 .event-list,
-.table {
+.table,
+.source-list {
   display: grid;
   gap: 10px;
 }
 
 .asset-item,
+.source-row,
 .task,
 .event,
 .table-row {
   border-radius: 6px;
   padding: 14px;
+}
+
+.upload-box {
+  border-radius: 8px;
+  padding: 18px;
+  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(320px, 1.5fr);
+  gap: 18px;
+}
+
+.upload-box h2 {
+  margin: 0 0 6px;
+}
+
+.upload-form {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.upload-form button {
+  border: 0;
+  border-radius: 6px;
+  padding: 12px 14px;
+  background: var(--ink);
+  color: #fffdf6;
+  cursor: pointer;
+}
+
+.upload-form button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.notice {
+  margin: 0;
+  color: var(--olive);
+}
+
+.source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .login-screen {

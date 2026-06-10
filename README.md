@@ -51,6 +51,7 @@ Internal identifiers remain visible for administrators and lead developers:
 ## Current MVP
 
 - Login with seeded users.
+- Source upload with content hash, immutable storage and idempotent source versions.
 - Dashboard for the knowledge evolution flywheel.
 - Asset package browser with Wiki / Index / Graph / Table grouping.
 - Blocking review task view.
@@ -60,8 +61,8 @@ Internal identifiers remain visible for administrators and lead developers:
 
 ## Next Milestones
 
-1. File upload and content-hash source import.
-2. Legacy `kb-builder` directory scanner.
-3. Evidence records and evidence coverage views.
-4. Package publish workflow with immutable manifest hash.
-5. Standard MCP server and expanded `kb_*` tools.
+1. Legacy `kb-builder` directory scanner.
+2. Evidence records and evidence coverage views.
+3. Package publish workflow with immutable manifest hash.
+4. Standard MCP server and expanded `kb_*` tools.
+5. Multi-user management screens for admin accounts.
