@@ -91,6 +91,17 @@ export interface AgentEvent {
   createdAt: string;
 }
 
+export interface LegacyScanSummary {
+  root: string;
+  recommendedPackageId: string;
+  sources: { total: number; files: string[] };
+  wiki: { pages: number; files: string[] };
+  index: { files: number; paths: string[] };
+  graph: { files: number; paths: string[] };
+  tables: { files: number; paths: string[] };
+  warnings: string[];
+}
+
 const TOKEN_KEY = "kh_token";
 
 export function getToken(): string | null {
@@ -150,6 +161,18 @@ export async function listReleases(): Promise<ReleaseRecord[]> {
 
 export async function listAgentEvents(): Promise<AgentEvent[]> {
   return (await getJson<{ events: AgentEvent[] }>("/api/agent/events")).events;
+}
+
+export async function scanLegacy(path: string): Promise<LegacyScanSummary> {
+  const response = await fetch("/api/legacy/scan", {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ path })
+  });
+  return parseResponse(response);
 }
 
 async function getJson<T>(url: string): Promise<T> {

@@ -22,6 +22,7 @@ import {
   listReviewTasks,
   listSources,
   login,
+  scanLegacy,
   setToken,
   uploadSource,
   type AssetPackage
@@ -354,9 +355,61 @@ function AgentFeedback() {
 }
 
 function Maintenance() {
+  const [path, setPath] = useState("D:/projects/knowledge/data");
+  const [summary, setSummary] = useState<Awaited<ReturnType<typeof scanLegacy>> | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
   return (
     <Page title="高级维护" subtitle="给管理员和主开发者查看底层 ID、迁移、审计和调试入口。">
-      <EmptyWork title="下一步" body="这里会承载 Legacy 扫描、MCP 标准服务、证据定位和数据迁移工具。" />
+      <section className="upload-box">
+        <div>
+          <h2>旧知识库扫描预览</h2>
+          <p>先扫描旧 kb-builder data 目录，只生成摘要，不导入、不改动文件。</p>
+        </div>
+        <div className="upload-form legacy">
+          <input value={path} onChange={(event) => setPath(event.target.value)} />
+          <button
+            onClick={async () => {
+              setLoading(true);
+              setError("");
+              try {
+                setSummary(await scanLegacy(path));
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            {loading ? "扫描中..." : "扫描目录"}
+          </button>
+        </div>
+        {error && <p className="error">{error}</p>}
+      </section>
+      {summary && (
+        <section className="legacy-summary">
+          <div className="detail-head">
+            <div>
+              <h2>{summary.recommendedPackageId}</h2>
+              <p>{summary.root}</p>
+            </div>
+            <Badge label={`${summary.warnings.length} warnings`} tone={summary.warnings.length ? "warn" : "ok"} />
+          </div>
+          <div className="metrics compact">
+            <Metric label="资料" value={summary.sources.total} hint="gamedocs / gamedata" />
+            <Metric label="Wiki" value={summary.wiki.pages} hint="wiki/**/*.md" />
+            <Metric label="Index" value={summary.index.files} hint="wiki/_meta" />
+            <Metric label="Graph" value={summary.graph.files} hint="graph snapshots" />
+            <Metric label="Table" value={summary.tables.files} hint="schemas / table docs" />
+          </div>
+          {summary.warnings.length > 0 && (
+            <div className="warning-list">
+              {summary.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+            </div>
+          )}
+        </section>
+      )}
     </Page>
   );
 }

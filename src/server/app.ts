@@ -8,6 +8,7 @@ import { dirname } from "node:path";
 
 import type { DatabaseHandle, UserRecord } from "./types";
 import { createKnowledgeService } from "./services/knowledgeService";
+import { scanLegacyKbBuilder } from "./services/legacyScanner";
 import { createSourceImportService } from "./services/sourceImportService";
 
 declare module "@fastify/jwt" {
@@ -26,6 +27,10 @@ export interface BuildAppOptions {
 const loginSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1)
+});
+
+const legacyScanSchema = z.object({
+  path: z.string().min(1)
 });
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -107,6 +112,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   );
   app.get("/api/releases", { preHandler: app.authenticate }, async () => ({ releases: service.listReleases() }));
   app.get("/api/agent/events", { preHandler: app.authenticate }, async () => ({ events: service.listAgentEvents() }));
+  app.post("/api/legacy/scan", { preHandler: app.authenticate }, async (request, reply) => {
+    const parsed = legacyScanSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "请提供旧知识库 data 目录路径。" });
+    try {
+      return scanLegacyKbBuilder(parsed.data.path);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "扫描失败。" });
+    }
+  });
 
   app.addHook("onClose", async () => {
     options.db.close();

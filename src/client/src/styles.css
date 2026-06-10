@@ -330,6 +330,10 @@ small {
   align-items: end;
 }
 
+.upload-form.legacy {
+  grid-template-columns: 1fr auto;
+}
+
 .upload-form button {
   border: 0;
   border-radius: 6px;
@@ -354,6 +358,33 @@ small {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.legacy-summary {
+  background: rgba(255, 253, 246, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.metrics.compact {
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  margin-top: 14px;
+}
+
+.warning-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.warning-list p {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f5e5bd;
+  color: #705122;
 }
 
 .login-screen {

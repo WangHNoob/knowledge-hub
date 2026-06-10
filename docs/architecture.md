@@ -26,6 +26,18 @@ The first version keeps the stack small. The important boundary is that UI route
 - `agent_events`: feedback from Agent reads, misses and quality flags.
 - `users`: local account store for small-team access.
 
+## Legacy Preview
+
+`scanLegacyKbBuilder()` inspects a legacy `kb-builder data/` directory without mutating it. It reports:
+
+- original source files under `gamedocs/` and `gamedata/`
+- Wiki pages under `wiki/`
+- index assets under `wiki/_meta/`
+- graph snapshots under `graph/`
+- table/schema assets under `tables/` and `wiki/tables/`
+
+The scan result is a preview for administrators. A later import step will convert the preview into a first-class asset package.
+
 ## Product Flow
 
 ```text
