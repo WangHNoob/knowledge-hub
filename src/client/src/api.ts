@@ -10,6 +10,7 @@ export interface DashboardSummary {
   review: { open: number; blocking: number; warning: number };
   release: { current: ReleaseRecord | null; total: number };
   agent: { recentQueries: number; misses: number; lowQualityHits: number };
+  evidence: EvidenceCoverage;
 }
 
 export interface AssetPackage {
@@ -66,6 +67,27 @@ export interface PackageDetail {
   package: AssetPackage;
   components: AssetComponent[];
   reviewTasks: ReviewTask[];
+  evidenceRecords: EvidenceRecord[];
+  evidenceCoverage: EvidenceCoverage;
+}
+
+export interface EvidenceRecord {
+  evidenceId: string;
+  packageId: string;
+  componentId: string;
+  sourceVersionId: string;
+  quote: string;
+  note: string;
+  confidence: number;
+  createdAt: string;
+}
+
+export interface EvidenceCoverage {
+  totalComponents: number;
+  coveredComponents: number;
+  missingComponents: number;
+  evidenceRecords: number;
+  coverageRate: number;
 }
 
 export interface ReviewTask {
@@ -161,6 +183,10 @@ export async function getPackage(packageId: string): Promise<PackageDetail> {
 export async function listReviewTasks(severity?: string): Promise<ReviewTask[]> {
   const suffix = severity ? `?severity=${encodeURIComponent(severity)}` : "";
   return (await getJson<{ tasks: ReviewTask[] }>(`/api/review/tasks${suffix}`)).tasks;
+}
+
+export async function listEvidence(packageId: string): Promise<{ records: EvidenceRecord[]; coverage: EvidenceCoverage }> {
+  return getJson(`/api/evidence?packageId=${encodeURIComponent(packageId)}`);
 }
 
 export async function listReleases(): Promise<ReleaseRecord[]> {

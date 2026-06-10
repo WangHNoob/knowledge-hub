@@ -4,6 +4,8 @@ import type {
   AssetGroup,
   AssetPackage,
   DatabaseHandle,
+  EvidenceCoverage,
+  EvidenceRecord,
   ReleaseRecord,
   ReviewSeverity,
   ReviewTask,
@@ -57,6 +59,9 @@ export class KnowledgeService {
         recentQueries: agentEvents.length,
         misses: agentEvents.filter((event) => event.status === "miss").length,
         lowQualityHits: agentEvents.filter((event) => event.qualityFlags.length > 0).length
+      },
+      evidence: {
+        ...this.getEvidenceCoverage()
       }
     };
   }
@@ -72,13 +77,21 @@ export class KnowledgeService {
       .map((row) => mapPackage(row as unknown as PackageRow));
   }
 
-  getPackageDetail(packageId: string): { package: AssetPackage; components: AssetComponent[]; reviewTasks: ReviewTask[] } {
+  getPackageDetail(packageId: string): {
+    package: AssetPackage;
+    components: AssetComponent[];
+    reviewTasks: ReviewTask[];
+    evidenceRecords: EvidenceRecord[];
+    evidenceCoverage: EvidenceCoverage;
+  } {
     const row = this.db.sqlite.prepare("SELECT * FROM asset_packages WHERE package_id = ?").get(packageId);
     if (!row) throw new Error(`Unknown package: ${packageId}`);
     return {
       package: mapPackage(row as unknown as PackageRow),
       components: this.listComponents({ packageId }),
-      reviewTasks: this.listReviewTasks({ packageId })
+      reviewTasks: this.listReviewTasks({ packageId }),
+      evidenceRecords: this.listEvidenceRecords({ packageId }),
+      evidenceCoverage: this.getEvidenceCoverage({ packageId })
     };
   }
 
@@ -114,6 +127,39 @@ export class KnowledgeService {
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
     sql += " ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at";
     return this.db.sqlite.prepare(sql).all(...params).map((row) => mapReviewTask(row as unknown as ReviewTaskRow));
+  }
+
+  listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): EvidenceRecord[] {
+    let sql = "SELECT * FROM evidence_records";
+    const where: string[] = [];
+    const params: string[] = [];
+    if (filter.packageId) {
+      where.push("package_id = ?");
+      params.push(filter.packageId);
+    }
+    if (filter.componentId) {
+      where.push("component_id = ?");
+      params.push(filter.componentId);
+    }
+    if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
+    sql += " ORDER BY created_at DESC, evidence_id";
+    return this.db.sqlite.prepare(sql).all(...params).map((row) => mapEvidenceRecord(row as unknown as EvidenceRow));
+  }
+
+  getEvidenceCoverage(filter: { packageId?: string } = {}): EvidenceCoverage {
+    const components = this.listComponents({ packageId: filter.packageId });
+    const componentIds = new Set(components.map((component) => component.componentId));
+    const records = this.listEvidenceRecords({ packageId: filter.packageId });
+    const coveredIds = new Set(records.map((record) => record.componentId).filter((componentId) => componentIds.has(componentId)));
+    const totalComponents = components.length;
+    const coveredComponents = coveredIds.size;
+    return {
+      totalComponents,
+      coveredComponents,
+      missingComponents: Math.max(totalComponents - coveredComponents, 0),
+      evidenceRecords: records.length,
+      coverageRate: totalComponents === 0 ? 0 : coveredComponents / totalComponents
+    };
   }
 
   listReleases(): ReleaseRecord[] {
@@ -261,6 +307,30 @@ function mapReviewTask(row: ReviewTaskRow): ReviewTask {
     title: row.title,
     description: row.description,
     suggestedAction: row.suggested_action,
+    createdAt: row.created_at
+  };
+}
+
+interface EvidenceRow {
+  evidence_id: string;
+  package_id: string;
+  component_id: string;
+  source_version_id: string;
+  quote: string;
+  note: string;
+  confidence: number;
+  created_at: string;
+}
+
+function mapEvidenceRecord(row: EvidenceRow): EvidenceRecord {
+  return {
+    evidenceId: row.evidence_id,
+    packageId: row.package_id,
+    componentId: row.component_id,
+    sourceVersionId: row.source_version_id,
+    quote: row.quote,
+    note: row.note,
+    confidence: row.confidence,
     createdAt: row.created_at
   };
 }

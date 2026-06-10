@@ -162,6 +162,7 @@ function Dashboard() {
         <Metric label="知识资产包" value={data.packages.total} hint={formatCounts(data.packages.byStatus)} />
         <Metric label="待修问题" value={data.review.open} hint={`${data.review.blocking} 个阻断`} tone={data.review.blocking > 0 ? "hot" : "ok"} />
         <Metric label="Agent 查询" value={data.agent.recentQueries} hint={`${data.agent.misses} 次未命中`} tone={data.agent.misses > 0 ? "warn" : "ok"} />
+        <Metric label="证据覆盖" value={formatPercent(data.evidence.coverageRate)} hint={`${data.evidence.coveredComponents}/${data.evidence.totalComponents} 个组件`} tone={data.evidence.missingComponents > 0 ? "warn" : "ok"} />
       </div>
       <section className="flow">
         {["资料进入", "生成资产包", "审核证据和结构", "质量门禁", "发布给 Agent", "反馈修订"].map((step, index) => (
@@ -241,6 +242,7 @@ function Assets() {
   const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
   const detail = useQuery({ queryKey: ["package", selected], queryFn: () => getPackage(selected), enabled: Boolean(selected) });
   const byGroup = useMemo(() => groupBy(detail.data?.components ?? [], (component) => component.group), [detail.data]);
+  const evidenceByComponent = useMemo(() => groupBy(detail.data?.evidenceRecords ?? [], (record) => record.componentId), [detail.data]);
 
   return (
     <Page title="知识资产" subtitle="资产包保留 Wiki、Index、Graph、表结构、证据和质量报告之间的关系。">
@@ -268,6 +270,16 @@ function Assets() {
                 </div>
                 <Badge label={detail.data.package.status} />
               </div>
+              <div className="evidence-panel">
+                <Metric
+                  label="证据覆盖"
+                  value={formatPercent(detail.data.evidenceCoverage.coverageRate)}
+                  hint={`${detail.data.evidenceCoverage.coveredComponents}/${detail.data.evidenceCoverage.totalComponents} 个组件`}
+                  tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"}
+                />
+                <Metric label="证据记录" value={detail.data.evidenceCoverage.evidenceRecords} hint="可追溯 source version" />
+                <Metric label="待补证据" value={detail.data.evidenceCoverage.missingComponents} hint="优先进入审核中心" tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"} />
+              </div>
               {Object.entries(byGroup).map(([group, components]) => (
                 <div className="asset-group" key={group}>
                   <h3>{groupLabel(group)}</h3>
@@ -278,7 +290,12 @@ function Assets() {
                           <strong>{component.title}</strong>
                           <span>{component.kind} · {component.legacyPath}</span>
                         </div>
-                        <code>{component.artifactId}</code>
+                        <div className="asset-meta">
+                          <code>{component.artifactId}</code>
+                          <span className={evidenceByComponent[component.componentId]?.length ? "evidence-chip ok" : "evidence-chip"}>
+                            {evidenceByComponent[component.componentId]?.length ?? 0} 条证据
+                          </span>
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -500,6 +517,10 @@ function EmptyWork({ title, body }: { title: string; body: string }) {
 
 function formatCounts(counts: Record<string, number>): string {
   return Object.entries(counts).map(([key, value]) => `${key} ${value}`).join(" / ") || "暂无";
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {

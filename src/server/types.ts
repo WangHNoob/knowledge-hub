@@ -64,6 +64,25 @@ export interface AssetComponent {
   quality: Record<string, unknown>;
 }
 
+export interface EvidenceRecord {
+  evidenceId: string;
+  packageId: string;
+  componentId: string;
+  sourceVersionId: string;
+  quote: string;
+  note: string;
+  confidence: number;
+  createdAt: string;
+}
+
+export interface EvidenceCoverage {
+  totalComponents: number;
+  coveredComponents: number;
+  missingComponents: number;
+  evidenceRecords: number;
+  coverageRate: number;
+}
+
 export interface ReviewTask {
   taskId: string;
   packageId: string;

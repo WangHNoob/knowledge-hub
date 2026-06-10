@@ -21,6 +21,7 @@ The first version keeps the stack small. The important boundary is that UI route
 - `sources`: immutable source versions.
 - `asset_packages`: one import/generation/manual curation unit.
 - `asset_components`: package members such as Wiki, Index, Graph, Table, Evidence, Quality.
+- `evidence_records`: traceable proof snippets that connect components to source versions.
 - `review_tasks`: human-actionable issues derived from quality findings.
 - `releases`: immutable Agent-facing versions.
 - `agent_events`: feedback from Agent reads, misses and quality flags.
@@ -43,6 +44,7 @@ The scan result is a preview for administrators and lead developers. `importLega
 ```text
 资料进入
   -> 生成/导入知识资产包
+  -> 补充证据和覆盖率
   -> 审核证据和结构
   -> 发布给 Agent
   -> 观察 Agent 使用反馈

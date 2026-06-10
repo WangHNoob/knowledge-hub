@@ -61,6 +61,8 @@ describe("knowledge hub api", () => {
     });
     expect(detail.statusCode).toBe(200);
     expect(detail.json().components.length).toBeGreaterThan(3);
+    expect(detail.json().evidenceRecords).toHaveLength(4);
+    expect(detail.json().evidenceCoverage.coverageRate).toBeCloseTo(0.5);
 
     const review = await app.inject({
       method: "GET",
@@ -69,6 +71,15 @@ describe("knowledge hub api", () => {
     });
     expect(review.statusCode).toBe(200);
     expect(review.json().tasks).toHaveLength(2);
+
+    const evidence = await app.inject({
+      method: "GET",
+      url: "/api/evidence?packageId=pkg_legacy_core",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(evidence.statusCode).toBe(200);
+    expect(evidence.json().records).toHaveLength(4);
+    expect(evidence.json().coverage.missingComponents).toBe(3);
 
     await app.close();
   });

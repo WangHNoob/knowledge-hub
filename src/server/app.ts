@@ -112,6 +112,20 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       return { tasks: service.listReviewTasks({ severity }) };
     }
   );
+  app.get<{ Querystring: { packageId?: string; componentId?: string } }>(
+    "/api/evidence",
+    { preHandler: app.authenticate },
+    async (request) => {
+      const filter = {
+        packageId: request.query.packageId,
+        componentId: request.query.componentId
+      };
+      return {
+        records: service.listEvidenceRecords(filter),
+        coverage: service.getEvidenceCoverage({ packageId: request.query.packageId })
+      };
+    }
+  );
   app.get("/api/releases", { preHandler: app.authenticate }, async () => ({ releases: service.listReleases() }));
   app.get("/api/agent/events", { preHandler: app.authenticate }, async () => ({ events: service.listAgentEvents() }));
   app.post("/api/legacy/scan", { preHandler: app.authenticate }, async (request, reply) => {

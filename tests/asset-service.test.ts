@@ -69,4 +69,21 @@ describe("knowledge asset service", () => {
       suggestedAction: expect.stringContaining("补充")
     });
   });
+
+  it("summarizes evidence coverage for package components", () => {
+    db = createDatabase({ dataDir: dir, seed: true });
+    const service = createKnowledgeService(db);
+
+    const detail = service.getPackageDetail("pkg_legacy_core");
+    const coverage = service.getEvidenceCoverage({ packageId: "pkg_legacy_core" });
+
+    expect(detail.evidenceRecords).toHaveLength(4);
+    expect(coverage).toMatchObject({
+      totalComponents: 6,
+      coveredComponents: 3,
+      evidenceRecords: 4,
+      missingComponents: 3
+    });
+    expect(coverage.coverageRate).toBeCloseTo(0.5);
+  });
 });

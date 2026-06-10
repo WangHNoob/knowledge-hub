@@ -73,6 +73,17 @@ function migrate(db: DatabaseSync): void {
       quality TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS evidence_records (
+      evidence_id TEXT PRIMARY KEY,
+      package_id TEXT NOT NULL REFERENCES asset_packages(package_id) ON DELETE CASCADE,
+      component_id TEXT NOT NULL REFERENCES asset_components(component_id) ON DELETE CASCADE,
+      source_version_id TEXT NOT NULL REFERENCES sources(source_version_id),
+      quote TEXT NOT NULL,
+      note TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS review_tasks (
       task_id TEXT PRIMARY KEY,
       package_id TEXT NOT NULL REFERENCES asset_packages(package_id) ON DELETE CASCADE,
@@ -173,6 +184,21 @@ function seedDemoData(db: DatabaseSync): void {
   ] as const;
   for (const c of components) {
     componentStmt.run(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], json(c[9]), json(c[10]));
+  }
+
+  const evidenceStmt = db.prepare(`
+    INSERT INTO evidence_records
+      (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const evidenceRecords = [
+    ["ev_combat_goal", "pkg_legacy_core", "cmp_wiki_combat", "srcv_design_core_a1", "战斗目标以 3 分钟单局体验为基准。", "支撑战斗框架页面的核心设计目标。", 0.88],
+    ["ev_combat_loop", "pkg_legacy_core", "cmp_wiki_combat", "srcv_design_core_a1", "核心循环包含入场、技能、结算三个阶段。", "补充战斗流程证据。", 0.84],
+    ["ev_table_ref", "pkg_legacy_core", "cmp_index_table_ref", "srcv_tables_core_b2", "items 表作为道具字段的主引用表。", "支撑表引用索引。", 0.91],
+    ["ev_items_schema", "pkg_legacy_core", "cmp_table_items", "srcv_tables_core_b2", "item_id、quality、stack_limit 为必填字段。", "支撑道具表结构。", 0.93]
+  ] as const;
+  for (const record of evidenceRecords) {
+    evidenceStmt.run(record[0], record[1], record[2], record[3], record[4], record[5], record[6], "2026-06-10T03:30:00Z");
   }
 
   const taskStmt = db.prepare(`
