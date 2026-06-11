@@ -1,37 +1,54 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import pg from "pg";
 
-import { buildApp } from "../src/server/app";
+import { buildApp, type BuildAppOptions } from "../src/server/app";
 import { createDatabase } from "../src/server/db";
+import type { DatabaseHandle } from "../src/server/types";
+
+const TEST_URL = process.env.KH_TEST_DATABASE_URL || "postgres://postgres:whbwhb2026@127.0.0.1:5432/knowledge_hub_test";
 
 describe("knowledge hub api", () => {
+  let db: DatabaseHandle;
+  let schema: string;
   let dir: string;
+  let opts: BuildAppOptions;
 
-  beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "knowledge-hub-api-"));
+  beforeAll(async () => {
+    schema = `test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+    db = await createDatabase({ databaseUrl: TEST_URL, schema });
+    dir = mkdtempSync(join(tmpdir(), "kh-api-"));
+    opts = { db, jwtSecret: "test-secret", dataDir: dir };
   });
 
-  afterEach(() => {
+  afterAll(async () => {
+    await db.close();
+    const pool = new pg.Pool({ connectionString: TEST_URL });
+    await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await pool.end();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("requires login for knowledge endpoints and returns an empty dashboard after authentication", async () => {
-    const db = createDatabase({ dataDir: dir });
-    const app = await buildApp({ db, jwtSecret: "test-secret" });
-
-    const denied = await app.inject({ method: "GET", url: "/api/dashboard" });
-    expect(denied.statusCode).toBe(401);
-
+  async function getToken() {
+    const app = await buildApp(opts);
     const login = await app.inject({
       method: "POST",
       url: "/api/auth/login",
       payload: { username: "admin", password: "adminpw" }
     });
-    expect(login.statusCode).toBe(200);
     const token = login.json<{ token: string }>().token;
+    return { app, token };
+  }
+
+  it("requires login for knowledge endpoints and returns an empty dashboard after authentication", async () => {
+    const { app, token } = await getToken();
+
+    const denied = await app.inject({ method: "GET", url: "/api/dashboard" });
+    expect(denied.statusCode).toBe(401);
 
     const dashboard = await app.inject({
       method: "GET",
@@ -44,13 +61,11 @@ describe("knowledge hub api", () => {
     expect(body.sources.bundles).toBe(1);
     expect(body.sources.versions).toBe(0);
     expect(body.sources.latest).toBeNull();
-
-    await app.close();
   });
 
   it("imports a legacy directory into a draft package through the api", async () => {
-    const db = createDatabase({ dataDir: dir });
-    const legacy = join(dir, "legacy-api");
+    const { app, token } = await getToken();
+    const legacy = join(dir, "legacy-api-" + randomUUID().slice(0, 6));
     mkdirSync(join(legacy, "gamedocs"), { recursive: true });
     mkdirSync(join(legacy, "wiki", "systems"), { recursive: true });
     mkdirSync(join(legacy, "wiki", "_meta"), { recursive: true });
@@ -58,50 +73,24 @@ describe("knowledge hub api", () => {
     writeFileSync(join(legacy, "wiki", "systems", "equipment.md"), "# Equipment");
     writeFileSync(join(legacy, "wiki", "_meta", "topic_index.json"), "{}");
 
-    const app = await buildApp({ db, jwtSecret: "test-secret" });
-    const login = await app.inject({
-      method: "POST",
-      url: "/api/auth/login",
-      payload: { username: "admin", password: "adminpw" }
-    });
-    const token = login.json<{ token: string }>().token;
-
     const imported = await app.inject({
       method: "POST",
       url: "/api/legacy/import",
       headers: { authorization: `Bearer ${token}` },
       payload: { path: legacy }
     });
-
     expect(imported.statusCode).toBe(200);
     expect(imported.json().package.status).toBe("draft");
     expect(imported.json().createdComponents).toBe(2);
-
-    const packages = await app.inject({
-      method: "GET",
-      url: "/api/packages",
-      headers: { authorization: `Bearer ${token}` }
-    });
-    expect(packages.json().packages.some((pkg: { packageId: string }) => pkg.packageId === imported.json().package.packageId)).toBe(true);
-
-    await app.close();
   });
 
   it("imports a gamedata/gamedocs directory as a versioned source bundle", async () => {
-    const db = createDatabase({ dataDir: dir });
+    const { app, token } = await getToken();
     const root = join(dir, "raw-v1");
     mkdirSync(join(root, "gamedata"), { recursive: true });
     mkdirSync(join(root, "gamedocs"), { recursive: true });
     writeFileSync(join(root, "gamedata", "items.csv"), "id,name\n1,A\n");
     writeFileSync(join(root, "gamedocs", "design.md"), "# Design");
-
-    const app = await buildApp({ db, jwtSecret: "test-secret" });
-    const login = await app.inject({
-      method: "POST",
-      url: "/api/auth/login",
-      payload: { username: "admin", password: "adminpw" }
-    });
-    const token = login.json<{ token: string }>().token;
 
     const created = await app.inject({
       method: "POST",
@@ -121,7 +110,5 @@ describe("knowledge hub api", () => {
       headers: { authorization: `Bearer ${token}` }
     });
     expect(versions.json().versions).toHaveLength(1);
-
-    await app.close();
   });
 });

@@ -14,9 +14,9 @@ export type ReviewSeverity = "blocking" | "warning" | "info";
 export type ReviewStatus = "open" | "resolved" | "dismissed";
 
 export interface DatabaseHandle {
-  path: string;
-  sqlite: import("node:sqlite").DatabaseSync;
-  close(): void;
+  pool: import("pg").Pool;
+  schema: string;
+  close(): Promise<void>;
 }
 
 export interface UserRecord {

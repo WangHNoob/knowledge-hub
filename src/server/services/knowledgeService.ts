@@ -17,20 +17,23 @@ export function createKnowledgeService(db: DatabaseHandle) {
 }
 
 export class KnowledgeService {
-  constructor(private readonly db: DatabaseHandle) {}
-
-  getUserByUsername(username: string): UserRecord | null {
-    const row = this.db.sqlite.prepare("SELECT * FROM users WHERE username = ?").get(username);
-    return row ? mapUser(row as unknown as UserRow) : null;
+  private readonly pool;
+  constructor(private readonly db: DatabaseHandle) {
+    this.pool = db.pool;
   }
 
-  getDashboardSummary() {
-    const sourceSummary = this.getSourceBundleSummary();
-    const packages = this.listPackages();
-    const components = this.listComponents();
-    const tasks = this.listReviewTasks({});
-    const releases = this.listReleases();
-    const agentEvents = this.listAgentEvents();
+  async getUserByUsername(username: string): Promise<UserRecord | null> {
+    const { rows } = await this.pool.query("SELECT * FROM users WHERE username = $1", [username]);
+    return rows.length ? mapUser(rows[0]) : null;
+  }
+
+  async getDashboardSummary() {
+    const sourceSummary = await this.getSourceBundleSummary();
+    const packages = await this.listPackages();
+    const components = await this.listComponents();
+    const tasks = await this.listReviewTasks({});
+    const releases = await this.listReleases();
+    const agentEvents = await this.listAgentEvents();
 
     return {
       sources: sourceSummary,
@@ -57,27 +60,24 @@ export class KnowledgeService {
         lowQualityHits: agentEvents.filter((event) => event.qualityFlags.length > 0).length
       },
       evidence: {
-        ...this.getEvidenceCoverage()
+        ...(await this.getEvidenceCoverage())
       }
     };
   }
 
-  getSourceBundleSummary() {
-    const bundles = this.db.sqlite.prepare("SELECT COUNT(*) AS c FROM source_bundles").get() as { c: number };
-    const versions = this.db.sqlite.prepare("SELECT COUNT(*) AS c FROM source_bundle_versions").get() as { c: number };
-    const blobs = this.db.sqlite
-      .prepare("SELECT COUNT(*) AS c, COALESCE(SUM(byte_size), 0) AS bytes FROM source_blobs")
-      .get() as { c: number; bytes: number };
-    const latest = this.db.sqlite
-      .prepare(
-        "SELECT version_id, label, created_at, file_count FROM source_bundle_versions ORDER BY created_at DESC LIMIT 1"
-      )
-      .get() as { version_id: string; label: string; created_at: string; file_count: number } | undefined;
+  async getSourceBundleSummary() {
+    const { rows: [bundlesRow] } = await this.pool.query("SELECT COUNT(*)::int AS c FROM source_bundles");
+    const { rows: [versionsRow] } = await this.pool.query("SELECT COUNT(*)::int AS c FROM source_bundle_versions");
+    const { rows: [blobsRow] } = await this.pool.query("SELECT COUNT(*)::int AS c, COALESCE(SUM(byte_size), 0)::bigint AS bytes FROM source_blobs");
+    const { rows: latestRows } = await this.pool.query(
+      "SELECT version_id, label, created_at, file_count FROM source_bundle_versions ORDER BY created_at DESC LIMIT 1"
+    );
+    const latest = latestRows[0] ?? null;
     return {
-      bundles: bundles.c,
-      versions: versions.c,
-      blobs: blobs.c,
-      totalBytes: blobs.bytes,
+      bundles: bundlesRow.c,
+      versions: versionsRow.c,
+      blobs: blobsRow.c,
+      totalBytes: Number(blobsRow.bytes),
       latest: latest
         ? {
             versionId: latest.version_id,
@@ -89,87 +89,58 @@ export class KnowledgeService {
     };
   }
 
-  listPackages(): AssetPackage[] {
-    return this.db.sqlite
-      .prepare("SELECT * FROM asset_packages ORDER BY created_at DESC")
-      .all()
-      .map((row) => mapPackage(row as unknown as PackageRow));
+  async listPackages(): Promise<AssetPackage[]> {
+    const { rows } = await this.pool.query("SELECT * FROM asset_packages ORDER BY created_at DESC");
+    return rows.map(mapPackage);
   }
 
-  getPackageDetail(packageId: string): {
-    package: AssetPackage;
-    components: AssetComponent[];
-    reviewTasks: ReviewTask[];
-    evidenceRecords: EvidenceRecord[];
-    evidenceCoverage: EvidenceCoverage;
-  } {
-    const row = this.db.sqlite.prepare("SELECT * FROM asset_packages WHERE package_id = ?").get(packageId);
-    if (!row) throw new Error(`Unknown package: ${packageId}`);
+  async getPackageDetail(packageId: string) {
+    const { rows } = await this.pool.query("SELECT * FROM asset_packages WHERE package_id = $1", [packageId]);
+    if (rows.length === 0) throw new Error(`Unknown package: ${packageId}`);
     return {
-      package: mapPackage(row as unknown as PackageRow),
-      components: this.listComponents({ packageId }),
-      reviewTasks: this.listReviewTasks({ packageId }),
-      evidenceRecords: this.listEvidenceRecords({ packageId }),
-      evidenceCoverage: this.getEvidenceCoverage({ packageId })
+      package: mapPackage(rows[0]),
+      components: await this.listComponents({ packageId }),
+      reviewTasks: await this.listReviewTasks({ packageId }),
+      evidenceRecords: await this.listEvidenceRecords({ packageId }),
+      evidenceCoverage: await this.getEvidenceCoverage({ packageId })
     };
   }
 
-  listComponents(filter: { packageId?: string; group?: AssetGroup } = {}): AssetComponent[] {
-    let sql = "SELECT * FROM asset_components";
+  async listComponents(filter: { packageId?: string; group?: AssetGroup } = {}): Promise<AssetComponent[]> {
     const where: string[] = [];
-    const params: string[] = [];
-    if (filter.packageId) {
-      where.push("package_id = ?");
-      params.push(filter.packageId);
-    }
-    if (filter.group) {
-      where.push("group_name = ?");
-      params.push(filter.group);
-    }
-    if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
-    sql += " ORDER BY group_name, title";
-    return this.db.sqlite.prepare(sql).all(...params).map((row) => mapComponent(row as unknown as ComponentRow));
+    const params: unknown[] = [];
+    if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
+    if (filter.group) { where.push(`group_name = $${params.length + 1}`); params.push(filter.group); }
+    const sql = `SELECT * FROM asset_components${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY group_name, title`;
+    const { rows } = await this.pool.query(sql, params);
+    return rows.map(mapComponent);
   }
 
-  listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string } = {}): ReviewTask[] {
-    let sql = "SELECT * FROM review_tasks";
+  async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string } = {}): Promise<ReviewTask[]> {
     const where: string[] = [];
-    const params: string[] = [];
-    if (filter.severity) {
-      where.push("severity = ?");
-      params.push(filter.severity);
-    }
-    if (filter.packageId) {
-      where.push("package_id = ?");
-      params.push(filter.packageId);
-    }
-    if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
-    sql += " ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at";
-    return this.db.sqlite.prepare(sql).all(...params).map((row) => mapReviewTask(row as unknown as ReviewTaskRow));
+    const params: unknown[] = [];
+    if (filter.severity) { where.push(`severity = $${params.length + 1}`); params.push(filter.severity); }
+    if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
+    const sql = `SELECT * FROM review_tasks${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at`;
+    const { rows } = await this.pool.query(sql, params);
+    return rows.map(mapReviewTask);
   }
 
-  listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): EvidenceRecord[] {
-    let sql = "SELECT * FROM evidence_records";
+  async listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): Promise<EvidenceRecord[]> {
     const where: string[] = [];
-    const params: string[] = [];
-    if (filter.packageId) {
-      where.push("package_id = ?");
-      params.push(filter.packageId);
-    }
-    if (filter.componentId) {
-      where.push("component_id = ?");
-      params.push(filter.componentId);
-    }
-    if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
-    sql += " ORDER BY created_at DESC, evidence_id";
-    return this.db.sqlite.prepare(sql).all(...params).map((row) => mapEvidenceRecord(row as unknown as EvidenceRow));
+    const params: unknown[] = [];
+    if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
+    if (filter.componentId) { where.push(`component_id = $${params.length + 1}`); params.push(filter.componentId); }
+    const sql = `SELECT * FROM evidence_records${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC, evidence_id`;
+    const { rows } = await this.pool.query(sql, params);
+    return rows.map(mapEvidenceRecord);
   }
 
-  getEvidenceCoverage(filter: { packageId?: string } = {}): EvidenceCoverage {
-    const components = this.listComponents({ packageId: filter.packageId });
-    const componentIds = new Set(components.map((component) => component.componentId));
-    const records = this.listEvidenceRecords({ packageId: filter.packageId });
-    const coveredIds = new Set(records.map((record) => record.componentId).filter((componentId) => componentIds.has(componentId)));
+  async getEvidenceCoverage(filter: { packageId?: string } = {}): Promise<EvidenceCoverage> {
+    const components = await this.listComponents({ packageId: filter.packageId });
+    const componentIds = new Set(components.map((c) => c.componentId));
+    const records = await this.listEvidenceRecords({ packageId: filter.packageId });
+    const coveredIds = new Set(records.map((r) => r.componentId).filter((id) => componentIds.has(id)));
     const totalComponents = components.length;
     const coveredComponents = coveredIds.size;
     return {
@@ -181,12 +152,14 @@ export class KnowledgeService {
     };
   }
 
-  listReleases(): ReleaseRecord[] {
-    return this.db.sqlite.prepare("SELECT * FROM releases ORDER BY published_at DESC").all().map((row) => mapRelease(row as unknown as ReleaseRow));
+  async listReleases(): Promise<ReleaseRecord[]> {
+    const { rows } = await this.pool.query("SELECT * FROM releases ORDER BY published_at DESC NULLS LAST");
+    return rows.map(mapRelease);
   }
 
-  listAgentEvents(): AgentEvent[] {
-    return this.db.sqlite.prepare("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50").all().map((row) => mapAgentEvent(row as unknown as AgentEventRow));
+  async listAgentEvents(): Promise<AgentEvent[]> {
+    const { rows } = await this.pool.query("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50");
+    return rows.map(mapAgentEvent);
   }
 }
 
@@ -198,178 +171,93 @@ function countBy<T, K extends string>(items: T[], key: (item: T) => K): Record<K
   }, {} as Record<K, number>);
 }
 
-function parseJson<T>(value: string, fallback: T): T {
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-interface UserRow {
-  id: string;
-  username: string;
-  password_hash: string;
-  role: UserRecord["role"];
-  display_name: string;
-}
-
-function mapUser(row: UserRow): UserRecord {
+function mapUser(row: Record<string, unknown>): UserRecord {
   return {
-    id: row.id,
-    username: row.username,
-    passwordHash: row.password_hash,
-    role: row.role,
-    displayName: row.display_name
+    id: row.id as string,
+    username: row.username as string,
+    passwordHash: row.password_hash as string,
+    role: row.role as UserRecord["role"],
+    displayName: row.display_name as string
   };
 }
 
-interface PackageRow {
-  package_id: string;
-  name: string;
-  kind: string;
-  status: AssetPackage["status"];
-  description: string;
-  created_by_run_id: string;
-  source_version_ids: string;
-  legacy_paths: string;
-  quality_summary: string;
-  created_at: string;
-}
-
-function mapPackage(row: PackageRow): AssetPackage {
+function mapPackage(row: Record<string, unknown>): AssetPackage {
   return {
-    packageId: row.package_id,
-    name: row.name,
-    kind: row.kind,
-    status: row.status,
-    description: row.description,
-    createdByRunId: row.created_by_run_id,
-    sourceVersionIds: parseJson<string[]>(row.source_version_ids, []),
-    legacyPaths: parseJson<string[]>(row.legacy_paths, []),
-    qualitySummary: parseJson<Record<string, unknown>>(row.quality_summary, {}),
-    createdAt: row.created_at
+    packageId: row.package_id as string,
+    name: row.name as string,
+    kind: row.kind as string,
+    status: row.status as AssetPackage["status"],
+    description: row.description as string,
+    createdByRunId: row.created_by_run_id as string,
+    sourceVersionIds: row.source_version_ids as string[] ?? [],
+    legacyPaths: row.legacy_paths as string[] ?? [],
+    qualitySummary: row.quality_summary as Record<string, unknown> ?? {},
+    createdAt: String(row.created_at)
   };
 }
 
-interface ComponentRow {
-  component_id: string;
-  package_id: string;
-  artifact_id: string;
-  group_name: AssetGroup;
-  kind: string;
-  title: string;
-  status: string;
-  legacy_path: string;
-  storage_uri: string;
-  source_refs: string;
-  quality: string;
-}
-
-function mapComponent(row: ComponentRow): AssetComponent {
+function mapComponent(row: Record<string, unknown>): AssetComponent {
   return {
-    componentId: row.component_id,
-    packageId: row.package_id,
-    artifactId: row.artifact_id,
-    group: row.group_name,
-    kind: row.kind,
-    title: row.title,
-    status: row.status,
-    legacyPath: row.legacy_path,
-    storageUri: row.storage_uri,
-    sourceRefs: parseJson<string[]>(row.source_refs, []),
-    quality: parseJson<Record<string, unknown>>(row.quality, {})
+    componentId: row.component_id as string,
+    packageId: row.package_id as string,
+    artifactId: row.artifact_id as string,
+    group: row.group_name as AssetGroup,
+    kind: row.kind as string,
+    title: row.title as string,
+    status: row.status as string,
+    legacyPath: row.legacy_path as string,
+    storageUri: row.storage_uri as string,
+    sourceRefs: row.source_refs as string[] ?? [],
+    quality: row.quality as Record<string, unknown> ?? {}
   };
 }
 
-interface ReviewTaskRow {
-  task_id: string;
-  package_id: string;
-  component_id: string;
-  severity: ReviewTask["severity"];
-  status: ReviewTask["status"];
-  title: string;
-  description: string;
-  suggested_action: string;
-  created_at: string;
-}
-
-function mapReviewTask(row: ReviewTaskRow): ReviewTask {
+function mapReviewTask(row: Record<string, unknown>): ReviewTask {
   return {
-    taskId: row.task_id,
-    packageId: row.package_id,
-    componentId: row.component_id,
-    severity: row.severity,
-    status: row.status,
-    title: row.title,
-    description: row.description,
-    suggestedAction: row.suggested_action,
-    createdAt: row.created_at
+    taskId: row.task_id as string,
+    packageId: row.package_id as string,
+    componentId: row.component_id as string,
+    severity: row.severity as ReviewTask["severity"],
+    status: row.status as ReviewTask["status"],
+    title: row.title as string,
+    description: row.description as string,
+    suggestedAction: row.suggested_action as string,
+    createdAt: String(row.created_at)
   };
 }
 
-interface EvidenceRow {
-  evidence_id: string;
-  package_id: string;
-  component_id: string;
-  source_version_id: string;
-  quote: string;
-  note: string;
-  confidence: number;
-  created_at: string;
-}
-
-function mapEvidenceRecord(row: EvidenceRow): EvidenceRecord {
+function mapEvidenceRecord(row: Record<string, unknown>): EvidenceRecord {
   return {
-    evidenceId: row.evidence_id,
-    packageId: row.package_id,
-    componentId: row.component_id,
-    sourceVersionId: row.source_version_id,
-    quote: row.quote,
-    note: row.note,
-    confidence: row.confidence,
-    createdAt: row.created_at
+    evidenceId: row.evidence_id as string,
+    packageId: row.package_id as string,
+    componentId: row.component_id as string,
+    sourceVersionId: row.source_version_id as string,
+    quote: row.quote as string,
+    note: row.note as string,
+    confidence: row.confidence as number,
+    createdAt: String(row.created_at)
   };
 }
 
-interface ReleaseRow {
-  release_id: string;
-  version: string;
-  status: ReleaseRecord["status"];
-  package_ids: string;
-  published_at: string | null;
-  quality_gate: string;
-}
-
-function mapRelease(row: ReleaseRow): ReleaseRecord {
+function mapRelease(row: Record<string, unknown>): ReleaseRecord {
   return {
-    releaseId: row.release_id,
-    version: row.version,
-    status: row.status,
-    packageIds: parseJson<string[]>(row.package_ids, []),
-    publishedAt: row.published_at,
-    qualityGate: parseJson<Record<string, unknown>>(row.quality_gate, {})
+    releaseId: row.release_id as string,
+    version: row.version as string,
+    status: row.status as ReleaseRecord["status"],
+    packageIds: row.package_ids as string[] ?? [],
+    publishedAt: row.published_at ? String(row.published_at) : null,
+    qualityGate: row.quality_gate as Record<string, unknown> ?? {}
   };
 }
 
-interface AgentEventRow {
-  event_id: string;
-  release_id: string;
-  query: string;
-  hit_component_ids: string;
-  quality_flags: string;
-  status: AgentEvent["status"];
-  created_at: string;
-}
-
-function mapAgentEvent(row: AgentEventRow): AgentEvent {
+function mapAgentEvent(row: Record<string, unknown>): AgentEvent {
   return {
-    eventId: row.event_id,
-    releaseId: row.release_id,
-    query: row.query,
-    hitComponentIds: parseJson<string[]>(row.hit_component_ids, []),
-    qualityFlags: parseJson<string[]>(row.quality_flags, []),
-    status: row.status,
-    createdAt: row.created_at
+    eventId: row.event_id as string,
+    releaseId: row.release_id as string,
+    query: row.query as string,
+    hitComponentIds: row.hit_component_ids as string[] ?? [],
+    qualityFlags: row.quality_flags as string[] ?? [],
+    status: row.status as AgentEvent["status"],
+    createdAt: String(row.created_at)
   };
 }

@@ -10,13 +10,17 @@ export interface LegacyImportResult {
   createdComponents: number;
 }
 
-export function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: string, legacyRoot: string): LegacyImportResult {
+export async function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: string, legacyRoot: string): Promise<LegacyImportResult> {
   const scan = scanLegacyKbBuilder(legacyRoot);
-  const existing = db.sqlite.prepare("SELECT * FROM asset_packages WHERE package_id = ?").get(scan.recommendedPackageId);
-  if (existing) {
+  const pool = db.pool;
+
+  const { rows: existingRows } = await pool.query(
+    "SELECT * FROM asset_packages WHERE package_id = $1", [scan.recommendedPackageId]
+  );
+  if (existingRows.length > 0) {
     return {
       created: false,
-      package: mapPackage(existing as unknown as PackageRow),
+      package: mapPackage(existingRows[0]),
       importedSources: 0,
       createdComponents: 0
     };
@@ -38,54 +42,50 @@ export function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: string,
     ...scan.tables.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "table", path, legacySourcePaths))
   ];
 
-  db.sqlite.exec("BEGIN");
+  const client = await pool.connect();
   try {
-    db.sqlite.prepare(`
-      INSERT INTO asset_packages
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO asset_packages
         (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      scan.recommendedPackageId,
-      `旧知识库导入：${basename(scan.root)}`,
-      "legacy_import",
-      "draft",
-      "由旧 kb-builder data 目录扫描生成的草稿资产包。",
-      `run_legacy_${Date.now()}`,
-      JSON.stringify(legacySourcePaths),
-      JSON.stringify(["gamedocs", "gamedata", "wiki", "wiki/_meta", "graph", "tables"]),
-      JSON.stringify(qualitySummary),
-      now
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        scan.recommendedPackageId,
+        `旧知识库导入：${basename(scan.root)}`,
+        "legacy_import",
+        "draft",
+        "由旧 kb-builder data 目录扫描生成的草稿资产包。",
+        `run_legacy_${Date.now()}`,
+        JSON.stringify(legacySourcePaths),
+        JSON.stringify(["gamedocs", "gamedata", "wiki", "wiki/_meta", "graph", "tables"]),
+        JSON.stringify(qualitySummary),
+        now
+      ]
     );
-
-    const stmt = db.sqlite.prepare(`
-      INSERT INTO asset_components
-        (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
     for (const component of componentInputs) {
-      stmt.run(
-        component.componentId,
-        component.packageId,
-        component.artifactId,
-        component.group,
-        component.kind,
-        component.title,
-        component.status,
-        component.legacyPath,
-        component.storageUri,
-        JSON.stringify(component.sourceRefs),
-        JSON.stringify(component.quality)
+      await client.query(
+        `INSERT INTO asset_components
+          (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          component.componentId, component.packageId, component.artifactId, component.group,
+          component.kind, component.title, component.status, component.legacyPath,
+          component.storageUri, JSON.stringify(component.sourceRefs), JSON.stringify(component.quality)
+        ]
       );
     }
-    db.sqlite.exec("COMMIT");
+    await client.query("COMMIT");
   } catch (error) {
-    db.sqlite.exec("ROLLBACK");
+    await client.query("ROLLBACK");
     throw error;
+  } finally {
+    client.release();
   }
 
+  const { rows: pkgRows } = await pool.query("SELECT * FROM asset_packages WHERE package_id = $1", [scan.recommendedPackageId]);
   return {
     created: true,
-    package: mapPackage(db.sqlite.prepare("SELECT * FROM asset_packages WHERE package_id = ?").get(scan.recommendedPackageId) as unknown as PackageRow),
+    package: mapPackage(pkgRows[0]),
     importedSources: legacySourcePaths.length,
     createdComponents: componentInputs.length
   };
@@ -104,10 +104,7 @@ function componentInput(packageId: string, packageSlug: string, group: AssetGrou
     legacyPath,
     storageUri: `legacy://${legacyPath}`,
     sourceRefs,
-    quality: {
-      importedFromLegacy: true,
-      evidenceCoverage: 0
-    }
+    quality: { importedFromLegacy: true, evidenceCoverage: 0 }
   };
 }
 
@@ -127,30 +124,17 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "item";
 }
 
-interface PackageRow {
-  package_id: string;
-  name: string;
-  kind: string;
-  status: AssetPackage["status"];
-  description: string;
-  created_by_run_id: string;
-  source_version_ids: string;
-  legacy_paths: string;
-  quality_summary: string;
-  created_at: string;
-}
-
-function mapPackage(row: PackageRow): AssetPackage {
+function mapPackage(row: Record<string, unknown>): AssetPackage {
   return {
-    packageId: row.package_id,
-    name: row.name,
-    kind: row.kind,
-    status: row.status,
-    description: row.description,
-    createdByRunId: row.created_by_run_id,
-    sourceVersionIds: JSON.parse(row.source_version_ids) as string[],
-    legacyPaths: JSON.parse(row.legacy_paths) as string[],
-    qualitySummary: JSON.parse(row.quality_summary) as Record<string, unknown>,
-    createdAt: row.created_at
+    packageId: row.package_id as string,
+    name: row.name as string,
+    kind: row.kind as string,
+    status: row.status as AssetPackage["status"],
+    description: row.description as string,
+    createdByRunId: row.created_by_run_id as string,
+    sourceVersionIds: row.source_version_ids as string[] ?? [],
+    legacyPaths: row.legacy_paths as string[] ?? [],
+    qualitySummary: row.quality_summary as Record<string, unknown> ?? {},
+    createdAt: String(row.created_at)
   };
 }
