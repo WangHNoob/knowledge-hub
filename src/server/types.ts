@@ -14,7 +14,7 @@ export type ReviewSeverity = "blocking" | "warning" | "info";
 export type ReviewStatus = "open" | "resolved" | "dismissed";
 
 export interface DatabaseHandle {
-  pool: import("pg").Pool;
+  adapter: import("./db-adapter").DatabaseAdapter;
   schema: string;
   close(): Promise<void>;
 }

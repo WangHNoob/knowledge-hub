@@ -10,7 +10,12 @@ import { createDatabase } from "./db";
 const root = process.cwd();
 const dataDir = isAbsolute(config.dataDir) ? config.dataDir : resolve(root, config.dataDir);
 
-const db = await createDatabase({ databaseUrl: config.databaseUrl });
+// 桌面模式：优先使用 PGlite 嵌入式数据库
+const db = await createDatabase({
+  dataDir: dataDir,  // PGlite 模式
+  databaseUrl: config.databaseUrl  // 回退 PostgreSQL（若未配置则忽略）
+});
+
 const app = await buildApp({ db, jwtSecret: config.jwtSecret, dataDir });
 
 const clientDist = join(root, "dist", "client");

@@ -67,7 +67,7 @@ describe("source bundle service", () => {
     expect(second.version.modifiedCount).toBe(0);
     expect(second.newBlobCount).toBe(0);
 
-    const { rows: [blobRow] } = await db.pool.query("SELECT COUNT(*)::int AS c FROM source_blobs");
+    const { rows: [blobRow] } = await db.adapter.query("SELECT COUNT(*)::int AS c FROM source_blobs");
     expect(blobRow.c).toBe(3);
   });
 

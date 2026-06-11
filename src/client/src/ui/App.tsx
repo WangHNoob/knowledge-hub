@@ -13,6 +13,8 @@ import {
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { isTauri, selectFolder } from "../tauri";
+
 import {
   getBundleVersion,
   getDashboard,
@@ -230,7 +232,19 @@ function Sources() {
             onChange={(event) => setRootPath(event.target.value)}
             placeholder="例：D:/raw/2026-06-10"
             style={{ minWidth: 320 }}
+            readOnly={isTauri}
           />
+          {isTauri && (
+            <button
+              type="button"
+              onClick={async () => {
+                const picked = await selectFolder("选择资料根目录");
+                if (picked) setRootPath(picked);
+              }}
+            >
+              选择目录
+            </button>
+          )}
           <input
             value={note}
             onChange={(event) => setNote(event.target.value)}
@@ -495,7 +509,18 @@ function Maintenance() {
           <p>先扫描旧 kb-builder data 目录，只生成摘要，不导入、不改动文件。</p>
         </div>
         <div className="upload-form legacy">
-          <input value={path} onChange={(event) => setPath(event.target.value)} />
+          <input value={path} onChange={(event) => setPath(event.target.value)} readOnly={isTauri} />
+          {isTauri && (
+            <button
+              type="button"
+              onClick={async () => {
+                const picked = await selectFolder("选择旧知识库目录");
+                if (picked) setPath(picked);
+              }}
+            >
+              选择目录
+            </button>
+          )}
           <button
             onClick={async () => {
               setLoading(true);

@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { extname, join, posix, relative, resolve, sep } from "node:path";
-import type pg from "pg";
 
 import type {
   DatabaseHandle,
@@ -28,18 +27,18 @@ export function createSourceBundleService(db: DatabaseHandle, dataDir: string) {
 }
 
 export class SourceBundleService {
-  private readonly pool;
+  private readonly adapter;
   constructor(private readonly db: DatabaseHandle, private readonly dataDir: string) {
-    this.pool = db.pool;
+    this.adapter = db.adapter;
   }
 
   async listBundles(): Promise<SourceBundle[]> {
-    const { rows } = await this.pool.query("SELECT * FROM source_bundles ORDER BY bundle_id ASC");
+    const { rows } = await this.adapter.query("SELECT * FROM source_bundles ORDER BY bundle_id ASC");
     return rows.map(mapBundle);
   }
 
   async listVersions(bundleId: string): Promise<SourceBundleVersion[]> {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.adapter.query(
       "SELECT * FROM source_bundle_versions WHERE bundle_id = $1 ORDER BY created_at DESC, version_id DESC",
       [bundleId]
     );
@@ -47,7 +46,7 @@ export class SourceBundleService {
   }
 
   async getVersion(versionId: string): Promise<SourceBundleVersion | null> {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.adapter.query(
       "SELECT * FROM source_bundle_versions WHERE version_id = $1",
       [versionId]
     );
@@ -55,7 +54,7 @@ export class SourceBundleService {
   }
 
   async listFiles(versionId: string): Promise<SourceFileEntry[]> {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.adapter.query(
       "SELECT * FROM source_files WHERE version_id = $1 ORDER BY category ASC, logical_path ASC",
       [versionId]
     );
@@ -63,12 +62,12 @@ export class SourceBundleService {
   }
 
   async readFile(versionId: string, logicalPath: string): Promise<{ entry: SourceFileEntry; blob: SourceBlob; content: Buffer } | null> {
-    const { rows: fileRows } = await this.pool.query(
+    const { rows: fileRows } = await this.adapter.query(
       "SELECT * FROM source_files WHERE version_id = $1 AND logical_path = $2",
       [versionId, logicalPath]
     );
     if (fileRows.length === 0) return null;
-    const { rows: blobRows } = await this.pool.query(
+    const { rows: blobRows } = await this.adapter.query(
       "SELECT * FROM source_blobs WHERE content_hash = $1",
       [fileRows[0].content_hash]
     );
@@ -113,13 +112,12 @@ export class SourceBundleService {
     let totalBytes = 0;
     let newBlobCount = 0;
 
-    const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
+      await this.adapter.query("BEGIN");
 
       const fileInserts: Array<{ logicalPath: string; category: string; contentHash: string; byteSize: number }> = [];
       for (const file of entries) {
-        const { contentHash, byteSize, isNew } = await ensureBlob(client, this.dataDir, file.absolutePath);
+        const { contentHash, byteSize, isNew } = await ensureBlob(this.adapter, this.dataDir, file.absolutePath);
         if (isNew) newBlobCount += 1;
         const previous = parentMap.get(file.logicalPath);
         if (!previous) {
@@ -137,7 +135,7 @@ export class SourceBundleService {
       const removed = parentEntries.filter((entry) => !currentPaths.has(entry.logicalPath)).length;
       const label = options.note?.trim() ? `${timestamp}__${options.note.trim().slice(0, 64)}` : timestamp;
 
-      await client.query(
+      await this.adapter.query(
         `INSERT INTO source_bundle_versions
           (version_id, bundle_id, parent_version_id, label, note, created_by, created_at,
            file_count, added_count, modified_count, removed_count, unchanged_count, total_bytes)
@@ -147,18 +145,16 @@ export class SourceBundleService {
       );
 
       for (const file of fileInserts) {
-        await client.query(
+        await this.adapter.query(
           "INSERT INTO source_files (version_id, logical_path, category, content_hash, byte_size) VALUES ($1,$2,$3,$4,$5)",
           [versionId, file.logicalPath, file.category, file.contentHash, file.byteSize]
         );
       }
 
-      await client.query("COMMIT");
+      await this.adapter.query("COMMIT");
     } catch (error) {
-      await client.query("ROLLBACK");
+      await this.adapter.query("ROLLBACK");
       throw error;
-    } finally {
-      client.release();
     }
 
     const version = (await this.getVersion(versionId))!;
@@ -167,7 +163,7 @@ export class SourceBundleService {
   }
 
   private async findLatestVersion(bundleId: string): Promise<SourceBundleVersion | null> {
-    const { rows } = await this.pool.query(
+    const { rows } = await this.adapter.query(
       "SELECT * FROM source_bundle_versions WHERE bundle_id = $1 ORDER BY created_at DESC, version_id DESC LIMIT 1",
       [bundleId]
     );
@@ -175,7 +171,7 @@ export class SourceBundleService {
   }
 
   private async requireBundle(bundleId: string): Promise<SourceBundle> {
-    const { rows } = await this.pool.query("SELECT * FROM source_bundles WHERE bundle_id = $1", [bundleId]);
+    const { rows } = await this.adapter.query("SELECT * FROM source_bundles WHERE bundle_id = $1", [bundleId]);
     if (rows.length === 0) throw new Error(`未知资料集：${bundleId}`);
     return mapBundle(rows[0]);
   }
@@ -214,7 +210,7 @@ function walk(dir: string, onFile: (absolutePath: string) => void): void {
 }
 
 async function ensureBlob(
-  client: pg.PoolClient,
+  adapter: import("../db-adapter").DatabaseAdapter,
   dataDir: string,
   absolutePath: string
 ): Promise<{ contentHash: string; byteSize: number; isNew: boolean }> {
@@ -222,7 +218,7 @@ async function ensureBlob(
   const hash = `sha256:${createHash("sha256").update(content).digest("hex")}`;
   const byteSize = content.byteLength;
 
-  const { rows } = await client.query("SELECT storage_uri FROM source_blobs WHERE content_hash = $1", [hash]);
+  const { rows } = await adapter.query("SELECT storage_uri FROM source_blobs WHERE content_hash = $1", [hash]);
   if (rows.length > 0) return { contentHash: hash, byteSize, isNew: false };
 
   const hexOnly = hash.slice("sha256:".length);
@@ -234,7 +230,7 @@ async function ensureBlob(
   mkdirSync(targetDir, { recursive: true });
   writeFileSync(join(targetDir, fileName), content);
 
-  await client.query(
+  await adapter.query(
     "INSERT INTO source_blobs (content_hash, byte_size, storage_uri, first_seen_at) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
     [hash, byteSize, relUri, new Date().toISOString()]
   );

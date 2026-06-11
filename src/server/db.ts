@@ -1,38 +1,61 @@
+import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
 import bcrypt from "bcryptjs";
+import { join } from "node:path";
 
 import type { DatabaseHandle } from "./types";
+import { PostgresAdapter, PGliteAdapter, type DatabaseAdapter } from "./db-adapter";
 
 export interface CreateDatabaseOptions {
+  /** PostgreSQL 连接串（服务端模式） */
   databaseUrl?: string;
+  /** PGlite 数据目录（桌面模式） */
+  dataDir?: string;
+  /** 模式名（仅 PostgreSQL） */
   schema?: string;
+  /** 是否 seed 演示用户 */
   seedUsers?: boolean;
 }
 
 export async function createDatabase(options: CreateDatabaseOptions = {}): Promise<DatabaseHandle> {
-  const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error("缺少 DATABASE_URL（请在 .env 或部署环境中配置）。");
+  let adapter: DatabaseAdapter;
+  let schema = "public";
+
+  // 优先 PGlite（桌面模式）
+  if (options.dataDir) {
+    const dbPath = join(options.dataDir, "knowledge-hub.db");
+    const pglite = new PGlite(dbPath);
+    adapter = new PGliteAdapter(pglite);
+    await migrate(adapter, "public");
+    if (options.seedUsers ?? true) {
+      await seedDefaultUsers(adapter, "public");
+    }
   }
-  const schema = options.schema ?? "public";
+  // 否则 PostgreSQL（服务端模式）
+  else {
+    const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
+    if (!databaseUrl) {
+      throw new Error("缺少 DATABASE_URL 或 dataDir（请在 .env 或部署环境中配置）。");
+    }
+    schema = options.schema ?? "public";
+    const pool = new pg.Pool({ connectionString: databaseUrl });
 
-  const pool = new pg.Pool({ connectionString: databaseUrl });
+    if (schema !== "public") {
+      await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
+      await pool.query(`SET search_path TO "${schema}"`);
+    }
 
-  if (schema !== "public") {
-    await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
-    await pool.query(`SET search_path TO "${schema}"`);
-  }
-
-  await migrate(pool, schema);
-
-  if (options.seedUsers ?? true) {
-    await seedDefaultUsers(pool, schema);
+    adapter = new PostgresAdapter(pool, schema);
+    await migrate(adapter, schema);
+    if (options.seedUsers ?? true) {
+      await seedDefaultUsers(adapter, schema);
+    }
   }
 
   return {
-    pool,
+    adapter,
     schema,
-    close: async () => { await pool.end(); }
+    close: async () => { await adapter.close(); }
   };
 }
 
@@ -40,10 +63,10 @@ function schemaPrefix(schema: string): string {
   return schema === "public" ? "" : `"${schema}".`;
 }
 
-async function migrate(pool: pg.Pool, schema: string): Promise<void> {
+async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> {
   const p = schemaPrefix(schema);
 
-  await pool.query(`
+  await adapter.exec(`
     CREATE TABLE IF NOT EXISTS ${p}users (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
@@ -167,7 +190,7 @@ async function migrate(pool: pg.Pool, schema: string): Promise<void> {
   `);
 
   // 默认资料集
-  await pool.query(
+  await adapter.query(
     `INSERT INTO ${p}source_bundles (bundle_id, name, description, created_at)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (bundle_id) DO NOTHING`,
@@ -175,13 +198,13 @@ async function migrate(pool: pg.Pool, schema: string): Promise<void> {
   );
 }
 
-async function seedDefaultUsers(pool: pg.Pool, schema: string): Promise<void> {
+async function seedDefaultUsers(adapter: DatabaseAdapter, schema: string): Promise<void> {
   const p = schemaPrefix(schema);
-  const { rows } = await pool.query(`SELECT COUNT(*)::int AS count FROM ${p}users`);
+  const { rows } = await adapter.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM ${p}users`);
   if (rows[0].count > 0) return;
 
   const stmt = `INSERT INTO ${p}users (id, username, password_hash, role, display_name) VALUES ($1, $2, $3, $4, $5)`;
-  await pool.query(stmt, ["usr_admin", "admin", bcrypt.hashSync("adminpw", 8), "admin", "管理员"]);
-  await pool.query(stmt, ["usr_dev", "dev", bcrypt.hashSync("devpw", 8), "developer", "主开发者"]);
-  await pool.query(stmt, ["usr_viewer", "viewer", bcrypt.hashSync("viewpw", 8), "viewer", "访客"]);
+  await adapter.query(stmt, ["usr_admin", "admin", bcrypt.hashSync("adminpw", 8), "admin", "管理员"]);
+  await adapter.query(stmt, ["usr_dev", "dev", bcrypt.hashSync("devpw", 8), "developer", "主开发者"]);
+  await adapter.query(stmt, ["usr_viewer", "viewer", bcrypt.hashSync("viewpw", 8), "viewer", "访客"]);
 }

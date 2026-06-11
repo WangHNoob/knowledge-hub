@@ -18,7 +18,7 @@ export const config = {
   host: optional("HOST", "0.0.0.0"),
   dataDir: optional("KH_DATA_DIR", "./data"),
   jwtSecret: required("KH_JWT_SECRET"),
-  databaseUrl: required("DATABASE_URL")
+  databaseUrl: optional("DATABASE_URL", "")  // 桌面模式可选，服务端模式必须
 };
 
 export const testConfig = {
