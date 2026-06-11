@@ -1,19 +1,17 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute, resolve } from "node:path";
 
 import staticPlugin from "@fastify/static";
 
 import { buildApp } from "./app";
+import { config } from "./config";
 import { createDatabase } from "./db";
 
 const root = process.cwd();
-const dataDir = process.env.KH_DATA_DIR ?? join(root, "data");
-const jwtSecret = process.env.KH_JWT_SECRET ?? "dev-secret-change-me";
-const port = Number(process.env.PORT ?? 4174);
-const host = process.env.HOST ?? "0.0.0.0";
+const dataDir = isAbsolute(config.dataDir) ? config.dataDir : resolve(root, config.dataDir);
 
-const db = await createDatabase();
-const app = await buildApp({ db, jwtSecret, dataDir });
+const db = await createDatabase({ databaseUrl: config.databaseUrl });
+const app = await buildApp({ db, jwtSecret: config.jwtSecret, dataDir });
 
 const clientDist = join(root, "dist", "client");
 if (existsSync(clientDist)) {
@@ -27,5 +25,5 @@ if (existsSync(clientDist)) {
   });
 }
 
-await app.listen({ host, port });
-console.log(`Knowledge Hub listening on http://${host}:${port}`);
+await app.listen({ host: config.host, port: config.port });
+console.log(`Knowledge Hub listening on http://${config.host}:${config.port}`);

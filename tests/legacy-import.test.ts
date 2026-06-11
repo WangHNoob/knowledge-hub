@@ -10,8 +10,7 @@ import { createDatabase } from "../src/server/db";
 import { importLegacyAsDraftPackage } from "../src/server/services/legacyImportService";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
 import type { DatabaseHandle } from "../src/server/types";
-
-const TEST_URL = process.env.KH_TEST_DATABASE_URL || "postgres://postgres:whbwhb2026@127.0.0.1:5432/knowledge_hub_test";
+import { TEST_DATABASE_URL } from "./helpers/testEnv";
 
 describe("legacy import service", () => {
   let dir: string;
@@ -20,13 +19,13 @@ describe("legacy import service", () => {
 
   beforeAll(async () => {
     schema = `test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-    db = await createDatabase({ databaseUrl: TEST_URL, schema, seedUsers: false });
+    db = await createDatabase({ databaseUrl: TEST_DATABASE_URL, schema, seedUsers: false });
     dir = mkdtempSync(join(tmpdir(), "kh-legacy-"));
   });
 
   afterAll(async () => {
     await db.close();
-    const pool = new pg.Pool({ connectionString: TEST_URL });
+    const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL });
     await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await pool.end();
     rmSync(dir, { recursive: true, force: true });

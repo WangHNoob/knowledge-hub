@@ -9,10 +9,11 @@ export interface CreateDatabaseOptions {
   seedUsers?: boolean;
 }
 
-const DEFAULT_URL = "postgres://postgres:whbwhb2026@127.0.0.1:5432/knowledge_hub";
-
 export async function createDatabase(options: CreateDatabaseOptions = {}): Promise<DatabaseHandle> {
-  const databaseUrl = options.databaseUrl || process.env.DATABASE_URL || DEFAULT_URL;
+  const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("缺少 DATABASE_URL（请在 .env 或部署环境中配置）。");
+  }
   const schema = options.schema ?? "public";
 
   const pool = new pg.Pool({ connectionString: databaseUrl });
