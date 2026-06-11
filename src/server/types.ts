@@ -155,3 +155,48 @@ export interface AgentEvent {
   status: "hit" | "miss";
   createdAt: string;
 }
+
+export type PipelineStage = "convert" | "extract" | "tables" | "graph" | "viz";
+export type BuildRunStatus = "running" | "completed" | "failed";
+export type QualitySeverity = "blocking" | "warning" | "info";
+
+export interface KnowledgeBuildRun {
+  runId: string;
+  sourceVersionId: string;
+  packageId: string | null;
+  adapter: "native";
+  stages: PipelineStage[];
+  model: string;
+  wikiSpecsHash: string;
+  qualityProfileId: string;
+  status: BuildRunStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string;
+  outputUri: string;
+  config: Record<string, unknown>;
+}
+
+export interface QualityGateProfile {
+  profileId: string;
+  name: string;
+  active: boolean;
+  config: QualityGateConfig;
+  createdBy: string;
+  updatedAt: string;
+}
+
+export interface QualityGateConfig {
+  minPackageScore: number;
+  rules: Record<string, Record<string, unknown>>;
+}
+
+export interface QualityFinding {
+  ruleId: string;
+  severity: QualitySeverity;
+  componentId?: string;
+  title: string;
+  description: string;
+  suggestedAction: string;
+  scoreImpact: number;
+}

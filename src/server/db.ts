@@ -119,6 +119,32 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE INDEX IF NOT EXISTS idx_sf_hash ON ${p}source_files(content_hash);
 
+    CREATE TABLE IF NOT EXISTS ${p}quality_gate_profiles (
+      profile_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT false,
+      config_json JSONB NOT NULL DEFAULT '{}',
+      created_by TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS ${p}knowledge_build_runs (
+      run_id TEXT PRIMARY KEY,
+      source_version_id TEXT NOT NULL REFERENCES ${p}source_bundle_versions(version_id) ON DELETE CASCADE,
+      package_id TEXT,
+      adapter TEXT NOT NULL,
+      stages JSONB NOT NULL DEFAULT '[]',
+      model TEXT NOT NULL DEFAULT '',
+      wiki_specs_hash TEXT NOT NULL DEFAULT '',
+      quality_profile_id TEXT NOT NULL REFERENCES ${p}quality_gate_profiles(profile_id),
+      status TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at TIMESTAMPTZ,
+      error TEXT NOT NULL DEFAULT '',
+      output_uri TEXT NOT NULL DEFAULT '',
+      config_json JSONB NOT NULL DEFAULT '{}'
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}asset_packages (
       package_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -195,6 +221,26 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (bundle_id) DO NOTHING`,
     ["default", "默认资料集", "gamedata 表格 + gamedocs 文档统一版本化", new Date(0).toISOString()]
+  );
+
+  const defaultQualityProfile = {
+    minPackageScore: 0.75,
+    rules: {
+      wikiSpecCompleteness: { enabled: true, severity: "blocking", minScore: 0.75 },
+      requiredFacts: { enabled: true, severity: "warning", minScore: 0.7 },
+      frontmatterSource: { enabled: true, severity: "blocking" },
+      metaWikiSync: { enabled: true, severity: "blocking" },
+      tableRegistryConsistency: { enabled: true, severity: "warning", minScore: 0.9 },
+      graphIntegrity: { enabled: true, severity: "blocking", minScore: 0.7 },
+      indexCoverage: { enabled: true, severity: "warning", minScore: 0.9 },
+      conceptOveruse: { enabled: true, severity: "warning", maxRatio: 0.35 }
+    }
+  };
+  await adapter.query(
+    `INSERT INTO ${p}quality_gate_profiles (profile_id, name, active, config_json, created_by, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (profile_id) DO NOTHING`,
+    ["default", "默认知识质量门禁", true, defaultQualityProfile, "system", new Date(0).toISOString()]
   );
 }
 
