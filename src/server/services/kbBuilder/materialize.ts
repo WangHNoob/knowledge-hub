@@ -1,5 +1,5 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, normalize } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import type { DatabaseHandle } from "../../types";
 import type { SourceBundleService } from "../sourceBundleService";
 import type { RunWorkspace } from "./types";
@@ -18,16 +18,28 @@ export async function materializeSourceVersion(options: {
   mkdirSync(dataDir, { recursive: true });
 
   for (const file of files) {
+    const relative = normalizeSourceLogicalPath(file.logicalPath);
     const read = await options.sourceService.readFile(options.versionId, file.logicalPath);
     if (!read) throw new Error(`Source file content missing: ${file.logicalPath}`);
-    const relative = normalize(file.logicalPath).replace(/^(\.\.[/\\])+/, "");
-    if (!relative.startsWith("gamedocs") && !relative.startsWith("gamedata")) {
-      throw new Error(`Unsupported source logical path: ${file.logicalPath}`);
-    }
     const target = join(dataDir, relative);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, read.content);
   }
 
   return { runId: options.runId, workspaceDir, dataDir, files };
+}
+
+function normalizeSourceLogicalPath(logicalPath: string): string {
+  const withPosixSeparators = logicalPath.replace(/\\/g, "/");
+  const segments = withPosixSeparators.split("/");
+  const root = segments[0];
+  if (
+    posix.isAbsolute(withPosixSeparators) ||
+    win32.isAbsolute(logicalPath) ||
+    segments.includes("..") ||
+    (root !== "gamedocs" && root !== "gamedata")
+  ) {
+    throw new Error(`Unsupported source logical path: ${logicalPath}`);
+  }
+  return posix.normalize(withPosixSeparators);
 }
