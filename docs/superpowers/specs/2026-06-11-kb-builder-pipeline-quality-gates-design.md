@@ -60,9 +60,9 @@ The migrated pipeline must preserve these stages and outputs:
 
 Components are pipeline artifacts, not source files. Source files remain evidence and trace inputs.
 
-### Pipeline Adapter Boundary
+### Native Pipeline Boundary
 
-The server should introduce a `KbBuilderPipelineService` with an adapter boundary:
+The server should introduce a native `KbBuilderPipelineService` boundary:
 
 ```text
 materializeSourceVersion(versionId) -> isolated run workspace
@@ -73,7 +73,7 @@ run quality gate
 register package/components/evidence/tasks
 ```
 
-The first implementation can execute a vendored or configured kb-builder runner as a subprocess to preserve old behavior. The rest of Knowledge Hub must treat it as an adapter so future implementations can port stages to TypeScript or replace the runner without changing the product workflow.
+The first implementation must not call the old `run_pipeline.py` or `scripts/build_wiki.py` entrypoints. It should reimplement the stage semantics in this TypeScript product while preserving the old output contract, wiki spec format, table registry format, graph relation semantics, and generated asset package shape. Old project code is reference material, not a runtime dependency.
 
 ## Data Model
 
@@ -353,7 +353,7 @@ Non-admin users see a read-only summary.
 ## Error Handling
 
 - If source materialization fails, create a failed build run and no package.
-- If pipeline subprocess fails, store stderr/stdout in the run error/output log and create no package unless outputs are explicitly recoverable.
+- If native stage execution fails, store the stage name, error message, and captured diagnostic log in the run error/output log and create no package unless outputs are explicitly recoverable.
 - If pipeline succeeds but quality gate has blocking findings, create the package with status `draft` and review tasks; do not mark it publishable.
 - If quality gate itself fails, mark run failed because trust cannot be established.
 
@@ -364,7 +364,7 @@ Use TDD for implementation.
 Required tests:
 
 - Source version materialization preserves `gamedocs/` and `gamedata/` logical paths.
-- A mocked kb-builder output tree registers exactly one package.
+- A minimal native pipeline fixture registers exactly one package.
 - Pipeline output files register correct component groups/kinds.
 - Wiki spec completeness detects missing required sections.
 - Required facts completeness detects missing facts keys.
@@ -384,7 +384,7 @@ Required tests:
 
 ## Open Implementation Notes
 
-- The old pipeline should be vendored or configured as an adapter. The product-facing contract must be stable even if the runner changes.
+- The old pipeline should not be invoked as a subprocess. Port the stage contracts natively and keep the product-facing contract stable as internals improve.
 - `wiki_specs` used for a run must be copied into the run workspace and hashed, so quality results can be reproduced.
 - Build output should be stored under the app data directory, not in the source import storage directory.
 - The generated package should retain the old output tree paths as `legacyPath` or `storageUri` so users can inspect familiar files.
