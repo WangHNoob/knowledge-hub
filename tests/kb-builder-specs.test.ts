@@ -26,10 +26,11 @@ describe("loadWikiSpecs", () => {
           "## Overview",
           "## Core Rules",
           "## Data Dependencies",
-          "| key | required |",
-          "| --- | --- |",
-          "| unlock_condition | yes |",
-          "| config_table | yes |",
+          "| key | default | required |",
+          "| --- | --- | --- |",
+          "| unlock_condition | no | yes |",
+          "| config_table | no | yes |",
+          "| debug_flag | yes | no |",
         ].join("\n"),
       );
 
@@ -41,8 +42,8 @@ describe("loadWikiSpecs", () => {
         "Data Dependencies",
       ]);
       expect(specs.specs.system.requiredFacts).toEqual(["unlock_condition", "config_table"]);
-      expect(specs.entityTypes.has("system")).toBe(true);
-      expect(specs.relationTypes.has("configured_in")).toBe(true);
+      expect(specs.entityTypes).toEqual(new Set(["system", "table", "concept"]));
+      expect(specs.relationTypes).toEqual(new Set(["depends_on", "configured_in", "references"]));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
