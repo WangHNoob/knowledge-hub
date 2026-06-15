@@ -6,6 +6,7 @@ import type {
   DatabaseHandle,
   EvidenceCoverage,
   EvidenceRecord,
+  McpAuditRecord,
   ReleaseRecord,
   ReviewSeverity,
   ReviewTask,
@@ -161,6 +162,11 @@ export class KnowledgeService {
     const { rows } = await this.adapter.query("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50");
     return rows.map(mapAgentEvent);
   }
+
+  async listMcpAudit(): Promise<McpAuditRecord[]> {
+    const { rows } = await this.adapter.query("SELECT * FROM mcp_audit ORDER BY created_at DESC LIMIT 100");
+    return rows.map(mapMcpAudit);
+  }
 }
 
 function countBy<T, K extends string>(items: T[], key: (item: T) => K): Record<K, number> {
@@ -189,9 +195,9 @@ function mapPackage(row: Record<string, unknown>): AssetPackage {
     status: row.status as AssetPackage["status"],
     description: row.description as string,
     createdByRunId: row.created_by_run_id as string,
-    sourceVersionIds: row.source_version_ids as string[] ?? [],
-    legacyPaths: row.legacy_paths as string[] ?? [],
-    qualitySummary: row.quality_summary as Record<string, unknown> ?? {},
+    sourceVersionIds: jsonArray(row.source_version_ids),
+    legacyPaths: jsonArray(row.legacy_paths),
+    qualitySummary: jsonObject(row.quality_summary),
     createdAt: String(row.created_at)
   };
 }
@@ -207,8 +213,8 @@ function mapComponent(row: Record<string, unknown>): AssetComponent {
     status: row.status as string,
     legacyPath: row.legacy_path as string,
     storageUri: row.storage_uri as string,
-    sourceRefs: row.source_refs as string[] ?? [],
-    quality: row.quality as Record<string, unknown> ?? {}
+    sourceRefs: jsonArray(row.source_refs),
+    quality: jsonObject(row.quality)
   };
 }
 
@@ -244,9 +250,14 @@ function mapRelease(row: Record<string, unknown>): ReleaseRecord {
     releaseId: row.release_id as string,
     version: row.version as string,
     status: row.status as ReleaseRecord["status"],
-    packageIds: row.package_ids as string[] ?? [],
+    packageIds: jsonArray(row.package_ids),
     publishedAt: row.published_at ? String(row.published_at) : null,
-    qualityGate: row.quality_gate as Record<string, unknown> ?? {}
+    publishedBy: String(row.published_by ?? ""),
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at ?? ""),
+    manifestHash: String(row.manifest_hash ?? ""),
+    manifest: jsonObject(row.manifest_json),
+    qualityGate: jsonObject(row.quality_gate)
   };
 }
 
@@ -255,9 +266,54 @@ function mapAgentEvent(row: Record<string, unknown>): AgentEvent {
     eventId: row.event_id as string,
     releaseId: row.release_id as string,
     query: row.query as string,
-    hitComponentIds: row.hit_component_ids as string[] ?? [],
-    qualityFlags: row.quality_flags as string[] ?? [],
+    hitComponentIds: jsonArray(row.hit_component_ids),
+    qualityFlags: jsonArray(row.quality_flags),
     status: row.status as AgentEvent["status"],
+    feedbackType: String(row.feedback_type ?? "hit") as AgentEvent["feedbackType"],
+    suggestedAction: String(row.suggested_action ?? ""),
+    taskId: String(row.task_id ?? ""),
     createdAt: String(row.created_at)
   };
+}
+
+function mapMcpAudit(row: Record<string, unknown>): McpAuditRecord {
+  return {
+    auditId: row.audit_id as string,
+    sessionId: String(row.session_id ?? ""),
+    agentRole: String(row.agent_role ?? ""),
+    toolName: row.tool_name as string,
+    releaseId: row.release_id ? String(row.release_id) : null,
+    queryPayload: jsonObject(row.query_payload),
+    hitComponentIds: jsonArray(row.hit_component_ids),
+    qualityFlags: jsonArray(row.quality_flags),
+    status: row.status as McpAuditRecord["status"],
+    latencyMs: Number(row.latency_ms ?? 0),
+    createdAt: String(row.created_at)
+  };
+}
+
+function jsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === "string" && value.length > 0) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === "string" && value.length > 0) {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }

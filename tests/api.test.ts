@@ -218,6 +218,97 @@ describe("knowledge hub api", () => {
     expect(read.json().profile.config.minPackageScore).toBe(0.8);
   });
 
+  it("creates, publishes, reads current, and rolls back immutable releases through the api", async () => {
+    const { app, token } = await getToken();
+    const first = await insertPackageFixture(db, "api_first");
+    const second = await insertPackageFixture(db, "api_second");
+
+    const draftOne = await app.inject({
+      method: "POST",
+      url: "/api/releases",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { version: "api.1", packageIds: [first.packageId] }
+    });
+    expect(draftOne.statusCode, JSON.stringify(draftOne.json())).toBe(200);
+    expect(draftOne.json().release.status).toBe("draft");
+
+    const publishedOne = await app.inject({
+      method: "POST",
+      url: `/api/releases/${draftOne.json().release.releaseId}/publish`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(publishedOne.statusCode, JSON.stringify(publishedOne.json())).toBe(200);
+    expect(publishedOne.json().release.manifestHash).toMatch(/^sha256:/u);
+    expect(publishedOne.json().release.manifest.componentIds).toContain(first.componentId);
+
+    const draftTwo = await app.inject({
+      method: "POST",
+      url: "/api/releases",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { version: "api.2", packageIds: [second.packageId] }
+    });
+    const publishedTwo = await app.inject({
+      method: "POST",
+      url: `/api/releases/${draftTwo.json().release.releaseId}/publish`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(publishedTwo.statusCode).toBe(200);
+
+    const current = await app.inject({
+      method: "GET",
+      url: "/api/releases/current",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(current.statusCode).toBe(200);
+    expect(current.json().release.releaseId).toBe(publishedTwo.json().release.releaseId);
+
+    const rollback = await app.inject({
+      method: "POST",
+      url: "/api/releases/rollback",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { releaseId: publishedOne.json().release.releaseId }
+    });
+    expect(rollback.statusCode).toBe(200);
+    expect(rollback.json().release.releaseId).toBe(publishedOne.json().release.releaseId);
+  });
+
+  it("rejects publishing when selected packages have open blocking tasks", async () => {
+    const { app, token } = await getToken();
+    const fixture = await insertPackageFixture(db, "api_blocked");
+    await db.adapter.query(
+      `INSERT INTO review_tasks
+        (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        `task_${fixture.packageId}`,
+        fixture.packageId,
+        fixture.componentId,
+        "blocking",
+        "open",
+        "Blocking issue",
+        "must resolve",
+        "resolve before publish",
+        new Date().toISOString()
+      ]
+    );
+
+    const draft = await app.inject({
+      method: "POST",
+      url: "/api/releases",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { version: "api.blocked", packageIds: [fixture.packageId] }
+    });
+    expect(draft.statusCode).toBe(200);
+
+    const rejected = await app.inject({
+      method: "POST",
+      url: `/api/releases/${draft.json().release.releaseId}/publish`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json().error).toMatch(/blocking/i);
+  });
+
   it("tests OpenAI-compatible model connectivity without returning the api key", async () => {
     const { app, token } = await getToken();
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ id: "chatcmpl-test" }), { status: 200 }));
@@ -263,4 +354,45 @@ async function waitForBuildRun(app: FastifyInstance, token: string, runId: strin
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Build run ${runId} did not finish.`);
+}
+
+async function insertPackageFixture(db: DatabaseHandle, suffix: string) {
+  const packageId = `pkg_${suffix}_${randomUUID().slice(0, 6)}`;
+  const componentId = `cmp_${suffix}_${randomUUID().slice(0, 6)}`;
+  await db.adapter.query(
+    `INSERT INTO asset_packages
+      (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [
+      packageId,
+      `Package ${suffix}`,
+      "kb_builder_pipeline",
+      "draft",
+      "api fixture",
+      "run_api_fixture",
+      JSON.stringify([`srcv_${suffix}`]),
+      JSON.stringify([]),
+      JSON.stringify({ overallScore: 0.91, blockingCount: 0, warningCount: 0 }),
+      new Date().toISOString()
+    ]
+  );
+  await db.adapter.query(
+    `INSERT INTO asset_components
+      (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [
+      componentId,
+      packageId,
+      `wiki/${suffix}.md`,
+      "wiki",
+      "wiki_page",
+      `Page ${suffix}`,
+      "draft",
+      `wiki/${suffix}.md`,
+      `kb-build-runs/run_api_fixture/data/wiki/${suffix}.md`,
+      JSON.stringify([`gamedocs/${suffix}.md`]),
+      JSON.stringify({ confidence: 0.91 })
+    ]
+  );
+  return { packageId, componentId };
 }

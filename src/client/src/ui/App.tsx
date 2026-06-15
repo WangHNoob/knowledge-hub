@@ -11,6 +11,7 @@ import {
   PackagePlus,
   Play,
   RefreshCw,
+  RotateCcw,
   SearchCheck
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -20,27 +21,35 @@ import { isTauri, selectFolder } from "../tauri";
 
 import {
   getBundleVersion,
+  getCurrentRelease,
   getDashboard,
   getPackage,
   getQualityProfile,
   getToken,
   buildKnowledgePackage,
+  createRelease,
   importLegacy,
   importSourceBundle,
   listAgentEvents,
   listBuildRuns,
   listBundleVersions,
+  listMcpAudit,
   listPackages,
   listReleases,
   listReviewTasks,
   login,
+  publishRelease,
+  rollbackRelease,
   scanLegacy,
   setToken,
+  simulateMcpQuery,
   testModelConnectivity,
   updateQualityProfile,
   type AssetPackage,
   type BuildModelConfig,
+  type KnowledgeEnvelope,
   type KnowledgeBuildRun,
+  type ReleaseRecord,
   type SourceBundleVersion,
   type SourceFileChange
 } from "../api";
@@ -498,6 +507,42 @@ function runStatusLabel(status: string): string {
   return status;
 }
 
+const MCP_TOOLS = [
+  "kb_search",
+  "kb_resolve_topic",
+  "kb_get_page",
+  "kb_get_section",
+  "kb_list_pages",
+  "kb_get_page_tables",
+  "kb_get_entity",
+  "kb_get_neighbors",
+  "kb_list_entities",
+  "kb_get_relations",
+  "kb_list_tables",
+  "kb_get_table_schema",
+  "kb_query_table",
+  "kb_validate_table",
+  "kb_check_table_value",
+  "kb_get_quality",
+  "kb_get_evidence",
+  "kb_get_release"
+];
+
+function releaseVersion(): string {
+  return new Date().toISOString().slice(0, 10).replace(/-/g, ".") + ".001";
+}
+
+function qualityScore(summary: Record<string, unknown>): string {
+  const value = summary.overallScore ?? summary.score ?? summary.confidence;
+  if (typeof value === "number") return `${Math.round(value * 100)}%`;
+  if (typeof value === "string" && value.trim()) return value;
+  return "n/a";
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
 function Sources() {
   const queryClient = useQueryClient();
   const bundleId = "default";
@@ -764,42 +809,294 @@ function Review() {
 }
 
 function Release() {
-  const { data, isLoading, error } = useQuery({ queryKey: ["releases"], queryFn: listReleases });
-  if (isLoading) return <Loading title="正在读取发布版本" />;
-  if (error) return <ErrorState error={error} />;
+  const queryClient = useQueryClient();
+  const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
+  const [version, setVersion] = useState(() => releaseVersion());
+  const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
+  const tasks = useQuery({ queryKey: ["review", "blocking"], queryFn: () => listReviewTasks("blocking") });
+  const releases = useQuery({ queryKey: ["releases"], queryFn: listReleases });
+  const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
+  const [draft, setDraft] = useState<ReleaseRecord | null>(null);
+
+  const blockers = (tasks.data ?? []).filter((task) => task.status === "open" && task.severity === "blocking" && selectedPackageIds.includes(task.packageId));
+  const selectedPackages = (packages.data ?? []).filter((pkg) => selectedPackageIds.includes(pkg.packageId));
+  const selectedComponents = selectedPackages.reduce((sum, pkg) => sum + Number(pkg.qualitySummary.componentCount ?? 0), 0);
+  const createMutation = useMutation({
+    mutationFn: () => createRelease(version.trim(), selectedPackageIds),
+    onSuccess: async (release) => {
+      setDraft(release);
+      await queryClient.invalidateQueries({ queryKey: ["releases"] });
+    }
+  });
+  const publishMutation = useMutation({
+    mutationFn: async () => publishRelease(draft?.releaseId ?? ""),
+    onSuccess: async () => {
+      setDraft(null);
+      setVersion(releaseVersion());
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["releases"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    }
+  });
+  const rollbackMutation = useMutation({
+    mutationFn: rollbackRelease,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["releases"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    }
+  });
+
+  if (packages.isLoading || releases.isLoading || current.isLoading || tasks.isLoading) return <Loading title="正在读取发布工作台" />;
+  if (packages.error || releases.error || current.error || tasks.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error} />;
+
   return (
     <Page title="发布" subtitle="发布版本是 Agent 正式消费的不可变知识视图。">
-      <div className="table">
-        {(data ?? []).map((release) => (
-          <div className="table-row" key={release.releaseId}>
-            <strong>{release.version}</strong>
-            <span>{release.releaseId}</span>
-            <Badge label={release.status} />
-            <span>{release.packageIds.length} 个资产包</span>
+      <div className="release-workbench">
+        <section className="release-panel">
+          <div className="detail-head">
+            <div>
+              <h2>选择资产包</h2>
+              <p>draft/reviewing/approved 都可进入发布候选，但 open blocking 任务会阻断发布。</p>
+            </div>
+            <Badge label={`${selectedPackageIds.length} selected`} />
           </div>
-        ))}
+          <div className="package-picker">
+            {(packages.data ?? []).map((pkg) => {
+              const selected = selectedPackageIds.includes(pkg.packageId);
+              const pkgBlockers = (tasks.data ?? []).filter((task) => task.status === "open" && task.packageId === pkg.packageId && task.severity === "blocking");
+              return (
+                <button
+                  key={pkg.packageId}
+                  className={selected ? "package-row selected" : "package-row"}
+                  onClick={() => setSelectedPackageIds((currentIds) => selected
+                    ? currentIds.filter((id) => id !== pkg.packageId)
+                    : [...currentIds, pkg.packageId])}
+                >
+                  <strong>{pkg.name}</strong>
+                  <span>{pkg.status} · score {qualityScore(pkg.qualitySummary)}</span>
+                  <small>{pkg.packageId}</small>
+                  {pkgBlockers.length > 0 && <Badge label={`${pkgBlockers.length} blocking`} tone="hot" />}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="release-panel">
+          <div className="detail-head">
+            <div>
+              <h2>发布预览</h2>
+              <p>发布后会冻结 package/component/source 以及质量摘要，Agent 只读 current release。</p>
+            </div>
+            <Badge label={blockers.length ? "blocked" : "ready"} tone={blockers.length ? "hot" : "ok"} />
+          </div>
+          <label className="field-label">
+            版本号
+            <input value={version} onChange={(event) => setVersion(event.target.value)} />
+          </label>
+          <div className="metrics compact release-metrics">
+            <Metric label="资产包" value={selectedPackages.length} hint="本次发布包含" />
+            <Metric label="来源版本" value={new Set(selectedPackages.flatMap((pkg) => pkg.sourceVersionIds)).size} hint="冻结到 manifest" />
+            <Metric label="组件估算" value={selectedComponents || "-"} hint="发布时实际冻结" />
+          </div>
+          {blockers.length > 0 ? (
+            <div className="warning-list">
+              {blockers.map((task) => <p key={task.taskId}>{task.packageId} · {task.title}</p>)}
+            </div>
+          ) : (
+            <p className="notice">门禁通过：所选资产包没有 open blocking 任务。</p>
+          )}
+          {draft && (
+            <div className="release-draft">
+              <strong>草案：{draft.version}</strong>
+              <code>{draft.releaseId}</code>
+            </div>
+          )}
+          <div className="detail-actions">
+            <button
+              className="primary-action"
+              disabled={selectedPackageIds.length === 0 || blockers.length > 0 || !version.trim() || createMutation.isPending}
+              onClick={() => createMutation.mutate()}
+            >
+              <GitBranch size={16} />
+              {createMutation.isPending ? "创建中..." : "创建发布草案"}
+            </button>
+            <button
+              className="primary-action"
+              disabled={!draft || blockers.length > 0 || publishMutation.isPending}
+              onClick={() => publishMutation.mutate()}
+            >
+              <CheckCircle2 size={16} />
+              {publishMutation.isPending ? "发布中..." : "发布为 Agent 当前版本"}
+            </button>
+          </div>
+          {(createMutation.error || publishMutation.error) && (
+            <p className="error">{errorMessage(createMutation.error ?? publishMutation.error, "发布失败。")}</p>
+          )}
+        </section>
+
+        <section className="release-panel">
+          <div className="detail-head">
+            <div>
+              <h2>Agent 当前版本</h2>
+              <p>{current.data ? current.data.releaseId : "还没有 published release。"}</p>
+            </div>
+            {current.data && <Badge label={current.data.version} tone="ok" />}
+          </div>
+          {current.data && (
+            <div className="release-current">
+              <strong>{current.data.manifestHash || "manifest pending"}</strong>
+              <span>{current.data.publishedAt}</span>
+              <span>{current.data.packageIds.length} 个资产包</span>
+            </div>
+          )}
+          <h3>发布历史</h3>
+          <div className="release-history">
+            {(releases.data ?? []).map((release) => (
+              <article className="history-row" key={release.releaseId}>
+                <div>
+                  <strong>{release.version}</strong>
+                  <span>{release.releaseId}</span>
+                  <small>{release.manifestHash}</small>
+                </div>
+                <div className="detail-actions">
+                  <Badge label={release.status} tone={release.status === "published" ? "ok" : undefined} />
+                  <button
+                    className="icon-button"
+                    title="回滚到此发布"
+                    disabled={release.status !== "published" || current.data?.releaseId === release.releaseId || rollbackMutation.isPending}
+                    onClick={() => rollbackMutation.mutate(release.releaseId)}
+                  >
+                    <RotateCcw size={16} />
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
       </div>
     </Page>
   );
 }
 
 function AgentFeedback() {
-  const { data, isLoading, error } = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
-  if (isLoading) return <Loading title="正在读取 Agent 反馈" />;
-  if (error) return <ErrorState error={error} />;
+  const queryClient = useQueryClient();
+  const [toolName, setToolName] = useState("kb_search");
+  const [payload, setPayload] = useState('{\n  "query": "Battle System"\n}');
+  const [envelope, setEnvelope] = useState<KnowledgeEnvelope | null>(null);
+  const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
+  const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
+  const simulate = useMutation({
+    mutationFn: async () => simulateMcpQuery(toolName, JSON.parse(payload) as Record<string, unknown>),
+    onSuccess: async (result) => {
+      setEnvelope(result);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["agent-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["mcp-audit"] }),
+        queryClient.invalidateQueries({ queryKey: ["review"] })
+      ]);
+    }
+  });
+  if (events.isLoading || audit.isLoading) return <Loading title="正在读取 MCP 控制台" />;
+  if (events.error || audit.error) return <ErrorState error={events.error ?? audit.error} />;
+  const configSnippet = {
+    mcpServers: {
+      "knowledge-hub": {
+        command: "npm",
+        args: ["run", "mcp:stdio"],
+        cwd: "D:/knowledge-hub"
+      }
+    }
+  };
   return (
-    <Page title="Agent 反馈" subtitle="未命中和低质量命中会回流成知识库维护优先级。">
-      <div className="event-list">
-        {(data ?? []).map((event) => (
-          <article className="event" key={event.eventId}>
-            <Badge label={event.status} tone={event.status === "miss" ? "hot" : "ok"} />
+    <Page title="MCP 控制台" subtitle="Agent 通过 Knowledge MCP 只读 current release；审计和反馈会回流为维护任务。">
+      <div className="mcp-console">
+        <section className="mcp-panel">
+          <div className="detail-head">
             <div>
-              <strong>{event.query}</strong>
-              <span>{event.hitComponentIds.length ? `命中 ${event.hitComponentIds.join(", ")}` : "未命中任何资产"}</span>
+              <h2>启动命令</h2>
+              <p>在支持 MCP stdio 的 Agent 客户端里使用 OpenAI-compatible 风格的工具调用配置。</p>
             </div>
-            <small>{event.createdAt}</small>
-          </article>
-        ))}
+            <Badge label="stdio" />
+          </div>
+          <code className="code-block">npm run mcp:stdio</code>
+          <textarea className="code-editor small" value={JSON.stringify(configSnippet, null, 2)} readOnly />
+        </section>
+
+        <section className="mcp-panel">
+          <div className="detail-head">
+            <div>
+              <h2>模拟查询</h2>
+              <p>调用与 MCP 同源的 QueryService，便于桌面端验证 envelope、trace 和质量 flags。</p>
+            </div>
+            <Badge label={toolName} tone="ok" />
+          </div>
+          <div className="model-grid">
+            <label className="field-label">
+              Tool
+              <select value={toolName} onChange={(event) => setToolName(event.target.value)}>
+                {MCP_TOOLS.map((tool) => <option key={tool} value={tool}>{tool}</option>)}
+              </select>
+            </label>
+            <label className="field-label model-secret">
+              Payload JSON
+              <textarea className="code-editor small" value={payload} onChange={(event) => setPayload(event.target.value)} spellCheck={false} />
+            </label>
+          </div>
+          <button className="primary-action" disabled={simulate.isPending} onClick={() => simulate.mutate()}>
+            <Play size={16} />
+            {simulate.isPending ? "查询中..." : "运行模拟查询"}
+          </button>
+          {simulate.error && <p className="error">{simulate.error instanceof Error ? simulate.error.message : String(simulate.error)}</p>}
+          {envelope && (
+            <div className="envelope-view">
+              <div className="metrics compact">
+                <Metric label="Release" value={envelope.release.version} hint={envelope.release.releaseId} />
+                <Metric label="组件命中" value={envelope.trace.componentIds.length} hint={envelope.trace.componentIds.join(", ") || "none"} />
+                <Metric label="质量 flags" value={envelope.qualityFlags.length} hint={envelope.qualityFlags.join(", ") || "clean"} tone={envelope.qualityFlags.length ? "warn" : "ok"} />
+              </div>
+              <pre>{JSON.stringify(envelope, null, 2)}</pre>
+            </div>
+          )}
+        </section>
+
+        <section className="mcp-panel">
+          <h2>查询审计</h2>
+          <div className="event-list">
+            {(audit.data ?? []).map((record) => (
+              <article className="event" key={record.auditId}>
+                <Badge label={record.status} tone={record.status === "miss" || record.status === "error" ? "hot" : "ok"} />
+                <div>
+                  <strong>{record.toolName}</strong>
+                  <span>{record.hitComponentIds.length ? `命中 ${record.hitComponentIds.join(", ")}` : "无命中组件"} · {record.latencyMs} ms</span>
+                </div>
+                <small>{record.createdAt}</small>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="mcp-panel">
+          <h2>反馈回流</h2>
+          <div className="event-list">
+            {(events.data ?? []).map((event) => (
+              <article className="event" key={event.eventId}>
+                <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
+                <div>
+                  <strong>{event.query}</strong>
+                  <span>{event.hitComponentIds.length ? `命中 ${event.hitComponentIds.join(", ")}` : "未命中任何资产"}</span>
+                  {event.suggestedAction && <small>{event.suggestedAction}</small>}
+                </div>
+                <small>{event.taskId || event.createdAt}</small>
+              </article>
+            ))}
+          </div>
+        </section>
       </div>
     </Page>
   );

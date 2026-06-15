@@ -8,10 +8,12 @@ import { z } from "zod";
 import type { DatabaseHandle, UserRecord } from "./types";
 import { importLegacyAsDraftPackage } from "./services/legacyImportService";
 import { createKnowledgeService } from "./services/knowledgeService";
+import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 import { createKbBuilderPipelineService } from "./services/kbBuilderService";
 import { normalizeModelConfig } from "./services/kbBuilder/modelConfig";
 import { testModelConnectivity } from "./services/kbBuilder/modelConnectivity";
 import { scanLegacyKbBuilder } from "./services/legacyScanner";
+import { createReleaseService } from "./services/releaseService";
 import { createSourceBundleService } from "./services/sourceBundleService";
 
 declare module "@fastify/jwt" {
@@ -75,12 +77,28 @@ const modelConnectivitySchema = z.object({
   modelConfig: modelConfigSchema
 });
 
+const createReleaseSchema = z.object({
+  version: z.string().min(1),
+  packageIds: z.array(z.string().min(1)).min(1)
+});
+
+const rollbackReleaseSchema = z.object({
+  releaseId: z.string().min(1)
+});
+
+const mcpQuerySchema = z.object({
+  toolName: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()).default({})
+});
+
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const service = createKnowledgeService(options.db);
   const dataDir = options.dataDir ?? process.cwd();
   const bundleService = createSourceBundleService(options.db, dataDir);
   const kbBuilderService = createKbBuilderPipelineService(options.db, dataDir);
+  const releaseService = createReleaseService(options.db);
+  const queryService = createKnowledgeQueryService(options.db, dataDir);
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -230,7 +248,68 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     })
   );
   app.get("/api/releases", { preHandler: app.authenticate }, async () => ({ releases: await service.listReleases() }));
+  app.get("/api/releases/current", { preHandler: app.authenticate }, async () => ({
+    release: await releaseService.getCurrent()
+  }));
+  app.post("/api/releases", { preHandler: app.authenticate }, async (request, reply) => {
+    if (request.user.role !== "admin") {
+      return reply.code(403).send({ error: "Only administrators can create releases." });
+    }
+    const parsed = createReleaseSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid release payload." });
+    try {
+      return {
+        release: await releaseService.createDraft({
+          ...parsed.data,
+          requestedBy: request.user.username
+        })
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "创建发布草案失败。" });
+    }
+  });
+  app.post<{ Params: { releaseId: string } }>(
+    "/api/releases/:releaseId/publish",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (request.user.role !== "admin") {
+        return reply.code(403).send({ error: "Only administrators can publish releases." });
+      }
+      try {
+        return { release: await releaseService.publish(request.params.releaseId, request.user.username) };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "发布失败。" });
+      }
+    }
+  );
+  app.post("/api/releases/rollback", { preHandler: app.authenticate }, async (request, reply) => {
+    if (request.user.role !== "admin") {
+      return reply.code(403).send({ error: "Only administrators can rollback releases." });
+    }
+    const parsed = rollbackReleaseSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid rollback payload." });
+    try {
+      return { release: await releaseService.rollback(parsed.data.releaseId, request.user.username) };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "回滚失败。" });
+    }
+  });
   app.get("/api/agent/events", { preHandler: app.authenticate }, async () => ({ events: await service.listAgentEvents() }));
+  app.get("/api/mcp/audit", { preHandler: app.authenticate }, async () => ({ audit: await service.listMcpAudit() }));
+  app.post("/api/mcp/query", { preHandler: app.authenticate }, async (request, reply) => {
+    const parsed = mcpQuerySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid MCP query payload." });
+    try {
+      return {
+        envelope: await queryService.runTool(parsed.data.toolName, parsed.data.payload, {
+          sessionId: `web:${request.user.username}`,
+          agentRole: request.user.role
+        })
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "MCP 查询失败。" });
+    }
+  });
 
   app.post("/api/legacy/scan", { preHandler: app.authenticate }, async (request, reply) => {
     const parsed = legacyScanSchema.safeParse(request.body);

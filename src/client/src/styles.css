@@ -31,7 +31,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -457,7 +458,9 @@ small {
 }
 
 .builder-panel,
-.builder-runs {
+.builder-runs,
+.release-panel,
+.mcp-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 16px;
@@ -471,14 +474,125 @@ small {
 }
 
 .builder-panel h2,
-.builder-runs h2 {
+.builder-runs h2,
+.release-panel h2,
+.mcp-panel h2 {
   margin: 0 0 6px;
 }
 
 .builder-panel p,
-.builder-runs p {
+.builder-runs p,
+.release-panel p,
+.mcp-panel p {
   margin: 0;
   color: var(--muted);
+}
+
+.release-workbench {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.release-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.package-picker,
+.release-history {
+  display: grid;
+  gap: 10px;
+  max-height: 66vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.release-metrics {
+  grid-template-columns: repeat(3, minmax(100px, 1fr));
+}
+
+.release-draft,
+.release-current,
+.history-row {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: #fffdf6;
+}
+
+.release-draft,
+.release-current {
+  display: grid;
+  gap: 6px;
+}
+
+.release-current strong,
+.history-row small {
+  word-break: break-all;
+}
+
+.history-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.history-row div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.mcp-console {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(420px, 1.15fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.mcp-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.mcp-panel:nth-child(n + 3) {
+  grid-column: span 1;
+}
+
+.code-block {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: #20231d;
+  color: #fffdf6;
+  overflow-x: auto;
+}
+
+.code-editor.small {
+  min-height: 130px;
+}
+
+.envelope-view {
+  display: grid;
+  gap: 12px;
+}
+
+.envelope-view pre {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: #20231d;
+  color: #fffdf6;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .field-label {
@@ -490,6 +604,7 @@ small {
 
 .field-label input,
 .field-label select,
+.field-label textarea,
 .inline-controls input,
 .model-grid input {
   width: 100%;
@@ -791,7 +906,14 @@ form button {
   .metrics,
   .evidence-panel,
   .flow,
-  .package-grid {
+  .package-grid,
+  .builder-layout,
+  .release-workbench,
+  .mcp-console {
     grid-template-columns: 1fr;
+  }
+
+  .mcp-panel:nth-child(n + 3) {
+    grid-column: auto;
   }
 }

@@ -200,8 +200,20 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       version TEXT NOT NULL,
       status TEXT NOT NULL,
       package_ids JSONB NOT NULL DEFAULT '[]',
+      manifest_hash TEXT NOT NULL DEFAULT '',
+      manifest_json JSONB NOT NULL DEFAULT '{}',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      published_by TEXT NOT NULL DEFAULT '',
       published_at TIMESTAMPTZ,
       quality_gate JSONB NOT NULL DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS ${p}release_channels (
+      channel_id TEXT PRIMARY KEY,
+      current_release_id TEXT REFERENCES ${p}releases(release_id),
+      updated_by TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS ${p}agent_events (
@@ -211,8 +223,36 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       hit_component_ids JSONB NOT NULL DEFAULT '[]',
       quality_flags JSONB NOT NULL DEFAULT '[]',
       status TEXT NOT NULL,
+      feedback_type TEXT NOT NULL DEFAULT 'hit',
+      suggested_action TEXT NOT NULL DEFAULT '',
+      task_id TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS ${p}mcp_audit (
+      audit_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL DEFAULT '',
+      agent_role TEXT NOT NULL DEFAULT '',
+      tool_name TEXT NOT NULL,
+      release_id TEXT,
+      query_payload JSONB NOT NULL DEFAULT '{}',
+      hit_component_ids JSONB NOT NULL DEFAULT '[]',
+      quality_flags JSONB NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL,
+      latency_ms INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await adapter.exec(`
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_json JSONB NOT NULL DEFAULT '{}';
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS published_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS feedback_type TEXT NOT NULL DEFAULT 'hit';
+    ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS suggested_action TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS task_id TEXT NOT NULL DEFAULT '';
   `);
 
   // 默认资料集

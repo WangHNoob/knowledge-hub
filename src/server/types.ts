@@ -143,6 +143,11 @@ export interface ReleaseRecord {
   status: "draft" | "published";
   packageIds: string[];
   publishedAt: string | null;
+  publishedBy: string;
+  createdBy: string;
+  createdAt: string;
+  manifestHash: string;
+  manifest: Record<string, unknown>;
   qualityGate: Record<string, unknown>;
 }
 
@@ -153,7 +158,44 @@ export interface AgentEvent {
   hitComponentIds: string[];
   qualityFlags: string[];
   status: "hit" | "miss";
+  feedbackType: "hit" | "miss" | "low_quality_hit" | "repeated_query" | "evidence_insufficient" | "relation_inference_failed";
+  suggestedAction: string;
+  taskId: string;
   createdAt: string;
+}
+
+export interface McpAuditRecord {
+  auditId: string;
+  sessionId: string;
+  agentRole: string;
+  toolName: string;
+  releaseId: string | null;
+  queryPayload: Record<string, unknown>;
+  hitComponentIds: string[];
+  qualityFlags: string[];
+  status: "hit" | "miss" | "error";
+  latencyMs: number;
+  createdAt: string;
+}
+
+export interface KnowledgeTrace {
+  releaseId: string;
+  componentIds: string[];
+  artifactIds: string[];
+  sourceVersionIds: string[];
+  evidenceIds: string[];
+}
+
+export interface KnowledgeEnvelope<T = unknown> {
+  release: {
+    releaseId: string;
+    version: string;
+    publishedAt: string | null;
+    manifestHash: string;
+  };
+  result: T;
+  qualityFlags: string[];
+  trace: KnowledgeTrace;
 }
 
 export type PipelineStage = "convert" | "extract" | "tables" | "graph" | "viz";
