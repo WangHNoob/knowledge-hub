@@ -5,3 +5,4 @@ storage/
 *.log
 .env
 .DS_Store
+.worktrees/
