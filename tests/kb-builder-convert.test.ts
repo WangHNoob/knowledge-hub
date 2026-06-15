@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -15,12 +15,12 @@ describe("runConvertStage", () => {
       const result = await runConvertStage({ dataDir, force: false, only: null });
 
       expect(result.stage).toBe("convert");
-      expect(result.outputPaths.sort()).toEqual([
+      expect(result.outputPaths).toEqual([
         "processed/parsed/economy.md",
         "processed/parsed/systems/battle.md"
       ]);
-      expect(existsSync(join(dataDir, "processed", "parsed", "systems", "battle.md"))).toBe(true);
-      expect(readFileSync(join(dataDir, "processed", "parsed", "economy.md"), "utf8")).toContain("Economy text");
+      expect(readFileSync(join(dataDir, "processed", "parsed", "systems", "battle.md"), "utf8")).toBe("# Battle\n\nsource body");
+      expect(readFileSync(join(dataDir, "processed", "parsed", "economy.md"), "utf8")).toBe("Economy text");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }
