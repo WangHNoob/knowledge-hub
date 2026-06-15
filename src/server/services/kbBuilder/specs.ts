@@ -140,10 +140,7 @@ function extractRequiredFacts(markdown: string): string[] {
       continue;
     }
 
-    const cells = line
-      .split("|")
-      .map((cell) => cell.trim())
-      .filter(Boolean);
+    const cells = parseMarkdownTableCells(line);
 
     if (cells.length < 2) {
       table = undefined;
@@ -196,6 +193,13 @@ function extractRequiredFacts(markdown: string): string[] {
 
 function isMarkdownTableSeparator(cell: string): boolean {
   return /^:?-{3,}:?$/.test(cell);
+}
+
+function parseMarkdownTableCells(line: string): string[] {
+  const cells = line.split("|").map((cell) => cell.trim());
+  if (cells[0] === "") cells.shift();
+  if (cells[cells.length - 1] === "") cells.pop();
+  return cells;
 }
 
 function isRequiredColumnHeader(cell: string): boolean {

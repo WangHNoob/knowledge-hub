@@ -30,6 +30,7 @@ describe("loadWikiSpecs", () => {
           "| --- | --- | --- |",
           "| unlock_condition | no | yes |",
           "| config_table | no | yes |",
+          "| optional_limit | | yes |",
           "| debug_flag | yes | no |",
           "",
           "| setting | required |",
@@ -45,7 +46,11 @@ describe("loadWikiSpecs", () => {
         "Core Rules",
         "Data Dependencies",
       ]);
-      expect(specs.specs.system.requiredFacts).toEqual(["unlock_condition", "config_table"]);
+      expect(specs.specs.system.requiredFacts).toEqual([
+        "unlock_condition",
+        "config_table",
+        "optional_limit",
+      ]);
       expect(specs.entityTypes).toEqual(new Set(["system", "table", "concept"]));
       expect(specs.relationTypes).toEqual(new Set(["depends_on", "configured_in", "references"]));
     } finally {
