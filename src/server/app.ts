@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { DatabaseHandle, UserRecord } from "./types";
 import { importLegacyAsDraftPackage } from "./services/legacyImportService";
 import { createKnowledgeService } from "./services/knowledgeService";
+import { createKbBuilderPipelineService } from "./services/kbBuilderService";
 import { scanLegacyKbBuilder } from "./services/legacyScanner";
 import { createSourceBundleService } from "./services/sourceBundleService";
 
@@ -39,11 +40,28 @@ const importBundleSchema = z.object({
   note: z.string().max(1024).optional()
 });
 
+const pipelineStageSchema = z.enum(["convert", "extract", "tables", "graph", "viz"]);
+const buildRequestSchema = z.object({
+  stages: z.array(pipelineStageSchema).min(1).default(["convert", "extract", "tables", "graph", "viz"]),
+  model: z.string().min(1).default("deterministic"),
+  force: z.boolean().default(false),
+  only: z.string().min(1).nullable().default(null),
+  qualityProfileId: z.string().min(1).default("default")
+});
+
+const qualityProfileUpdateSchema = z.object({
+  config: z.object({
+    minPackageScore: z.number().min(0).max(1),
+    rules: z.record(z.string(), z.record(z.string(), z.unknown()))
+  })
+});
+
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const service = createKnowledgeService(options.db);
   const dataDir = options.dataDir ?? process.cwd();
   const bundleService = createSourceBundleService(options.db, dataDir);
+  const kbBuilderService = createKbBuilderPipelineService(options.db, dataDir);
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -113,9 +131,51 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       }
     }
   );
+  app.post<{ Params: { bundleId: string; versionId: string } }>(
+    "/api/source-bundles/:bundleId/versions/:versionId/build",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const parsed = buildRequestSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid build payload." });
+      const version = await bundleService.getVersion(request.params.versionId);
+      if (!version || version.bundleId !== request.params.bundleId) {
+        return reply.code(404).send({ error: "未找到该资料版本。" });
+      }
+      try {
+        return await kbBuilderService.build({
+          ...parsed.data,
+          bundleId: request.params.bundleId,
+          versionId: request.params.versionId,
+          requestedBy: request.user.username
+        });
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "构建失败。" });
+      }
+    }
+  );
 
   // 资产包 / 审核 / 证据 / 发布 / Agent 反馈
   app.get("/api/packages", { preHandler: app.authenticate }, async () => ({ packages: await service.listPackages() }));
+  app.get("/api/build-runs", { preHandler: app.authenticate }, async () => ({ runs: await kbBuilderService.listRuns() }));
+  app.get<{ Params: { runId: string } }>(
+    "/api/build-runs/:runId",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const run = await kbBuilderService.getRun(request.params.runId);
+      return run ? { run } : reply.code(404).send({ error: "Unknown build run." });
+    }
+  );
+  app.get("/api/quality-gate/profile", { preHandler: app.authenticate }, async () => ({
+    profile: await kbBuilderService.getActiveQualityProfile()
+  }));
+  app.put("/api/quality-gate/profile", { preHandler: app.authenticate }, async (request, reply) => {
+    if (request.user.role !== "admin") {
+      return reply.code(403).send({ error: "Only administrators can update quality gates." });
+    }
+    const parsed = qualityProfileUpdateSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid quality profile payload." });
+    return { profile: await kbBuilderService.updateActiveQualityProfile(parsed.data.config, request.user.username) };
+  });
   app.get<{ Params: { packageId: string } }>(
     "/api/packages/:packageId",
     { preHandler: app.authenticate },
