@@ -126,8 +126,8 @@ export function App() {
         {view === "agent" && <AgentFeedback />}
         {view === "maintenance" && <Maintenance />}
       </main>
-      <a className="deerflow" href="https://deerflow.tech" target="_blank" rel="noreferrer">
-        Created By Deerflow
+      <a className="deerflow" href="https://deerflow.tech" target="_blank" rel="noreferrer" title="Created By Deerflow">
+        DF
       </a>
     </div>
   );
