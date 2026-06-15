@@ -1,4 +1,5 @@
 import type { SourceFileEntry, PipelineStage, QualityFinding } from "../../types";
+import type { PipelineModelConfig } from "./modelConfig";
 
 export interface RunWorkspace {
   runId: string;
@@ -13,6 +14,7 @@ export interface BuildPipelineOptions {
   requestedBy: string;
   stages: PipelineStage[];
   model: string;
+  modelConfig?: PipelineModelConfig;
   force: boolean;
   only: string | null;
   qualityProfileId: string;

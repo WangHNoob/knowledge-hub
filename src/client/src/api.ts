@@ -152,11 +152,17 @@ export interface KnowledgeBuildRun {
   runId: string;
   sourceVersionId: string;
   packageId: string | null;
+  adapter: string;
+  stages: string[];
+  model: string;
+  wikiSpecsHash: string;
+  qualityProfileId: string;
   status: string;
   startedAt: string;
   finishedAt: string | null;
   error: string;
   outputUri: string;
+  config: Record<string, unknown>;
 }
 
 export interface QualityGateProfile {
@@ -171,15 +177,18 @@ export interface QualityGateProfile {
 export interface BuildRequest {
   stages: string[];
   model: string;
+  modelConfig?: BuildModelConfig;
   force: boolean;
   only: string | null;
   qualityProfileId: string;
 }
 
+export type BuildModelConfig =
+  | { provider: "deterministic"; model: "deterministic" }
+  | { provider: "openai-compatible"; baseUrl: string; model: string; apiKey?: string };
+
 export interface BuildResponse {
   run: KnowledgeBuildRun;
-  package: AssetPackage;
-  qualitySummary: Record<string, unknown>;
 }
 
 export interface ReleaseRecord {

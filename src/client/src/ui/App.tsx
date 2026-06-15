@@ -6,8 +6,11 @@ import {
   CheckCircle2,
   Database,
   GitBranch,
+  KeyRound,
   LogOut,
   PackagePlus,
+  Play,
+  RefreshCw,
   SearchCheck
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -25,6 +28,7 @@ import {
   importLegacy,
   importSourceBundle,
   listAgentEvents,
+  listBuildRuns,
   listBundleVersions,
   listPackages,
   listReleases,
@@ -34,15 +38,18 @@ import {
   setToken,
   updateQualityProfile,
   type AssetPackage,
+  type BuildModelConfig,
+  type KnowledgeBuildRun,
   type SourceBundleVersion,
   type SourceFileChange
 } from "../api";
 
-type View = "dashboard" | "sources" | "assets" | "review" | "release" | "agent" | "maintenance";
+type View = "dashboard" | "sources" | "builder" | "assets" | "review" | "release" | "agent" | "maintenance";
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "首页", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
+  { id: "builder", label: "知识构建", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
   { id: "review", label: "审核中心", icon: CheckCircle2 },
   { id: "release", label: "发布", icon: GitBranch },
@@ -102,6 +109,7 @@ export function App() {
       <main className="main">
         {view === "dashboard" && <Dashboard />}
         {view === "sources" && <Sources />}
+        {view === "builder" && <KnowledgeBuilder />}
         {view === "assets" && <Assets />}
         {view === "review" && <Review />}
         {view === "release" && <Release />}
@@ -196,6 +204,274 @@ function Dashboard() {
   );
 }
 
+const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
+const MODEL_PREFS_KEY = "kh_builder_model_prefs";
+
+function KnowledgeBuilder() {
+  const queryClient = useQueryClient();
+  const bundleId = "default";
+  const prefs = useMemo(loadModelPrefs, []);
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [stages, setStages] = useState<string[]>(BUILD_STAGES);
+  const [provider, setProvider] = useState<"deterministic" | "openai-compatible">(prefs.provider);
+  const [baseUrl, setBaseUrl] = useState(prefs.baseUrl);
+  const [model, setModel] = useState(prefs.model);
+  const [apiKey, setApiKey] = useState(prefs.apiKey);
+  const [rememberApiKey, setRememberApiKey] = useState(Boolean(prefs.apiKey));
+  const [force, setForce] = useState(false);
+  const [only, setOnly] = useState("");
+  const [error, setError] = useState("");
+
+  const versions = useQuery({
+    queryKey: ["bundle-versions", bundleId],
+    queryFn: () => listBundleVersions(bundleId)
+  });
+  const runs = useQuery({
+    queryKey: ["build-runs"],
+    queryFn: listBuildRuns,
+    refetchInterval: 3000
+  });
+
+  useEffect(() => {
+    if (!selectedVersion && versions.data?.[0]) setSelectedVersion(versions.data[0].versionId);
+  }, [selectedVersion, versions.data]);
+
+  useEffect(() => {
+    const next = {
+      provider,
+      baseUrl,
+      model,
+      apiKey: rememberApiKey ? apiKey : ""
+    };
+    localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(next));
+  }, [apiKey, baseUrl, model, provider, rememberApiKey]);
+
+  const buildMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedVersion) throw new Error("请选择资料版本。");
+      if (stages.length === 0) throw new Error("至少选择一个 pipeline 阶段。");
+      const modelConfig = createModelConfig(provider, baseUrl, model, apiKey);
+      return buildKnowledgePackage(bundleId, selectedVersion, {
+        stages,
+        model: modelConfig.model,
+        modelConfig,
+        force,
+        only: only.trim() || null,
+        qualityProfileId: "default"
+      });
+    },
+    onSuccess: async (result) => {
+      setError("");
+      queryClient.setQueryData<KnowledgeBuildRun[]>(["build-runs"], (current = []) => [
+        result.run,
+        ...current.filter((run) => run.runId !== result.run.runId)
+      ]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "启动构建失败。");
+    }
+  });
+
+  const activeRuns = (runs.data ?? []).filter((run) => run.status === "running");
+  const selectedRuns = (runs.data ?? []).filter((run) => !selectedVersion || run.sourceVersionId === selectedVersion);
+  const canStart = Boolean(selectedVersion) && !buildMutation.isPending && stages.length > 0 && (
+    provider === "deterministic" || Boolean(baseUrl.trim() && model.trim() && apiKey.trim())
+  );
+
+  return (
+    <Page
+      title="知识构建"
+      subtitle="把资料版本消费为一个知识资产包，并用可恢复的 pipeline run 追踪生成过程。"
+    >
+      <section className="builder-layout">
+        <div className="builder-main">
+          <section className="builder-panel">
+            <div className="detail-head">
+              <div>
+                <h2>构建输入</h2>
+                <p>选择一个已导入的资料版本，pipeline 会从该版本的 gamedocs/ 与 gamedata/ 生成资产包。</p>
+              </div>
+              <Badge label={activeRuns.length ? `${activeRuns.length} 个运行中` : "空闲"} tone={activeRuns.length ? "warn" : "ok"} />
+            </div>
+            <label className="field-label">
+              资料版本
+              <select value={selectedVersion ?? ""} onChange={(event) => setSelectedVersion(event.target.value || null)}>
+                {(versions.data ?? []).map((version) => (
+                  <option key={version.versionId} value={version.versionId}>
+                    {version.label} · {version.fileCount} files
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="stage-toggle-grid">
+              {BUILD_STAGES.map((stage) => (
+                <label key={stage} className={stages.includes(stage) ? "stage-toggle selected" : "stage-toggle"}>
+                  <input
+                    type="checkbox"
+                    checked={stages.includes(stage)}
+                    onChange={(event) => {
+                      setStages((current) => event.target.checked
+                        ? [...current, stage].filter((value, index, array) => array.indexOf(value) === index)
+                        : current.filter((item) => item !== stage));
+                    }}
+                  />
+                  <span>{stage}</span>
+                </label>
+              ))}
+            </div>
+            <div className="inline-controls">
+              <label>
+                <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
+                强制重建
+              </label>
+              <input
+                value={only}
+                onChange={(event) => setOnly(event.target.value)}
+                placeholder="只处理某个路径，可留空"
+              />
+            </div>
+          </section>
+
+          <section className="builder-panel">
+            <div className="detail-head">
+              <div>
+                <h2>大模型配置</h2>
+                <p>用于 extract 阶段理解策划文档；API Key 只写入本机前端偏好，不进入 build run 数据库。</p>
+              </div>
+              <KeyRound size={20} />
+            </div>
+            <div className="segmented">
+              <button className={provider === "deterministic" ? "active" : ""} onClick={() => setProvider("deterministic")}>
+                确定性
+              </button>
+              <button className={provider === "openai-compatible" ? "active" : ""} onClick={() => setProvider("openai-compatible")}>
+                OpenAI-compatible
+              </button>
+            </div>
+            {provider === "openai-compatible" ? (
+              <div className="model-grid">
+                <label className="field-label">
+                  Base URL
+                  <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
+                </label>
+                <label className="field-label">
+                  Model
+                  <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4.1-mini" />
+                </label>
+                <label className="field-label model-secret">
+                  API Key
+                  <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder="sk-..." />
+                </label>
+                <label className="remember-secret">
+                  <input type="checkbox" checked={rememberApiKey} onChange={(event) => setRememberApiKey(event.target.checked)} />
+                  在本机记住 API Key
+                </label>
+              </div>
+            ) : (
+              <p className="notice">确定性模式不会调用大模型，适合验证 pipeline、表结构和质量门禁链路。</p>
+            )}
+            <button
+              className="primary-action"
+              disabled={!canStart}
+              onClick={() => buildMutation.mutate()}
+            >
+              <Play size={16} />
+              {buildMutation.isPending ? "启动中..." : "启动知识资产构建"}
+            </button>
+            {error && <p className="error">{error}</p>}
+            {buildMutation.data && <p className="notice">已启动 run：{buildMutation.data.run.runId}</p>}
+          </section>
+        </div>
+
+        <aside className="builder-runs">
+          <div className="detail-head">
+            <div>
+              <h2>运行记录</h2>
+              <p>状态来自后端 build-runs，切换页面后仍会恢复。</p>
+            </div>
+            <button className="icon-button" onClick={() => runs.refetch()} title="刷新运行记录">
+              <RefreshCw size={16} />
+            </button>
+          </div>
+          <div className="run-list">
+            {selectedRuns.length === 0 && <p>暂无构建记录。</p>}
+            {selectedRuns.map((run) => <BuildRunCard key={run.runId} run={run} />)}
+          </div>
+        </aside>
+      </section>
+    </Page>
+  );
+}
+
+function BuildRunCard({ run }: { run: KnowledgeBuildRun }) {
+  return (
+    <article className={`run-card ${run.status}`}>
+      <div className="detail-head">
+        <div>
+          <strong>{run.model}</strong>
+          <span>{run.runId}</span>
+        </div>
+        <Badge label={runStatusLabel(run.status)} tone={run.status === "failed" ? "hot" : run.status === "running" ? "warn" : "ok"} />
+      </div>
+      <div className="stage-row">
+        {run.stages.map((stage) => <span key={stage}>{stage}</span>)}
+      </div>
+      <p>
+        资料版本：<code>{run.sourceVersionId}</code>
+      </p>
+      {run.packageId && <p>资产包：<code>{run.packageId}</code></p>}
+      {run.error && <p className="error">{run.error}</p>}
+      <small>{run.startedAt}{run.finishedAt ? ` → ${run.finishedAt}` : ""}</small>
+    </article>
+  );
+}
+
+function loadModelPrefs(): { provider: "deterministic" | "openai-compatible"; baseUrl: string; model: string; apiKey: string } {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(MODEL_PREFS_KEY) ?? "{}") as Partial<{
+      provider: "deterministic" | "openai-compatible";
+      baseUrl: string;
+      model: string;
+      apiKey: string;
+    }>;
+    return {
+      provider: parsed.provider === "openai-compatible" ? "openai-compatible" : "deterministic",
+      baseUrl: parsed.baseUrl ?? "https://api.openai.com/v1",
+      model: parsed.model ?? "gpt-4.1-mini",
+      apiKey: parsed.apiKey ?? ""
+    };
+  } catch {
+    return { provider: "deterministic", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", apiKey: "" };
+  }
+}
+
+function createModelConfig(
+  provider: "deterministic" | "openai-compatible",
+  baseUrl: string,
+  model: string,
+  apiKey: string
+): BuildModelConfig {
+  if (provider === "deterministic") return { provider: "deterministic", model: "deterministic" };
+  return {
+    provider: "openai-compatible",
+    baseUrl: baseUrl.trim(),
+    model: model.trim(),
+    apiKey: apiKey.trim()
+  };
+}
+
+function runStatusLabel(status: string): string {
+  if (status === "running") return "运行中";
+  if (status === "completed") return "已完成";
+  if (status === "failed") return "失败";
+  return status;
+}
+
 function Sources() {
   const queryClient = useQueryClient();
   const bundleId = "default";
@@ -215,25 +491,6 @@ function Sources() {
     queryFn: () => getBundleVersion(bundleId, selectedVersion!),
     enabled: Boolean(selectedVersion)
   });
-  const buildMutation = useMutation({
-    mutationFn: () => {
-      if (!selectedVersion) throw new Error("请选择资料版本。");
-      return buildKnowledgePackage(bundleId, selectedVersion, {
-        stages: ["convert", "extract", "tables", "graph", "viz"],
-        model: "deterministic",
-        force: false,
-        only: null,
-        qualityProfileId: "default"
-      });
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["packages"] }),
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
-      ]);
-    }
-  });
-
   return (
     <Page
       title="资料库"
@@ -341,28 +598,11 @@ function Sources() {
               <section className="build-panel">
                 <div className="detail-head">
                   <div>
-                    <h3>知识库构建 Pipeline</h3>
-                    <p>消费当前资料版本并生成一个可治理的知识资产包。</p>
+                    <h3>知识构建</h3>
+                    <p>当前资料版本可在独立的知识构建模块中生成知识资产包，并查看可恢复的 pipeline 运行状态。</p>
                   </div>
-                  <Badge label={buildMutation.isPending ? "构建中" : "原生 pipeline"} tone={buildMutation.isPending ? "warn" : "ok"} />
+                  <Badge label="独立模块" tone="ok" />
                 </div>
-                <div className="stage-row">
-                  {["convert", "extract", "tables", "graph", "viz"].map((stage) => <span key={stage}>{stage}</span>)}
-                </div>
-                <button
-                  className="primary-action"
-                  disabled={buildMutation.isPending}
-                  onClick={() => buildMutation.mutate()}
-                >
-                  <PackagePlus size={16} />
-                  {buildMutation.isPending ? "生成中..." : "生成知识资产包"}
-                </button>
-                {buildMutation.data && (
-                  <p className="notice">
-                    已生成：{buildMutation.data.package.name}，质量分 {String(buildMutation.data.qualitySummary.overallScore ?? "-")}
-                  </p>
-                )}
-                {buildMutation.error && <p className="error">{buildMutation.error instanceof Error ? buildMutation.error.message : String(buildMutation.error)}</p>}
               </section>
               <h3>变更明细</h3>
               {detail.data.changes.length === 0 ? (

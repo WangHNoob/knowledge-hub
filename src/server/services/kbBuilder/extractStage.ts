@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import type { PipelineModelConfig } from "./modelConfig";
 import type { WikiSpecSet } from "./specs";
 import type { StageResult } from "./types";
 
@@ -28,6 +29,7 @@ type ExtractOptions = {
   dataDir: string;
   specs: WikiSpecSet;
   model: string;
+  modelConfig?: PipelineModelConfig;
   force: boolean;
   only: string | null;
 };
@@ -83,8 +85,17 @@ async function extractPage(markdown: string, rel: string, options: ExtractOption
   const structured = parseStructuredFrontmatter(markdown);
   if (structured) return structured;
 
+  if (options.modelConfig?.provider === "openai-compatible" && options.modelConfig.apiKey) {
+    return extractWithOpenAI(markdown, rel, options.modelConfig);
+  }
+
   if (options.model !== "deterministic" && process.env.OPENAI_API_KEY) {
-    return extractWithOpenAI(markdown, rel, options.model);
+    return extractWithOpenAI(markdown, rel, {
+      provider: "openai-compatible",
+      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+      model: options.model,
+      apiKey: process.env.OPENAI_API_KEY,
+    });
   }
 
   return deterministicFallback(markdown, rel);
@@ -194,16 +205,16 @@ function parseRelationshipsBlock(lines: string[]): Relationship[] {
     );
 }
 
-async function extractWithOpenAI(markdown: string, rel: string, model: string): Promise<ExtractedPage> {
-  const baseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+async function extractWithOpenAI(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "openai-compatible" }>): Promise<ExtractedPage> {
+  const baseUrl = config.baseUrl.replace(/\/+$/u, "");
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      model,
+      model: config.model,
       response_format: { type: "json_object" },
       messages: [
         {

@@ -41,9 +41,22 @@ const importBundleSchema = z.object({
 });
 
 const pipelineStageSchema = z.enum(["convert", "extract", "tables", "graph", "viz"]);
+const modelConfigSchema = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("deterministic"),
+    model: z.literal("deterministic").default("deterministic")
+  }),
+  z.object({
+    provider: z.literal("openai-compatible"),
+    baseUrl: z.string().url().default("https://api.openai.com/v1"),
+    model: z.string().min(1),
+    apiKey: z.string().min(1).optional()
+  })
+]);
 const buildRequestSchema = z.object({
   stages: z.array(pipelineStageSchema).min(1).default(["convert", "extract", "tables", "graph", "viz"]),
   model: z.string().min(1).default("deterministic"),
+  modelConfig: modelConfigSchema.optional(),
   force: z.boolean().default(false),
   only: z.string().min(1).nullable().default(null),
   qualityProfileId: z.string().min(1).default("default")
@@ -142,12 +155,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         return reply.code(404).send({ error: "未找到该资料版本。" });
       }
       try {
-        return await kbBuilderService.build({
+        const run = await kbBuilderService.startBuild({
           ...parsed.data,
           bundleId: request.params.bundleId,
           versionId: request.params.versionId,
           requestedBy: request.user.username
         });
+        return reply.code(202).send({ run });
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "构建失败。" });
       }

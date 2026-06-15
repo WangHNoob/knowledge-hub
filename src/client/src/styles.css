@@ -30,7 +30,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -441,6 +442,194 @@ small {
 .quality-gate-panel p {
   margin: 0;
   color: var(--muted);
+}
+
+.builder-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.builder-main {
+  display: grid;
+  gap: 16px;
+}
+
+.builder-panel,
+.builder-runs {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(255, 253, 246, 0.9);
+  box-shadow: var(--shadow);
+}
+
+.builder-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.builder-panel h2,
+.builder-runs h2 {
+  margin: 0 0 6px;
+}
+
+.builder-panel p,
+.builder-runs p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.field-label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.field-label input,
+.field-label select,
+.inline-controls input,
+.model-grid input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fffdf6;
+  color: var(--ink);
+}
+
+.stage-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.stage-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f4eedf;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.stage-toggle.selected {
+  border-color: var(--olive);
+  background: #e6ebc7;
+  color: var(--ink);
+}
+
+.stage-toggle input {
+  width: 14px;
+  height: 14px;
+}
+
+.inline-controls {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.inline-controls label,
+.remember-secret {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.inline-controls input[type="checkbox"],
+.remember-secret input,
+.stage-toggle input {
+  accent-color: var(--olive);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f4eedf;
+}
+
+.segmented button {
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 12px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--ink);
+  color: #fffdf6;
+}
+
+.model-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.model-secret,
+.remember-secret {
+  grid-column: 1 / -1;
+}
+
+.icon-button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffdf6;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.run-list {
+  display: grid;
+  gap: 10px;
+}
+
+.run-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--moss);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fffdf6;
+}
+
+.run-card.running {
+  border-left-color: var(--gold);
+}
+
+.run-card.failed {
+  border-left-color: var(--rust);
+}
+
+.run-card strong,
+.run-card span {
+  display: block;
+}
+
+.run-card span,
+.run-card small {
+  color: var(--muted);
+  font-size: 12px;
+  word-break: break-all;
 }
 
 .stage-row {

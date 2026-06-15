@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { FastifyInstance } from "fastify";
 import pg from "pg";
 import xlsx from "xlsx";
 
@@ -152,17 +153,33 @@ describe("knowledge hub api", () => {
       headers: { authorization: `Bearer ${token}` },
       payload: {
         stages: ["convert", "extract", "tables", "graph", "viz"],
-        model: "deterministic",
+        modelConfig: {
+          provider: "openai-compatible",
+          baseUrl: "https://llm.local/v1",
+          model: "gpt-test",
+          apiKey: "secret-key"
+        },
         force: false,
         only: null,
         qualityProfileId: "default"
       }
     });
 
-    expect(built.statusCode).toBe(200);
-    expect(built.json().package.kind).toBe("kb_builder_pipeline");
-    expect(built.json().run.status).toBe("completed");
-    expect(built.json().qualitySummary.overallScore).toBeGreaterThanOrEqual(0);
+    expect(built.statusCode, JSON.stringify(built.json())).toBe(202);
+    expect(["running", "completed"]).toContain(built.json().run.status);
+    expect(built.json().package).toBeUndefined();
+    expect(built.json().run.model).toBe("gpt-test");
+    expect(built.json().run.config.modelConfig).toMatchObject({
+      provider: "openai-compatible",
+      baseUrl: "https://llm.local/v1",
+      model: "gpt-test",
+      apiKeyConfigured: true
+    });
+    expect(built.json().run.config.modelConfig.apiKey).toBeUndefined();
+
+    const run = await waitForBuildRun(app, token, built.json().run.runId);
+    expect(run.status).toBe("completed");
+    expect(run.packageId).toMatch(/^pkg_/u);
   }, 20000);
 
   it("allows admins and rejects non-admins for quality profile updates", async () => {
@@ -201,3 +218,18 @@ describe("knowledge hub api", () => {
     expect(read.json().profile.config.minPackageScore).toBe(0.8);
   });
 });
+
+async function waitForBuildRun(app: FastifyInstance, token: string, runId: string) {
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/build-runs/${runId}`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(response.statusCode).toBe(200);
+    const run = response.json().run;
+    if (run.status !== "running") return run;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Build run ${runId} did not finish.`);
+}

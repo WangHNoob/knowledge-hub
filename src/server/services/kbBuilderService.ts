@@ -23,11 +23,24 @@ import { runVizStage } from "./kbBuilder/vizStage";
 import { evaluateQualityGate } from "./kbBuilder/qualityGate";
 import { collectPipelineArtifacts } from "./kbBuilder/collector";
 import type { BuildPipelineOptions, CollectedArtifact, QualityGateResult } from "./kbBuilder/types";
+import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelConfig } from "./kbBuilder/modelConfig";
 
 const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "viz"];
 
 export function createKbBuilderPipelineService(db: DatabaseHandle, dataDir: string) {
   return new KbBuilderPipelineService(db, dataDir);
+}
+
+type SourceBundleService = ReturnType<typeof createSourceBundleService>;
+
+interface BuildRunContext {
+  runId: string;
+  options: BuildPipelineOptions;
+  profile: QualityGateProfile;
+  stages: PipelineStage[];
+  workspaceRoot: string;
+  sourceService: SourceBundleService;
+  modelConfig: PipelineModelConfig;
 }
 
 export class KbBuilderPipelineService {
@@ -37,11 +50,24 @@ export class KbBuilderPipelineService {
     this.adapter = db.adapter;
   }
 
+  async startBuild(options: BuildPipelineOptions): Promise<KnowledgeBuildRun> {
+    const context = await this.createRun(options);
+    void this.executeRun(context).catch((error) => {
+      console.error(error);
+    });
+    return this.requireRun(context.runId);
+  }
+
   async build(options: BuildPipelineOptions): Promise<{ run: KnowledgeBuildRun; package: AssetPackage; qualitySummary: Record<string, unknown> }> {
+    return this.executeRun(await this.createRun(options));
+  }
+
+  private async createRun(options: BuildPipelineOptions): Promise<BuildRunContext> {
     const sourceService = createSourceBundleService(this.db, this.dataDir);
     const version = await sourceService.getVersion(options.versionId);
     if (!version || version.bundleId !== options.bundleId) throw new Error(`Unknown source version: ${options.versionId}`);
     const profile = await this.getQualityProfile(options.qualityProfileId);
+    const modelConfig = normalizeModelConfig(options.modelConfig, options.model);
     const runId = `run_${new Date().toISOString().replace(/[-:.TZ]/g, "")}_${nanoid(6)}`;
     const stages = STAGE_ORDER.filter((stage) => options.stages.includes(stage));
     const workspaceRoot = join(this.dataDir, "kb-build-runs");
@@ -53,7 +79,7 @@ export class KbBuilderPipelineService {
       packageId: null,
       adapter: "native",
       stages,
-      model: options.model,
+      model: modelName(modelConfig),
       wikiSpecsHash: "",
       qualityProfileId: profile.profileId,
       status: "running",
@@ -61,9 +87,19 @@ export class KbBuilderPipelineService {
       finishedAt: null,
       error: "",
       outputUri: "",
-      config: { force: options.force, only: options.only, requestedBy: options.requestedBy },
+      config: {
+        force: options.force,
+        only: options.only,
+        requestedBy: options.requestedBy,
+        modelConfig: redactModelConfig(modelConfig),
+      },
     });
 
+    return { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig };
+  }
+
+  private async executeRun(context: BuildRunContext): Promise<{ run: KnowledgeBuildRun; package: AssetPackage; qualitySummary: Record<string, unknown> }> {
+    const { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig } = context;
     try {
       const workspace = await materializeSourceVersion({
         db: this.db,
@@ -76,7 +112,7 @@ export class KbBuilderPipelineService {
       const specs = loadWikiSpecs(specDir);
 
       if (stages.includes("convert")) await runConvertStage({ dataDir: workspace.dataDir, force: options.force, only: options.only });
-      if (stages.includes("extract")) await runExtractStage({ dataDir: workspace.dataDir, specs, model: options.model, force: options.force, only: options.only });
+      if (stages.includes("extract")) await runExtractStage({ dataDir: workspace.dataDir, specs, model: modelName(modelConfig), modelConfig, force: options.force, only: options.only });
       if (stages.includes("tables")) await runTableStage({ dataDir: workspace.dataDir, force: options.force });
       if (stages.includes("graph")) await runGraphStage({ dataDir: workspace.dataDir });
       if (stages.includes("viz")) await runVizStage({ dataDir: workspace.dataDir });
