@@ -48,6 +48,7 @@ describe("runExtractStage", () => {
       expect(existsSync(join(dataDir, "wiki", "systems", "battle.md"))).toBe(true);
       const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "battle.json"), "utf8"));
       expect(meta.title).toBe("Battle System");
+      expect(meta.wiki_path).toBe("wiki/systems/battle.md");
       expect(meta.relationships[0].relation).toBe("configured_in");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
