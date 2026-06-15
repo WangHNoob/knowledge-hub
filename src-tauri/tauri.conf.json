@@ -33,18 +33,5 @@
     "security": {
       "csp": null
     }
-  },
-  "plugins": {
-    "dialog": {},
-    "shell": {
-      "sidecar": true,
-      "scope": [
-        {
-          "name": "knowledge-hub-backend",
-          "sidecar": true,
-          "args": true
-        }
-      ]
-    }
   }
 }
