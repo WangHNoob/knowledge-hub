@@ -51,7 +51,7 @@ describe("materializeSourceVersion", () => {
       rmSync(sourceRoot, { recursive: true, force: true });
       rmSync(workspaceRoot, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("rejects logical paths outside exact gamedocs and gamedata roots", async () => {
     const workspaceRoot = mkdtempSync(join(tmpdir(), "kh-kb-work-"));

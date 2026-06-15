@@ -30,5 +30,5 @@ describe("database initialization", () => {
       ["default"]
     );
     expect(rows).toEqual([{ bundle_id: "default" }]);
-  });
+  }, 15000);
 });

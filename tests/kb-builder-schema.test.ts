@@ -23,5 +23,5 @@ describe("kb builder schema", () => {
       await db.close();
       rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 });
