@@ -37,6 +37,7 @@ describe("materializeSourceVersion", () => {
       });
 
       expect(result.workspaceDir.endsWith("run_native_test")).toBe(true);
+      expect(result.dataDir).toBe(join(workspaceRoot, "run_native_test", "data"));
       expect(existsSync(join(result.dataDir, "gamedocs", "systems", "battle.md"))).toBe(true);
       expect(existsSync(join(result.dataDir, "gamedata", "Config", "Skill.csv"))).toBe(true);
       expect(readFileSync(join(result.dataDir, "gamedocs", "systems", "battle.md"), "utf8")).toContain("# Battle");
@@ -59,7 +60,10 @@ describe("materializeSourceVersion", () => {
       "gamedocs-old/x.md",
       "../gamedocs/foo.md",
       "/gamedocs/foo.md",
-      "gamedocs/../gamedata/foo.csv"
+      "gamedocs/../gamedata/foo.csv",
+      "C:\\gamedocs\\foo.md",
+      "\\\\server\\share\\gamedocs\\foo.md",
+      "gamedocs\\..\\gamedata\\foo.csv"
     ];
 
     try {
@@ -88,6 +92,48 @@ describe("materializeSourceVersion", () => {
       }
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects traversal run ids before deleting outside the workspace root", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "kh-kb-runid-"));
+    const workspaceRoot = join(tempRoot, "workspace");
+    const badRunIds = ["../outside", "..\\outside"];
+
+    try {
+      mkdirSync(workspaceRoot, { recursive: true });
+      for (const [index, runId] of badRunIds.entries()) {
+        const outsideDir = join(tempRoot, "outside");
+        const sentinelPath = join(outsideDir, `sentinel-${index}.txt`);
+        mkdirSync(outsideDir, { recursive: true });
+        writeFileSync(sentinelPath, "keep\n");
+
+        const file: SourceFileEntry = {
+          versionId: "version_bad_run_id",
+          logicalPath: "gamedocs/systems/battle.md",
+          category: "gamedocs",
+          contentHash: "sha256:bad",
+          byteSize: 4
+        };
+        const sourceService = {
+          listFiles: async () => [file],
+          readFile: async () => ({ entry: file, blob: {} as never, content: Buffer.from("bad\n") })
+        } as unknown as SourceBundleService;
+
+        await expect(
+          materializeSourceVersion({
+            db: {} as DatabaseHandle,
+            sourceService,
+            versionId: file.versionId,
+            workspaceRoot,
+            runId
+          })
+        ).rejects.toThrow(`Unsupported run id: ${runId}`);
+
+        expect(existsSync(sentinelPath)).toBe(true);
+      }
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });
