@@ -421,6 +421,57 @@ small {
   box-shadow: var(--shadow);
 }
 
+.build-panel,
+.quality-gate-panel {
+  margin: 16px 0;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(255, 253, 246, 0.88);
+}
+
+.build-panel h3,
+.quality-gate-panel h2 {
+  margin: 0 0 6px;
+}
+
+.build-panel p,
+.quality-gate-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.stage-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stage-row span {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--muted);
+  background: #f4eedf;
+  font-size: 12px;
+}
+
+.code-editor {
+  width: 100%;
+  min-height: 260px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: #fffdf6;
+  color: var(--ink);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .metrics.compact {
   grid-template-columns: repeat(5, minmax(120px, 1fr));
   margin-top: 14px;

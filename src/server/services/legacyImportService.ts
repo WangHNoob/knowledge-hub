@@ -12,9 +12,9 @@ export interface LegacyImportResult {
 
 export async function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: string, legacyRoot: string): Promise<LegacyImportResult> {
   const scan = scanLegacyKbBuilder(legacyRoot);
-  const pool = db.pool;
+  const adapter = db.adapter;
 
-  const { rows: existingRows } = await pool.query(
+  const { rows: existingRows } = await adapter.query(
     "SELECT * FROM asset_packages WHERE package_id = $1", [scan.recommendedPackageId]
   );
   if (existingRows.length > 0) {
@@ -42,10 +42,10 @@ export async function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: s
     ...scan.tables.paths.map((path) => componentInput(scan.recommendedPackageId, packageSlug, "table", path, legacySourcePaths))
   ];
 
-  const client = await pool.connect();
+  // 事务：先插包，再插组件
   try {
-    await client.query("BEGIN");
-    await client.query(
+    await adapter.query("BEGIN");
+    await adapter.query(
       `INSERT INTO asset_packages
         (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
@@ -63,7 +63,7 @@ export async function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: s
       ]
     );
     for (const component of componentInputs) {
-      await client.query(
+      await adapter.query(
         `INSERT INTO asset_components
           (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
@@ -74,15 +74,13 @@ export async function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: s
         ]
       );
     }
-    await client.query("COMMIT");
+    await adapter.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    await adapter.query("ROLLBACK");
     throw error;
-  } finally {
-    client.release();
   }
 
-  const { rows: pkgRows } = await pool.query("SELECT * FROM asset_packages WHERE package_id = $1", [scan.recommendedPackageId]);
+  const { rows: pkgRows } = await adapter.query("SELECT * FROM asset_packages WHERE package_id = $1", [scan.recommendedPackageId]);
   return {
     created: true,
     package: mapPackage(pkgRows[0]),

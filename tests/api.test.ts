@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
+import xlsx from "xlsx";
 
 import { buildApp, type BuildAppOptions } from "../src/server/app";
 import { createDatabase } from "../src/server/db";
@@ -32,12 +33,12 @@ describe("knowledge hub api", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function getToken() {
+  async function getToken(username = "admin", password = "adminpw") {
     const app = await buildApp(opts);
     const login = await app.inject({
       method: "POST",
       url: "/api/auth/login",
-      payload: { username: "admin", password: "adminpw" }
+      payload: { username, password }
     });
     const token = login.json<{ token: string }>().token;
     return { app, token };
@@ -109,5 +110,94 @@ describe("knowledge hub api", () => {
       headers: { authorization: `Bearer ${token}` }
     });
     expect(versions.json().versions).toHaveLength(1);
+  });
+
+  it("builds a knowledge asset package from a source version through the api", async () => {
+    const { app, token } = await getToken();
+    const root = join(dir, "build-raw");
+    mkdirSync(join(root, "gamedocs"), { recursive: true });
+    mkdirSync(join(root, "gamedata", "Combat"), { recursive: true });
+    writeFileSync(join(root, "gamedocs", "battle.md"), [
+      "---",
+      "type: system",
+      "title: Battle System",
+      "source: gamedocs/battle.md",
+      "facts:",
+      "  config_table: Skill",
+      "entities:",
+      "  - name: Battle System",
+      "    type: system",
+      "---",
+      "## Overview",
+      "Battle rules.",
+      "## Data Dependencies",
+      "Uses Skill."
+    ].join("\n"));
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.json_to_sheet([{ Id: 1, Name: "Slash" }]), "Skill");
+    xlsx.writeFile(workbook, join(root, "gamedata", "Combat", "Skill.xlsx"));
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/source-bundles/default/versions",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { rootPath: root, note: "build fixture" }
+    });
+    expect(created.statusCode).toBe(200);
+    const versionId = created.json().version.versionId;
+
+    const built = await app.inject({
+      method: "POST",
+      url: `/api/source-bundles/default/versions/${versionId}/build`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        stages: ["convert", "extract", "tables", "graph", "viz"],
+        model: "deterministic",
+        force: false,
+        only: null,
+        qualityProfileId: "default"
+      }
+    });
+
+    expect(built.statusCode).toBe(200);
+    expect(built.json().package.kind).toBe("kb_builder_pipeline");
+    expect(built.json().run.status).toBe("completed");
+    expect(built.json().qualitySummary.overallScore).toBeGreaterThanOrEqual(0);
+  }, 20000);
+
+  it("allows admins and rejects non-admins for quality profile updates", async () => {
+    const { app, token: adminToken } = await getToken();
+    const dev = await getToken("dev", "devpw");
+    const config = {
+      minPackageScore: 0.8,
+      rules: {
+        wikiSpecCompleteness: { enabled: true, severity: "blocking", minScore: 0.8 }
+      }
+    };
+
+    const rejected = await dev.app.inject({
+      method: "PUT",
+      url: "/api/quality-gate/profile",
+      headers: { authorization: `Bearer ${dev.token}` },
+      payload: { config }
+    });
+    expect(rejected.statusCode).toBe(403);
+
+    const updated = await app.inject({
+      method: "PUT",
+      url: "/api/quality-gate/profile",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { config }
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().profile.config.minPackageScore).toBe(0.8);
+
+    const read = await app.inject({
+      method: "GET",
+      url: "/api/quality-gate/profile",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(read.statusCode).toBe(200);
+    expect(read.json().profile.config.minPackageScore).toBe(0.8);
   });
 });

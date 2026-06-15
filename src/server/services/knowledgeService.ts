@@ -17,13 +17,13 @@ export function createKnowledgeService(db: DatabaseHandle) {
 }
 
 export class KnowledgeService {
-  private readonly pool;
+  private readonly adapter;
   constructor(private readonly db: DatabaseHandle) {
-    this.pool = db.pool;
+    this.adapter = db.adapter;
   }
 
   async getUserByUsername(username: string): Promise<UserRecord | null> {
-    const { rows } = await this.pool.query("SELECT * FROM users WHERE username = $1", [username]);
+    const { rows } = await this.adapter.query("SELECT * FROM users WHERE username = $1", [username]);
     return rows.length ? mapUser(rows[0]) : null;
   }
 
@@ -66,10 +66,10 @@ export class KnowledgeService {
   }
 
   async getSourceBundleSummary() {
-    const { rows: [bundlesRow] } = await this.pool.query("SELECT COUNT(*)::int AS c FROM source_bundles");
-    const { rows: [versionsRow] } = await this.pool.query("SELECT COUNT(*)::int AS c FROM source_bundle_versions");
-    const { rows: [blobsRow] } = await this.pool.query("SELECT COUNT(*)::int AS c, COALESCE(SUM(byte_size), 0)::bigint AS bytes FROM source_blobs");
-    const { rows: latestRows } = await this.pool.query(
+    const { rows: [bundlesRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundles");
+    const { rows: [versionsRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundle_versions");
+    const { rows: [blobsRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c, COALESCE(SUM(byte_size), 0)::bigint AS bytes FROM source_blobs");
+    const { rows: latestRows } = await this.adapter.query(
       "SELECT version_id, label, created_at, file_count FROM source_bundle_versions ORDER BY created_at DESC LIMIT 1"
     );
     const latest = latestRows[0] ?? null;
@@ -90,12 +90,12 @@ export class KnowledgeService {
   }
 
   async listPackages(): Promise<AssetPackage[]> {
-    const { rows } = await this.pool.query("SELECT * FROM asset_packages ORDER BY created_at DESC");
+    const { rows } = await this.adapter.query("SELECT * FROM asset_packages ORDER BY created_at DESC");
     return rows.map(mapPackage);
   }
 
   async getPackageDetail(packageId: string) {
-    const { rows } = await this.pool.query("SELECT * FROM asset_packages WHERE package_id = $1", [packageId]);
+    const { rows } = await this.adapter.query("SELECT * FROM asset_packages WHERE package_id = $1", [packageId]);
     if (rows.length === 0) throw new Error(`Unknown package: ${packageId}`);
     return {
       package: mapPackage(rows[0]),
@@ -112,7 +112,7 @@ export class KnowledgeService {
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
     if (filter.group) { where.push(`group_name = $${params.length + 1}`); params.push(filter.group); }
     const sql = `SELECT * FROM asset_components${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY group_name, title`;
-    const { rows } = await this.pool.query(sql, params);
+    const { rows } = await this.adapter.query(sql, params);
     return rows.map(mapComponent);
   }
 
@@ -122,7 +122,7 @@ export class KnowledgeService {
     if (filter.severity) { where.push(`severity = $${params.length + 1}`); params.push(filter.severity); }
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
     const sql = `SELECT * FROM review_tasks${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at`;
-    const { rows } = await this.pool.query(sql, params);
+    const { rows } = await this.adapter.query(sql, params);
     return rows.map(mapReviewTask);
   }
 
@@ -132,7 +132,7 @@ export class KnowledgeService {
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
     if (filter.componentId) { where.push(`component_id = $${params.length + 1}`); params.push(filter.componentId); }
     const sql = `SELECT * FROM evidence_records${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC, evidence_id`;
-    const { rows } = await this.pool.query(sql, params);
+    const { rows } = await this.adapter.query(sql, params);
     return rows.map(mapEvidenceRecord);
   }
 
@@ -153,12 +153,12 @@ export class KnowledgeService {
   }
 
   async listReleases(): Promise<ReleaseRecord[]> {
-    const { rows } = await this.pool.query("SELECT * FROM releases ORDER BY published_at DESC NULLS LAST");
+    const { rows } = await this.adapter.query("SELECT * FROM releases ORDER BY published_at DESC NULLS LAST");
     return rows.map(mapRelease);
   }
 
   async listAgentEvents(): Promise<AgentEvent[]> {
-    const { rows } = await this.pool.query("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50");
+    const { rows } = await this.adapter.query("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50");
     return rows.map(mapAgentEvent);
   }
 }

@@ -10,14 +10,18 @@ import {
   PackagePlus,
   SearchCheck
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import { isTauri, selectFolder } from "../tauri";
 
 import {
   getBundleVersion,
   getDashboard,
   getPackage,
+  getQualityProfile,
   getToken,
+  buildKnowledgePackage,
   importLegacy,
   importSourceBundle,
   listAgentEvents,
@@ -28,6 +32,7 @@ import {
   login,
   scanLegacy,
   setToken,
+  updateQualityProfile,
   type AssetPackage,
   type SourceBundleVersion,
   type SourceFileChange
@@ -210,6 +215,24 @@ function Sources() {
     queryFn: () => getBundleVersion(bundleId, selectedVersion!),
     enabled: Boolean(selectedVersion)
   });
+  const buildMutation = useMutation({
+    mutationFn: () => {
+      if (!selectedVersion) throw new Error("请选择资料版本。");
+      return buildKnowledgePackage(bundleId, selectedVersion, {
+        stages: ["convert", "extract", "tables", "graph", "viz"],
+        model: "deterministic",
+        force: false,
+        only: null,
+        qualityProfileId: "default"
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    }
+  });
 
   return (
     <Page
@@ -230,7 +253,19 @@ function Sources() {
             onChange={(event) => setRootPath(event.target.value)}
             placeholder="例：D:/raw/2026-06-10"
             style={{ minWidth: 320 }}
+            readOnly={isTauri}
           />
+          {isTauri && (
+            <button
+              type="button"
+              onClick={async () => {
+                const picked = await selectFolder("选择资料根目录");
+                if (picked) setRootPath(picked);
+              }}
+            >
+              选择目录
+            </button>
+          )}
           <input
             value={note}
             onChange={(event) => setNote(event.target.value)}
@@ -303,6 +338,32 @@ function Sources() {
                 <Metric label="删除" value={detail.data.version.removedCount} hint="本版不再包含" />
                 <Metric label="未变" value={detail.data.version.unchangedCount} hint="复用 blob" />
               </div>
+              <section className="build-panel">
+                <div className="detail-head">
+                  <div>
+                    <h3>知识库构建 Pipeline</h3>
+                    <p>消费当前资料版本并生成一个可治理的知识资产包。</p>
+                  </div>
+                  <Badge label={buildMutation.isPending ? "构建中" : "原生 pipeline"} tone={buildMutation.isPending ? "warn" : "ok"} />
+                </div>
+                <div className="stage-row">
+                  {["convert", "extract", "tables", "graph", "viz"].map((stage) => <span key={stage}>{stage}</span>)}
+                </div>
+                <button
+                  className="primary-action"
+                  disabled={buildMutation.isPending}
+                  onClick={() => buildMutation.mutate()}
+                >
+                  <PackagePlus size={16} />
+                  {buildMutation.isPending ? "生成中..." : "生成知识资产包"}
+                </button>
+                {buildMutation.data && (
+                  <p className="notice">
+                    已生成：{buildMutation.data.package.name}，质量分 {String(buildMutation.data.qualitySummary.overallScore ?? "-")}
+                  </p>
+                )}
+                {buildMutation.error && <p className="error">{buildMutation.error instanceof Error ? buildMutation.error.message : String(buildMutation.error)}</p>}
+              </section>
               <h3>变更明细</h3>
               {detail.data.changes.length === 0 ? (
                 <p>与上一版相比无变更。</p>
@@ -489,13 +550,25 @@ function Maintenance() {
 
   return (
     <Page title="高级维护" subtitle="给管理员和主开发者查看底层 ID、迁移、审计和调试入口。">
+      <QualityGateAdmin />
       <section className="upload-box">
         <div>
           <h2>旧知识库扫描预览</h2>
           <p>先扫描旧 kb-builder data 目录，只生成摘要，不导入、不改动文件。</p>
         </div>
         <div className="upload-form legacy">
-          <input value={path} onChange={(event) => setPath(event.target.value)} />
+          <input value={path} onChange={(event) => setPath(event.target.value)} readOnly={isTauri} />
+          {isTauri && (
+            <button
+              type="button"
+              onClick={async () => {
+                const picked = await selectFolder("选择旧知识库目录");
+                if (picked) setPath(picked);
+              }}
+            >
+              选择目录
+            </button>
+          )}
           <button
             onClick={async () => {
               setLoading(true);
@@ -571,6 +644,53 @@ function Maintenance() {
         </section>
       )}
     </Page>
+  );
+}
+
+function QualityGateAdmin() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, error } = useQuery({ queryKey: ["quality-profile"], queryFn: getQualityProfile });
+  const [draft, setDraft] = useState("");
+  const mutation = useMutation({
+    mutationFn: () => updateQualityProfile(JSON.parse(draft)),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["quality-profile"] });
+    }
+  });
+
+  useEffect(() => {
+    if (data) setDraft(JSON.stringify(data.config, null, 2));
+  }, [data]);
+
+  if (isLoading) return <Loading title="读取质量门禁" />;
+  if (error) return <ErrorState error={error} />;
+
+  return (
+    <section className="quality-gate-panel">
+      <div className="detail-head">
+        <div>
+          <h2>知识质量门禁</h2>
+          <p>{data?.name}　·　更新于 {data?.updatedAt}</p>
+        </div>
+        <Badge label={data?.active ? "active" : "inactive"} tone={data?.active ? "ok" : "warn"} />
+      </div>
+      <textarea
+        className="code-editor"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        spellCheck={false}
+      />
+      <div className="detail-actions">
+        <button
+          className="primary-action"
+          disabled={mutation.isPending}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? "保存中..." : "保存门禁配置"}
+        </button>
+      </div>
+      {mutation.error && <p className="error">{mutation.error instanceof Error ? mutation.error.message : String(mutation.error)}</p>}
+    </section>
   );
 }
 

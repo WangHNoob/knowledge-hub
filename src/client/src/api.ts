@@ -148,6 +148,40 @@ export interface ReviewTask {
   createdAt: string;
 }
 
+export interface KnowledgeBuildRun {
+  runId: string;
+  sourceVersionId: string;
+  packageId: string | null;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string;
+  outputUri: string;
+}
+
+export interface QualityGateProfile {
+  profileId: string;
+  name: string;
+  active: boolean;
+  config: Record<string, unknown>;
+  createdBy: string;
+  updatedAt: string;
+}
+
+export interface BuildRequest {
+  stages: string[];
+  model: string;
+  force: boolean;
+  only: string | null;
+  qualityProfileId: string;
+}
+
+export interface BuildResponse {
+  run: KnowledgeBuildRun;
+  package: AssetPackage;
+  qualitySummary: Record<string, unknown>;
+}
+
 export interface ReleaseRecord {
   releaseId: string;
   version: string;
@@ -239,6 +273,18 @@ export async function importSourceBundle(
   return parseResponse(response);
 }
 
+export async function buildKnowledgePackage(bundleId: string, versionId: string, payload: BuildRequest): Promise<BuildResponse> {
+  const response = await fetch(`/api/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}/build`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+  return parseResponse(response);
+}
+
 export async function listPackages(): Promise<AssetPackage[]> {
   return (await getJson<{ packages: AssetPackage[] }>("/api/packages")).packages;
 }
@@ -250,6 +296,26 @@ export async function getPackage(packageId: string): Promise<PackageDetail> {
 export async function listReviewTasks(severity?: string): Promise<ReviewTask[]> {
   const suffix = severity ? `?severity=${encodeURIComponent(severity)}` : "";
   return (await getJson<{ tasks: ReviewTask[] }>(`/api/review/tasks${suffix}`)).tasks;
+}
+
+export async function listBuildRuns(): Promise<KnowledgeBuildRun[]> {
+  return (await getJson<{ runs: KnowledgeBuildRun[] }>("/api/build-runs")).runs;
+}
+
+export async function getQualityProfile(): Promise<QualityGateProfile> {
+  return (await getJson<{ profile: QualityGateProfile }>("/api/quality-gate/profile")).profile;
+}
+
+export async function updateQualityProfile(config: Record<string, unknown>): Promise<QualityGateProfile> {
+  const response = await fetch("/api/quality-gate/profile", {
+    method: "PUT",
+    headers: {
+      ...authHeaders(),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ config })
+  });
+  return (await parseResponse<{ profile: QualityGateProfile }>(response)).profile;
 }
 
 export async function listEvidence(packageId: string): Promise<{ records: EvidenceRecord[]; coverage: EvidenceCoverage }> {
