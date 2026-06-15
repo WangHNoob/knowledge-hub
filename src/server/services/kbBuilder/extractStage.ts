@@ -41,9 +41,9 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   if (!existsSync(parsedDir)) {
     return {
       stage: "extract",
-      status: "skipped",
+      status: "completed",
       outputPaths,
-      warnings: [`Missing parsed directory: ${parsedDir}`],
+      warnings: [`missing parsed docs directory: ${parsedDir}`],
     };
   }
 

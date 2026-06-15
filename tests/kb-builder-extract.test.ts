@@ -53,4 +53,27 @@ describe("runExtractStage", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("completes with a warning when parsed docs are missing", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system", "table", "concept"],
+        relation_types: ["configured_in", "references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview");
+
+      const specs = loadWikiSpecs(specDir);
+      const result = await runExtractStage({ dataDir, specs, model: "deterministic", force: false, only: null });
+
+      expect(result.status).toBe("completed");
+      expect(result.outputPaths).toEqual([]);
+      expect(result.warnings.some((warning) => warning.includes("missing parsed docs"))).toBe(true);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
