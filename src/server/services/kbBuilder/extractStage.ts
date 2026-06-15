@@ -291,7 +291,7 @@ function matchesOnlyFilter(rel: string, only: string): boolean {
 }
 
 function slugFromPath(path: string): string {
-  return slug(basename(path, extname(path)));
+  return slug(path.replace(/\.[^/.]+$/u, "").replace(/[\\/]+/g, "-"));
 }
 
 function slug(value: string): string {

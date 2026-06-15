@@ -77,4 +77,55 @@ describe("runExtractStage", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("keeps nested parsed files with the same basename from overwriting each other", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed", "systems"), { recursive: true });
+      mkdirSync(join(dataDir, "processed", "parsed", "ui"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system", "table", "concept"],
+        relation_types: ["configured_in", "references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview");
+
+      writeFileSync(join(dataDir, "processed", "parsed", "systems", "battle.md"), [
+        "---",
+        "type: system",
+        "title: Battle Rules",
+        "source: gamedocs/systems/battle.md",
+        "---",
+        "## Overview",
+        "System battle."
+      ].join("\n"));
+      writeFileSync(join(dataDir, "processed", "parsed", "ui", "battle.md"), [
+        "---",
+        "type: system",
+        "title: Battle UI",
+        "source: gamedocs/ui/battle.md",
+        "---",
+        "## Overview",
+        "UI battle."
+      ].join("\n"));
+
+      const specs = loadWikiSpecs(specDir);
+      const result = await runExtractStage({ dataDir, specs, model: "deterministic", force: false, only: null });
+
+      expect(result.outputPaths).toEqual([
+        "wiki/_meta/systems-battle.json",
+        "wiki/_meta/ui-battle.json",
+        "wiki/systems/systems-battle.md",
+        "wiki/systems/ui-battle.md"
+      ]);
+      const systemMeta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "systems-battle.json"), "utf8"));
+      const uiMeta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "ui-battle.json"), "utf8"));
+      expect(systemMeta.title).toBe("Battle Rules");
+      expect(uiMeta.title).toBe("Battle UI");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
