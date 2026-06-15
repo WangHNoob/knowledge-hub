@@ -1,24 +1,44 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, extname, join, relative } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import mammoth from "mammoth";
 import xlsx from "xlsx";
 import type { StageResult } from "./types";
+
+type MammothMarkdownResult = { value: string; messages: Array<{ message: string }> };
+type MammothWithMarkdown = typeof mammoth & {
+  convertToMarkdown(input: { path: string }): Promise<MammothMarkdownResult>;
+};
+
+const mammothMarkdown = mammoth as MammothWithMarkdown;
 
 export async function runConvertStage(options: { dataDir: string; force: boolean; only: string | null }): Promise<StageResult> {
   const docsDir = join(options.dataDir, "gamedocs");
   const outputPaths: string[] = [];
   const warnings: string[] = [];
+  const outputRoot = resolve(options.dataDir, "processed", "parsed");
 
+  if (!existsSync(docsDir)) {
+    return {
+      stage: "convert",
+      status: "skipped",
+      outputPaths,
+      warnings: [`Missing gamedocs directory: ${docsDir}`],
+    };
+  }
+
+  const only = normalizeOnlyFilter(options.only);
   for (const absolute of walkFiles(docsDir)) {
     const rel = relative(docsDir, absolute).replace(/\\/g, "/");
-    if (options.only && rel !== options.only && !rel.endsWith(`/${options.only}`)) continue;
+    if (only && rel !== only && !rel.endsWith(`/${only}`)) continue;
     const ext = extname(absolute).toLowerCase();
     if (![".md", ".txt", ".docx", ".xlsx", ".xls"].includes(ext)) continue;
     const outRel = `processed/parsed/${rel.replace(/\.[^.]+$/, ".md")}`;
-    const outAbs = join(options.dataDir, outRel);
+    const outAbs = resolve(options.dataDir, outRel);
+    assertContainedOutput(outputRoot, outAbs, outRel);
     mkdirSync(dirname(outAbs), { recursive: true });
-    const markdown = await convertFile(absolute, ext);
-    writeFileSync(outAbs, markdown);
+    const converted = await convertFileWithContext(absolute, ext, rel);
+    warnings.push(...converted.warnings);
+    writeFileSync(outAbs, converted.markdown);
     outputPaths.push(outRel);
   }
 
@@ -26,20 +46,77 @@ export async function runConvertStage(options: { dataDir: string; force: boolean
   return { stage: "convert", status: "completed", outputPaths, warnings };
 }
 
-async function convertFile(path: string, ext: string): Promise<string> {
-  if (ext === ".md") return readFileSync(path, "utf8");
-  if (ext === ".txt") return readFileSync(path, "utf8");
+async function convertFileWithContext(path: string, ext: string, rel: string): Promise<{ markdown: string; warnings: string[] }> {
+  try {
+    const converted = await convertFile(path, ext);
+    return {
+      markdown: converted.markdown,
+      warnings: converted.warnings.map((warning) => `${rel}: ${warning}`),
+    };
+  } catch (error) {
+    throw new Error(`Failed to convert ${rel}: ${errorMessage(error)}`);
+  }
+}
+
+async function convertFile(path: string, ext: string): Promise<{ markdown: string; warnings: string[] }> {
+  if (ext === ".md") return { markdown: readFileSync(path, "utf8"), warnings: [] };
+  if (ext === ".txt") return { markdown: readFileSync(path, "utf8"), warnings: [] };
   if (ext === ".docx") {
-    const result = await mammoth.convertToMarkdown({ path });
-    return result.value;
+    const result = await mammothMarkdown.convertToMarkdown({ path });
+    return {
+      markdown: result.value,
+      warnings: result.messages.map((message) => message.message),
+    };
   }
   const workbook = xlsx.readFile(path);
-  return workbook.SheetNames.map((name) => {
-    const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[name], { defval: "" });
-    const header = `## Sheet: ${name}`;
-    const body = rows.map((row) => `- ${Object.entries(row).map(([key, value]) => `${key}: ${String(value)}`).join("; ")}`).join("\n");
-    return `${header}\n\n${body}`;
-  }).join("\n\n");
+  return {
+    markdown: workbook.SheetNames.map((name) => {
+      const rows = xlsx.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, defval: "" });
+      return `## Sheet: ${name}\n\n${markdownTable(rows)}`;
+    }).join("\n\n"),
+    warnings: [],
+  };
+}
+
+function normalizeOnlyFilter(only: string | null): string | null {
+  if (!only) return null;
+  const normalized = only.replace(/\\/g, "/").replace(/^\/+/, "");
+  return normalized.startsWith("gamedocs/") ? normalized.slice("gamedocs/".length) : normalized;
+}
+
+function assertContainedOutput(outputRoot: string, outputPath: string, outputRel: string) {
+  const relativeToRoot = relative(outputRoot, outputPath);
+  if (relativeToRoot.startsWith("..") || isAbsolute(relativeToRoot)) {
+    throw new Error(`Refusing to write convert output outside processed/parsed: ${outputRel}`);
+  }
+}
+
+function markdownTable(rows: unknown[][]): string {
+  if (rows.length === 0) return "";
+  const columns = Math.max(...rows.map((row) => row.length));
+  const header = normalizeRow(rows[0], columns);
+  const body = rows.slice(1).map((row) => normalizeRow(row, columns));
+  return [
+    markdownTableRow(header),
+    markdownTableRow(Array.from({ length: columns }, () => "---")),
+    ...body.map(markdownTableRow),
+  ].join("\n");
+}
+
+function normalizeRow(row: unknown[], columns: number): string[] {
+  return Array.from({ length: columns }, (_, index) => markdownCell(row[index]));
+}
+
+function markdownTableRow(cells: string[]): string {
+  return `| ${cells.join(" | ")} |`;
+}
+
+function markdownCell(value: unknown): string {
+  return String(value ?? "").replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function walkFiles(root: string): string[] {
