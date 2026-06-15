@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import pg from "pg";
 import xlsx from "xlsx";
@@ -216,6 +216,37 @@ describe("knowledge hub api", () => {
     });
     expect(read.statusCode).toBe(200);
     expect(read.json().profile.config.minPackageScore).toBe(0.8);
+  });
+
+  it("tests OpenAI-compatible model connectivity without returning the api key", async () => {
+    const { app, token } = await getToken();
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ id: "chatcmpl-test" }), { status: 200 }));
+    try {
+      const tested = await app.inject({
+        method: "POST",
+        url: "/api/model-connectivity/test",
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          modelConfig: {
+            provider: "openai-compatible",
+            baseUrl: "https://llm.local/v1",
+            model: "gpt-test",
+            apiKey: "secret-key"
+          }
+        }
+      });
+
+      expect(tested.statusCode).toBe(200);
+      expect(tested.json()).toMatchObject({
+        ok: true,
+        provider: "openai-compatible",
+        model: "gpt-test",
+        message: "模型连接成功。"
+      });
+      expect(JSON.stringify(tested.json())).not.toContain("secret-key");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

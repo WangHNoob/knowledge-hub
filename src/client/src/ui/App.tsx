@@ -36,6 +36,7 @@ import {
   login,
   scanLegacy,
   setToken,
+  testModelConnectivity,
   updateQualityProfile,
   type AssetPackage,
   type BuildModelConfig,
@@ -221,6 +222,7 @@ function KnowledgeBuilder() {
   const [force, setForce] = useState(false);
   const [only, setOnly] = useState("");
   const [error, setError] = useState("");
+  const [modelTestMessage, setModelTestMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const versions = useQuery({
     queryKey: ["bundle-versions", bundleId],
@@ -276,12 +278,22 @@ function KnowledgeBuilder() {
       setError(err instanceof Error ? err.message : "启动构建失败。");
     }
   });
+  const modelTestMutation = useMutation({
+    mutationFn: async () => testModelConnectivity(createModelConfig(provider, baseUrl, model, apiKey)),
+    onSuccess: (result) => {
+      setModelTestMessage({ ok: result.ok, text: result.message });
+    },
+    onError: (err) => {
+      setModelTestMessage({ ok: false, text: err instanceof Error ? err.message : "模型连接测试失败。" });
+    }
+  });
 
   const activeRuns = (runs.data ?? []).filter((run) => run.status === "running");
   const selectedRuns = (runs.data ?? []).filter((run) => !selectedVersion || run.sourceVersionId === selectedVersion);
   const canStart = Boolean(selectedVersion) && !buildMutation.isPending && stages.length > 0 && (
     provider === "deterministic" || Boolean(baseUrl.trim() && model.trim() && apiKey.trim())
   );
+  const canTestModel = provider === "openai-compatible" && Boolean(baseUrl.trim() && model.trim() && apiKey.trim()) && !modelTestMutation.isPending;
 
   return (
     <Page
@@ -373,7 +385,21 @@ function KnowledgeBuilder() {
                 </label>
               </div>
             ) : (
-              <p className="notice">确定性模式不会调用大模型，适合验证 pipeline、表结构和质量门禁链路。</p>
+              <p className="notice">确定性模式只适合验证 pipeline。要生成高质量知识资产，请切换到 OpenAI-compatible 并完成连接测试。</p>
+            )}
+            <div className="model-actions">
+              <button
+                type="button"
+                disabled={!canTestModel}
+                onClick={() => modelTestMutation.mutate()}
+              >
+                <KeyRound size={16} />
+                {modelTestMutation.isPending ? "测试中..." : "测试模型连接"}
+              </button>
+              {provider !== "openai-compatible" && <span>请选择 OpenAI-compatible 设置后测试。</span>}
+            </div>
+            {modelTestMessage && (
+              <p className={modelTestMessage.ok ? "notice" : "error"}>{modelTestMessage.text}</p>
             )}
             <button
               className="primary-action"

@@ -191,6 +191,13 @@ export interface BuildResponse {
   run: KnowledgeBuildRun;
 }
 
+export interface ModelConnectivityResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  message: string;
+}
+
 export interface ReleaseRecord {
   releaseId: string;
   version: string;
@@ -309,6 +316,18 @@ export async function listReviewTasks(severity?: string): Promise<ReviewTask[]> 
 
 export async function listBuildRuns(): Promise<KnowledgeBuildRun[]> {
   return (await getJson<{ runs: KnowledgeBuildRun[] }>("/api/build-runs")).runs;
+}
+
+export async function testModelConnectivity(modelConfig: BuildModelConfig): Promise<ModelConnectivityResult> {
+  const response = await fetch("/api/model-connectivity/test", {
+    method: "POST",
+    headers: {
+      ...authHeaders(),
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ modelConfig })
+  });
+  return parseResponse(response);
 }
 
 export async function getQualityProfile(): Promise<QualityGateProfile> {

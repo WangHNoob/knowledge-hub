@@ -9,6 +9,8 @@ import type { DatabaseHandle, UserRecord } from "./types";
 import { importLegacyAsDraftPackage } from "./services/legacyImportService";
 import { createKnowledgeService } from "./services/knowledgeService";
 import { createKbBuilderPipelineService } from "./services/kbBuilderService";
+import { normalizeModelConfig } from "./services/kbBuilder/modelConfig";
+import { testModelConnectivity } from "./services/kbBuilder/modelConnectivity";
 import { scanLegacyKbBuilder } from "./services/legacyScanner";
 import { createSourceBundleService } from "./services/sourceBundleService";
 
@@ -67,6 +69,10 @@ const qualityProfileUpdateSchema = z.object({
     minPackageScore: z.number().min(0).max(1),
     rules: z.record(z.string(), z.record(z.string(), z.unknown()))
   })
+});
+
+const modelConnectivitySchema = z.object({
+  modelConfig: modelConfigSchema
 });
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -171,6 +177,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   // 资产包 / 审核 / 证据 / 发布 / Agent 反馈
   app.get("/api/packages", { preHandler: app.authenticate }, async () => ({ packages: await service.listPackages() }));
   app.get("/api/build-runs", { preHandler: app.authenticate }, async () => ({ runs: await kbBuilderService.listRuns() }));
+  app.post("/api/model-connectivity/test", { preHandler: app.authenticate }, async (request, reply) => {
+    const parsed = modelConnectivitySchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid model connectivity payload." });
+    return testModelConnectivity(normalizeModelConfig(parsed.data.modelConfig));
+  });
   app.get<{ Params: { runId: string } }>(
     "/api/build-runs/:runId",
     { preHandler: app.authenticate },

@@ -585,6 +585,35 @@ small {
   grid-column: 1 / -1;
 }
 
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.model-actions button {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #fffdf6;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.model-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.model-actions span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .icon-button {
   width: 36px;
   height: 36px;
