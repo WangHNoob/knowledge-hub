@@ -14,7 +14,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "tauri": "tauri",
     "tauri:dev": "concurrently -k -n backend,tauri -c blue,magenta \"npm run dev\" \"wait-on http://127.0.0.1:4174/api/health && node scripts/tauri-dev.mjs\"",
-    "tauri:build": "npm run build && tauri build"
+    "tauri:build": "npm run build && node scripts/tauri-dev.mjs build"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.1",

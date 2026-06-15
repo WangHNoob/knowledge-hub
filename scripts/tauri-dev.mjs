@@ -37,8 +37,22 @@ export function tauriDevSpawnConfig(env = process.env) {
   };
 }
 
-export function runTauriDev(env = process.env) {
-  const { command, args, options } = tauriDevSpawnConfig(env);
+export function tauriBuildSpawnConfig(env = process.env) {
+  return {
+    command: "npm run tauri -- build",
+    args: [],
+    options: {
+      shell: true,
+      stdio: "inherit",
+      env: withCargoPath(env)
+    }
+  };
+}
+
+export function runTauri(commandName = "dev", env = process.env) {
+  const { command, args, options } = commandName === "build"
+    ? tauriBuildSpawnConfig(env)
+    : tauriDevSpawnConfig(env);
   const child = spawn(command, args, {
     stdio: "inherit",
     ...options
@@ -58,6 +72,10 @@ export function runTauriDev(env = process.env) {
   });
 }
 
+export function runTauriDev(env = process.env) {
+  runTauri("dev", env);
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runTauriDev();
+  runTauri(process.argv[2] ?? "dev");
 }
