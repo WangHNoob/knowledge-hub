@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { PipelineModelConfig } from "./modelConfig";
+import { anthropicMessagesEndpoint } from "./modelConnectivity";
 import type { WikiSpecSet } from "./specs";
 import type { StageResult } from "./types";
 
@@ -89,7 +90,7 @@ async function extractPage(markdown: string, rel: string, options: ExtractOption
     return extractWithOpenAI(markdown, rel, options.modelConfig);
   }
 
-  if (options.modelConfig?.provider === "anthropic-compatible" && options.modelConfig.apiKey) {
+  if (options.modelConfig?.provider === "anthropic" && options.modelConfig.apiKey) {
     return extractWithAnthropic(markdown, rel, options.modelConfig);
   }
 
@@ -244,9 +245,8 @@ async function extractWithOpenAI(markdown: string, rel: string, config: Extract<
   return normalizeExtractedJson(JSON.parse(content), markdown, rel);
 }
 
-async function extractWithAnthropic(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "anthropic-compatible" }>): Promise<ExtractedPage> {
-  const baseUrl = config.baseUrl.replace(/\/+$/u, "");
-  const response = await fetch(`${baseUrl}/messages`, {
+async function extractWithAnthropic(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "anthropic" }>): Promise<ExtractedPage> {
+  const response = await fetch(anthropicMessagesEndpoint(config.baseUrl), {
     method: "POST",
     headers: {
       "content-type": "application/json",

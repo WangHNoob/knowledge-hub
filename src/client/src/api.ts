@@ -200,7 +200,7 @@ export interface BuildRequest {
 export type BuildModelConfig =
   | { provider: "deterministic"; model: "deterministic" }
   | { provider: "openai-compatible"; baseUrl: string; model: string; apiKey?: string }
-  | { provider: "anthropic-compatible"; baseUrl: string; model: string; apiKey?: string };
+  | { provider: "anthropic"; baseUrl: string; model: string; apiKey?: string };
 
 export interface BuildResponse {
   run: KnowledgeBuildRun;

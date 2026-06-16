@@ -583,7 +583,7 @@ describe("knowledge hub api", () => {
     }
   });
 
-  it("tests Anthropic-compatible model connectivity without returning the api key", async () => {
+  it("tests Anthropic model connectivity without returning the api key", async () => {
     const { app, token } = await getToken();
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -597,7 +597,7 @@ describe("knowledge hub api", () => {
         headers: { authorization: `Bearer ${token}` },
         payload: {
           modelConfig: {
-            provider: "anthropic-compatible",
+            provider: "anthropic",
             baseUrl: "https://api.anthropic.com/v1",
             model: "claude-sonnet-4-5",
             apiKey: "sk-ant-secret"
@@ -608,7 +608,7 @@ describe("knowledge hub api", () => {
       expect(tested.statusCode).toBe(200);
       expect(tested.json()).toMatchObject({
         ok: true,
-        provider: "anthropic-compatible",
+        provider: "anthropic",
         model: "claude-sonnet-4-5",
         message: "模型连接成功。"
       });
@@ -619,6 +619,64 @@ describe("knowledge hub api", () => {
         "anthropic-version": "2023-06-01"
       });
       expect(JSON.stringify(tested.json())).not.toContain("sk-ant-secret");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("accepts a full Anthropic messages endpoint as the base url", async () => {
+    const { app, token } = await getToken();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ id: "msg-test", content: [{ type: "text", text: "ok" }] }), { status: 200 });
+    });
+    try {
+      const tested = await app.inject({
+        method: "POST",
+        url: "/api/model-connectivity/test",
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          modelConfig: {
+            provider: "anthropic",
+            baseUrl: "https://proxy.local/anthropic/v1/messages",
+            model: "claude-sonnet-4-5",
+            apiKey: "sk-ant-secret"
+          }
+        }
+      });
+
+      expect(tested.statusCode).toBe(200);
+      expect(calls[0].url).toBe("https://proxy.local/anthropic/v1/messages");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("normalizes the Anthropic service root to the v1 messages endpoint", async () => {
+    const { app, token } = await getToken();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ id: "msg-test", content: [{ type: "text", text: "ok" }] }), { status: 200 });
+    });
+    try {
+      const tested = await app.inject({
+        method: "POST",
+        url: "/api/model-connectivity/test",
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          modelConfig: {
+            provider: "anthropic",
+            baseUrl: "https://api.anthropic.com",
+            model: "claude-sonnet-4-5",
+            apiKey: "sk-ant-secret"
+          }
+        }
+      });
+
+      expect(tested.statusCode).toBe(200);
+      expect(calls[0].url).toBe("https://api.anthropic.com/v1/messages");
     } finally {
       vi.unstubAllGlobals();
     }

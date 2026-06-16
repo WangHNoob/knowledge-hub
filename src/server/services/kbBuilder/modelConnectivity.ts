@@ -18,7 +18,7 @@ export async function testModelConnectivity(
       ok: false,
       provider: config.provider,
       model: config.model,
-      message: "请切换到 OpenAI-compatible 或 Anthropic-compatible，并填写 Base URL、Model 和 API Key 后再测试连接。"
+      message: "请切换到 OpenAI-compatible 或 Anthropic，并填写 Base URL、Model 和 API Key 后再测试连接。"
     };
   }
 
@@ -31,7 +31,7 @@ export async function testModelConnectivity(
     };
   }
 
-  if (config.provider === "anthropic-compatible") {
+  if (config.provider === "anthropic") {
     return testAnthropicConnectivity(config, fetchImpl);
   }
 
@@ -86,12 +86,12 @@ async function testOpenAIConnectivity(
 }
 
 async function testAnthropicConnectivity(
-  config: Extract<PipelineModelConfig, { provider: "anthropic-compatible" }>,
+  config: Extract<PipelineModelConfig, { provider: "anthropic" }>,
   fetchImpl: FetchLike,
 ): Promise<ModelConnectivityResult> {
-  const baseUrl = config.baseUrl.replace(/\/+$/u, "");
+  const endpoint = anthropicMessagesEndpoint(config.baseUrl);
   try {
-    const response = await fetchImpl(`${baseUrl}/messages`, {
+    const response = await fetchImpl(endpoint, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -113,7 +113,7 @@ async function testAnthropicConnectivity(
         ok: false,
         provider: config.provider,
         model: config.model,
-        message: `模型连接失败：${response.status} ${extractErrorMessage(await response.text(), response.statusText)}`,
+        message: `模型连接失败：${response.status} ${extractErrorMessage(await response.text(), response.statusText)}。请求地址：${endpoint}`,
       };
     }
 
@@ -131,6 +131,13 @@ async function testAnthropicConnectivity(
       message: `模型连接失败：${error instanceof Error ? error.message : String(error)}`,
     };
   }
+}
+
+export function anthropicMessagesEndpoint(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/u, "");
+  if (normalized.endsWith("/messages")) return normalized;
+  if (normalized.endsWith("/v1")) return `${normalized}/messages`;
+  return `${normalized}/v1/messages`;
 }
 
 function extractErrorMessage(body: string, fallback: string): string {
