@@ -89,6 +89,10 @@ async function extractPage(markdown: string, rel: string, options: ExtractOption
     return extractWithOpenAI(markdown, rel, options.modelConfig);
   }
 
+  if (options.modelConfig?.provider === "anthropic-compatible" && options.modelConfig.apiKey) {
+    return extractWithAnthropic(markdown, rel, options.modelConfig);
+  }
+
   if (options.model !== "deterministic" && process.env.OPENAI_API_KEY) {
     return extractWithOpenAI(markdown, rel, {
       provider: "openai-compatible",
@@ -235,6 +239,38 @@ async function extractWithOpenAI(markdown: string, rel: string, config: Extract<
   const content = json.choices?.[0]?.message?.content;
   if (!content) {
     throw new Error(`OpenAI extraction returned no content for ${rel}`);
+  }
+
+  return normalizeExtractedJson(JSON.parse(content), markdown, rel);
+}
+
+async function extractWithAnthropic(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "anthropic-compatible" }>): Promise<ExtractedPage> {
+  const baseUrl = config.baseUrl.replace(/\/+$/u, "");
+  const response = await fetch(`${baseUrl}/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": config.apiKey ?? "",
+      "anthropic-version": config.anthropicVersion,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      max_tokens: 4096,
+      system: "Extract a wiki page from markdown. Return only JSON with type, title, source, facts, entities, relationships, and body.",
+      messages: [
+        { role: "user", content: [{ type: "text", text: `Source path: processed/parsed/${rel}\n\n${markdown}` }] },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Anthropic extraction failed for ${rel}: ${response.status} ${response.statusText}`);
+  }
+
+  const json = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
+  const content = json.content?.find((item) => item.type === "text" && item.text)?.text;
+  if (!content) {
+    throw new Error(`Anthropic extraction returned no content for ${rel}`);
   }
 
   return normalizeExtractedJson(JSON.parse(content), markdown, rel);

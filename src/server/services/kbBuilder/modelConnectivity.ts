@@ -13,12 +13,12 @@ export async function testModelConnectivity(
   config: PipelineModelConfig,
   fetchImpl: FetchLike = fetch,
 ): Promise<ModelConnectivityResult> {
-  if (config.provider !== "openai-compatible") {
+  if (config.provider === "deterministic") {
     return {
       ok: false,
       provider: config.provider,
       model: config.model,
-      message: "请切换到 OpenAI-compatible 并填写 Base URL、Model 和 API Key 后再测试连接。"
+      message: "请切换到 OpenAI-compatible 或 Anthropic-compatible，并填写 Base URL、Model 和 API Key 后再测试连接。"
     };
   }
 
@@ -31,6 +31,17 @@ export async function testModelConnectivity(
     };
   }
 
+  if (config.provider === "anthropic-compatible") {
+    return testAnthropicConnectivity(config, fetchImpl);
+  }
+
+  return testOpenAIConnectivity(config, fetchImpl);
+}
+
+async function testOpenAIConnectivity(
+  config: Extract<PipelineModelConfig, { provider: "openai-compatible" }>,
+  fetchImpl: FetchLike,
+): Promise<ModelConnectivityResult> {
   const baseUrl = config.baseUrl.replace(/\/+$/u, "");
   try {
     const response = await fetchImpl(`${baseUrl}/chat/completions`, {
@@ -45,6 +56,54 @@ export async function testModelConnectivity(
         messages: [
           { role: "system", content: "Reply with ok." },
           { role: "user", content: "ping" },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        provider: config.provider,
+        model: config.model,
+        message: `模型连接失败：${response.status} ${extractErrorMessage(await response.text(), response.statusText)}`,
+      };
+    }
+
+    return {
+      ok: true,
+      provider: config.provider,
+      model: config.model,
+      message: "模型连接成功。"
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      provider: config.provider,
+      model: config.model,
+      message: `模型连接失败：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+async function testAnthropicConnectivity(
+  config: Extract<PipelineModelConfig, { provider: "anthropic-compatible" }>,
+  fetchImpl: FetchLike,
+): Promise<ModelConnectivityResult> {
+  const baseUrl = config.baseUrl.replace(/\/+$/u, "");
+  try {
+    const response = await fetchImpl(`${baseUrl}/messages`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": config.apiKey ?? "",
+        "anthropic-version": config.anthropicVersion,
+      },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: 1,
+        system: "Reply with ok.",
+        messages: [
+          { role: "user", content: [{ type: "text", text: "ping" }] },
         ],
       }),
     });

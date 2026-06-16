@@ -582,6 +582,48 @@ describe("knowledge hub api", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("tests Anthropic-compatible model connectivity without returning the api key", async () => {
+    const { app, token } = await getToken();
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ id: "msg-test", content: [{ type: "text", text: "ok" }] }), { status: 200 });
+    });
+    try {
+      const tested = await app.inject({
+        method: "POST",
+        url: "/api/model-connectivity/test",
+        headers: { authorization: `Bearer ${token}` },
+        payload: {
+          modelConfig: {
+            provider: "anthropic-compatible",
+            baseUrl: "https://api.anthropic.com/v1",
+            model: "claude-sonnet-4-5",
+            apiKey: "sk-ant-secret",
+            anthropicVersion: "2023-06-01"
+          }
+        }
+      });
+
+      expect(tested.statusCode).toBe(200);
+      expect(tested.json()).toMatchObject({
+        ok: true,
+        provider: "anthropic-compatible",
+        model: "claude-sonnet-4-5",
+        message: "模型连接成功。"
+      });
+      expect(calls[0].url).toBe("https://api.anthropic.com/v1/messages");
+      expect(calls[0].init?.headers).toMatchObject({
+        "content-type": "application/json",
+        "x-api-key": "sk-ant-secret",
+        "anthropic-version": "2023-06-01"
+      });
+      expect(JSON.stringify(tested.json())).not.toContain("sk-ant-secret");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 async function waitForBuildRun(app: FastifyInstance, token: string, runId: string) {

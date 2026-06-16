@@ -232,6 +232,7 @@ function Dashboard() {
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
+type ModelProvider = "deterministic" | "openai-compatible" | "anthropic-compatible";
 
 function KnowledgeBuilder() {
   const queryClient = useQueryClient();
@@ -239,10 +240,11 @@ function KnowledgeBuilder() {
   const prefs = useMemo(loadModelPrefs, []);
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [stages, setStages] = useState<string[]>(BUILD_STAGES);
-  const [provider, setProvider] = useState<"deterministic" | "openai-compatible">(prefs.provider);
+  const [provider, setProvider] = useState<ModelProvider>(prefs.provider);
   const [baseUrl, setBaseUrl] = useState(prefs.baseUrl);
   const [model, setModel] = useState(prefs.model);
   const [apiKey, setApiKey] = useState(prefs.apiKey);
+  const [anthropicVersion, setAnthropicVersion] = useState(prefs.anthropicVersion);
   const [rememberApiKey, setRememberApiKey] = useState(Boolean(prefs.apiKey));
   const [force, setForce] = useState(false);
   const [only, setOnly] = useState("");
@@ -268,16 +270,17 @@ function KnowledgeBuilder() {
       provider,
       baseUrl,
       model,
+      anthropicVersion,
       apiKey: rememberApiKey ? apiKey : ""
     };
     localStorage.setItem(MODEL_PREFS_KEY, JSON.stringify(next));
-  }, [apiKey, baseUrl, model, provider, rememberApiKey]);
+  }, [anthropicVersion, apiKey, baseUrl, model, provider, rememberApiKey]);
 
   const buildMutation = useMutation({
     mutationFn: async () => {
       if (!selectedVersion) throw new Error("请选择资料版本。");
       if (stages.length === 0) throw new Error("至少选择一个 pipeline 阶段。");
-      const modelConfig = createModelConfig(provider, baseUrl, model, apiKey);
+      const modelConfig = createModelConfig(provider, baseUrl, model, apiKey, anthropicVersion);
       return buildKnowledgePackage(bundleId, selectedVersion, {
         stages,
         model: modelConfig.model,
@@ -304,7 +307,7 @@ function KnowledgeBuilder() {
     }
   });
   const modelTestMutation = useMutation({
-    mutationFn: async () => testModelConnectivity(createModelConfig(provider, baseUrl, model, apiKey)),
+    mutationFn: async () => testModelConnectivity(createModelConfig(provider, baseUrl, model, apiKey, anthropicVersion)),
     onSuccess: (result) => {
       setModelTestMessage({ ok: result.ok, text: result.message });
     },
@@ -336,7 +339,19 @@ function KnowledgeBuilder() {
   const canStart = Boolean(selectedVersion) && !buildMutation.isPending && stages.length > 0 && (
     provider === "deterministic" || Boolean(baseUrl.trim() && model.trim() && apiKey.trim())
   );
-  const canTestModel = provider === "openai-compatible" && Boolean(baseUrl.trim() && model.trim() && apiKey.trim()) && !modelTestMutation.isPending;
+  const canTestModel = provider !== "deterministic" && Boolean(baseUrl.trim() && model.trim() && apiKey.trim()) && !modelTestMutation.isPending;
+  const selectProvider = (nextProvider: ModelProvider) => {
+    setProvider(nextProvider);
+    if (nextProvider === "openai-compatible" && provider !== "openai-compatible") {
+      setBaseUrl("https://api.openai.com/v1");
+      setModel("gpt-4.1-mini");
+    }
+    if (nextProvider === "anthropic-compatible" && provider !== "anthropic-compatible") {
+      setBaseUrl("https://api.anthropic.com/v1");
+      setModel("claude-sonnet-4-5");
+      setAnthropicVersion("2023-06-01");
+    }
+  };
 
   return (
     <Page
@@ -401,23 +416,32 @@ function KnowledgeBuilder() {
               <KeyRound size={20} />
             </div>
             <div className="segmented">
-              <button className={provider === "deterministic" ? "active" : ""} onClick={() => setProvider("deterministic")}>
+              <button className={provider === "deterministic" ? "active" : ""} onClick={() => selectProvider("deterministic")}>
                 确定性
               </button>
-              <button className={provider === "openai-compatible" ? "active" : ""} onClick={() => setProvider("openai-compatible")}>
+              <button className={provider === "openai-compatible" ? "active" : ""} onClick={() => selectProvider("openai-compatible")}>
                 OpenAI-compatible
               </button>
+              <button className={provider === "anthropic-compatible" ? "active" : ""} onClick={() => selectProvider("anthropic-compatible")}>
+                Anthropic-compatible
+              </button>
             </div>
-            {provider === "openai-compatible" ? (
+            {provider !== "deterministic" ? (
               <div className="model-grid">
                 <label className="field-label">
                   Base URL
-                  <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
+                  <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={provider === "anthropic-compatible" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"} />
                 </label>
                 <label className="field-label">
                   Model
-                  <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4.1-mini" />
+                  <input value={model} onChange={(event) => setModel(event.target.value)} placeholder={provider === "anthropic-compatible" ? "claude-sonnet-4-5" : "gpt-4.1-mini"} />
                 </label>
+                {provider === "anthropic-compatible" && (
+                  <label className="field-label">
+                    Anthropic Version
+                    <input value={anthropicVersion} onChange={(event) => setAnthropicVersion(event.target.value)} placeholder="2023-06-01" />
+                  </label>
+                )}
                 <label className="field-label model-secret">
                   <span className="secret-label-row">
                     API Key
@@ -426,11 +450,11 @@ function KnowledgeBuilder() {
                       在本机记住
                     </label>
                   </span>
-                  <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder="sk-..." />
+                  <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={provider === "anthropic-compatible" ? "sk-ant-..." : "sk-..."} />
                 </label>
               </div>
             ) : (
-              <p className="notice">确定性模式只适合验证 pipeline。要生成高质量知识资产，请切换到 OpenAI-compatible 并完成连接测试。</p>
+              <p className="notice">确定性模式只适合验证 pipeline。要生成高质量知识资产，请切换到 OpenAI-compatible 或 Anthropic-compatible 并完成连接测试。</p>
             )}
             <div className="model-actions">
               <button
@@ -441,7 +465,7 @@ function KnowledgeBuilder() {
                 <KeyRound size={16} />
                 {modelTestMutation.isPending ? "测试中..." : "测试模型连接"}
               </button>
-              {provider !== "openai-compatible" && <span>请选择 OpenAI-compatible 设置后测试。</span>}
+              {provider === "deterministic" && <span>请选择 OpenAI-compatible 或 Anthropic-compatible 设置后测试。</span>}
             </div>
             {modelTestMessage && (
               <p className={modelTestMessage.ok ? "notice" : "error"}>{modelTestMessage.text}</p>
@@ -534,32 +558,47 @@ function BuildRunCard({
   );
 }
 
-function loadModelPrefs(): { provider: "deterministic" | "openai-compatible"; baseUrl: string; model: string; apiKey: string } {
+function loadModelPrefs(): { provider: ModelProvider; baseUrl: string; model: string; apiKey: string; anthropicVersion: string } {
   try {
     const parsed = JSON.parse(localStorage.getItem(MODEL_PREFS_KEY) ?? "{}") as Partial<{
-      provider: "deterministic" | "openai-compatible";
+      provider: ModelProvider;
       baseUrl: string;
       model: string;
       apiKey: string;
+      anthropicVersion: string;
     }>;
+    const provider: ModelProvider = parsed.provider === "openai-compatible" || parsed.provider === "anthropic-compatible"
+      ? parsed.provider
+      : "deterministic";
     return {
-      provider: parsed.provider === "openai-compatible" ? "openai-compatible" : "deterministic",
-      baseUrl: parsed.baseUrl ?? "https://api.openai.com/v1",
-      model: parsed.model ?? "gpt-4.1-mini",
-      apiKey: parsed.apiKey ?? ""
+      provider,
+      baseUrl: parsed.baseUrl ?? (provider === "anthropic-compatible" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
+      model: parsed.model ?? (provider === "anthropic-compatible" ? "claude-sonnet-4-5" : "gpt-4.1-mini"),
+      apiKey: parsed.apiKey ?? "",
+      anthropicVersion: parsed.anthropicVersion ?? "2023-06-01"
     };
   } catch {
-    return { provider: "deterministic", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", apiKey: "" };
+    return { provider: "deterministic", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini", apiKey: "", anthropicVersion: "2023-06-01" };
   }
 }
 
 function createModelConfig(
-  provider: "deterministic" | "openai-compatible",
+  provider: ModelProvider,
   baseUrl: string,
   model: string,
-  apiKey: string
+  apiKey: string,
+  anthropicVersion: string
 ): BuildModelConfig {
   if (provider === "deterministic") return { provider: "deterministic", model: "deterministic" };
+  if (provider === "anthropic-compatible") {
+    return {
+      provider: "anthropic-compatible",
+      baseUrl: baseUrl.trim(),
+      model: model.trim(),
+      apiKey: apiKey.trim(),
+      anthropicVersion: anthropicVersion.trim() || "2023-06-01"
+    };
+  }
   return {
     provider: "openai-compatible",
     baseUrl: baseUrl.trim(),
