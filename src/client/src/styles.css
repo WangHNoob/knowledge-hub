@@ -511,6 +511,32 @@ nav {
   cursor: not-allowed;
 }
 
+.secondary-action {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 13px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.secondary-action:hover:not(:disabled) {
+  border-color: var(--olive);
+  color: var(--olive);
+  box-shadow: var(--shadow-soft);
+}
+
+.secondary-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── Badges & Chips ── */
 
 .badge {
@@ -1213,6 +1239,170 @@ code {
   border: 1px solid rgba(201, 162, 39, 0.18);
 }
 
+/* ── Legislation ── */
+
+.legislation-workbench {
+  display: grid;
+  gap: 20px;
+}
+
+.legislation-save-panel {
+  align-items: start;
+}
+
+.rule-section {
+  align-content: start;
+}
+
+.rule-card-list {
+  display: grid;
+  gap: 14px;
+}
+
+.rule-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+
+.rule-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rule-card-head strong {
+  font-family: var(--font-display);
+  font-size: 17px;
+}
+
+.rule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.rule-grid.two {
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+}
+
+.tag-field span {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.rule-switches {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.switch-field {
+  display: inline-flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.switch-field.compact {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.switch-field input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--olive);
+  cursor: pointer;
+}
+
+.rule-table {
+  display: grid;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.rule-table-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.85fr) minmax(180px, 1fr) minmax(112px, 0.55fr) 42px;
+  gap: 10px;
+  align-items: center;
+  min-width: 680px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.rule-table-row.head {
+  border: 0;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.relation-table .rule-table-row {
+  grid-template-columns: minmax(140px, 0.8fr) minmax(150px, 0.9fr) minmax(130px, 0.75fr) minmax(108px, 0.55fr) minmax(92px, 0.5fr) 42px;
+  min-width: 900px;
+}
+
+.quality-table .rule-table-row {
+  grid-template-columns: minmax(150px, 0.85fr) minmax(120px, 0.55fr) minmax(220px, 1.2fr) minmax(92px, 0.5fr) 42px;
+  min-width: 820px;
+}
+
+.rule-table input,
+.rule-table select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface);
+  color: var(--ink);
+  outline: none;
+}
+
+.rule-table input:focus,
+.rule-table select:focus {
+  border-color: var(--olive);
+  box-shadow: 0 0 0 3px rgba(143, 168, 79, 0.12);
+}
+
+.advanced-json {
+  display: grid;
+  gap: 12px;
+}
+
+.advanced-json summary {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.advanced-json p,
+.muted {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
 /* ── MCP Console ── */
 
 .mcp-console {
@@ -1752,6 +1942,8 @@ form button:active:not(:disabled) {
   .package-grid,
   .builder-layout,
   .release-workbench,
+  .rule-grid,
+  .rule-grid.two,
   .mcp-console,
   .diagnostics-workbench,
   .diagnostics-metrics {
