@@ -1,6 +1,7 @@
 import { basename, extname, parse } from "node:path";
 
 import type { AssetComponent, AssetGroup, AssetPackage, DatabaseHandle } from "../types";
+import { mapPackage } from "../db/mappers";
 import { scanLegacyKbBuilder } from "./legacyScanner";
 
 export interface LegacyImportResult {
@@ -120,19 +121,4 @@ function titleFromPath(path: string): string {
 
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "item";
-}
-
-function mapPackage(row: Record<string, unknown>): AssetPackage {
-  return {
-    packageId: row.package_id as string,
-    name: row.name as string,
-    kind: row.kind as string,
-    status: row.status as AssetPackage["status"],
-    description: row.description as string,
-    createdByRunId: row.created_by_run_id as string,
-    sourceVersionIds: row.source_version_ids as string[] ?? [],
-    legacyPaths: row.legacy_paths as string[] ?? [],
-    qualitySummary: row.quality_summary as Record<string, unknown> ?? {},
-    createdAt: String(row.created_at)
-  };
 }

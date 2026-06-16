@@ -5,7 +5,9 @@ import { nanoid } from "nanoid";
 import xlsx from "xlsx";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, ReleaseRecord } from "../types";
+import { jsonArray, mapComponent, mapPackage } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
+import { createFeedbackService, type FeedbackService } from "./feedbackService";
 import { createReleaseService } from "./releaseService";
 import { createSourceBundleService } from "./sourceBundleService";
 
@@ -58,11 +60,13 @@ export class KnowledgeQueryService {
   private readonly adapter;
   private readonly releaseService;
   private readonly sourceService;
+  private readonly feedback: FeedbackService;
 
   constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
     this.adapter = db.adapter;
     this.releaseService = createReleaseService(db);
     this.sourceService = createSourceBundleService(db, dataDir);
+    this.feedback = createFeedbackService(db);
   }
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {
@@ -115,7 +119,7 @@ export class KnowledgeQueryService {
         status,
         latencyMs: Date.now() - started,
       });
-      await this.applyFeedbackRules(release, toolName, payload, hitComponentIds, qualityFlags, status);
+      await this.feedback.applyRules({ release, toolName, payload, hitComponentIds, qualityFlags, status });
       await span?.complete({
         releaseId: release.releaseId,
         status,
@@ -546,88 +550,6 @@ export class KnowledgeQueryService {
       ],
     );
   }
-
-  private async applyFeedbackRules(
-    release: ReleaseRecord,
-    toolName: string,
-    payload: Record<string, unknown>,
-    hitComponentIds: string[],
-    qualityFlags: string[],
-    status: "hit" | "miss" | "error",
-  ): Promise<void> {
-    if (status === "error") return;
-    if (status === "miss") {
-      await this.createFeedback(release, toolName, payload, "miss", [], []);
-      return;
-    }
-    if (qualityFlags.some((flag) => flag.startsWith("low_quality:"))) {
-      await this.createFeedback(release, toolName, payload, "low_quality_hit", hitComponentIds, qualityFlags);
-      return;
-    }
-    if (qualityFlags.some((flag) => flag.startsWith("evidence_missing:"))) {
-      await this.createFeedback(release, toolName, payload, "evidence_insufficient", hitComponentIds, qualityFlags);
-    }
-  }
-
-  private async createFeedback(
-    release: ReleaseRecord,
-    toolName: string,
-    payload: Record<string, unknown>,
-    feedbackType: "miss" | "low_quality_hit" | "evidence_insufficient" | "relation_inference_failed",
-    hitComponentIds: string[],
-    qualityFlags: string[],
-  ): Promise<void> {
-    const query = feedbackQueryKey(toolName, payload);
-    const { rows: countRows } = await this.adapter.query(
-      "SELECT COUNT(*)::int AS count FROM agent_events WHERE release_id = $1 AND feedback_type = $2 AND query = $3",
-      [release.releaseId, feedbackType, query],
-    );
-    const repeatedCount = Number(countRows[0]?.count ?? 0) + 1;
-    const severity = repeatedCount >= 3 ? "blocking" : "warning";
-    const targetComponent = await this.feedbackTargetComponent(release, hitComponentIds);
-    if (!targetComponent) return;
-    const title = feedbackTitle(feedbackType, severity, query);
-    const taskId = `task_mcp_${slug(feedbackType)}_${nanoid(6)}`;
-    const suggestedAction = feedbackSuggestedAction(feedbackType);
-
-    await this.adapter.query(
-      `INSERT INTO review_tasks (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [
-        taskId,
-        targetComponent.packageId,
-        targetComponent.componentId,
-        severity,
-        "open",
-        title,
-        `Knowledge MCP ${toolName} feedback: ${JSON.stringify(payload)}. Quality flags: ${qualityFlags.join(", ") || "none"}.`,
-        suggestedAction,
-        new Date().toISOString(),
-      ],
-    );
-    await this.adapter.query(
-      `INSERT INTO agent_events
-        (event_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [
-        `evt_${Date.now()}_${nanoid(6)}`,
-        release.releaseId,
-        query,
-        JSON.stringify(hitComponentIds),
-        JSON.stringify(qualityFlags),
-        feedbackType === "miss" ? "miss" : "hit",
-        feedbackType,
-        suggestedAction,
-        taskId,
-        new Date().toISOString(),
-      ],
-    );
-  }
-
-  private async feedbackTargetComponent(release: ReleaseRecord, hitComponentIds: string[]): Promise<AssetComponent | null> {
-    if (hitComponentIds.length > 0) return (await this.componentsByIds(hitComponentIds))[0] ?? null;
-    return (await this.releaseComponents(release))[0] ?? null;
-  }
 }
 
 function releaseEnvelope(release: ReleaseRecord) {
@@ -649,63 +571,6 @@ function releaseSourceVersionIds(release: ReleaseRecord): string[] {
 
 function manifestComponentIds(release: ReleaseRecord): string[] {
   return uniqueSorted(jsonArray((release.manifest as Record<string, unknown>).componentIds));
-}
-
-function mapComponent(row: Record<string, unknown>): AssetComponent {
-  return {
-    componentId: row.component_id as string,
-    packageId: row.package_id as string,
-    artifactId: row.artifact_id as string,
-    group: row.group_name as AssetComponent["group"],
-    kind: row.kind as string,
-    title: row.title as string,
-    status: row.status as string,
-    legacyPath: String(row.legacy_path ?? ""),
-    storageUri: String(row.storage_uri ?? ""),
-    sourceRefs: jsonArray(row.source_refs),
-    quality: jsonObject(row.quality),
-  };
-}
-
-function mapPackage(row: Record<string, unknown>): AssetPackage {
-  return {
-    packageId: row.package_id as string,
-    name: row.name as string,
-    kind: row.kind as string,
-    status: row.status as AssetPackage["status"],
-    description: row.description as string,
-    createdByRunId: row.created_by_run_id as string,
-    sourceVersionIds: jsonArray(row.source_version_ids),
-    legacyPaths: jsonArray(row.legacy_paths),
-    qualitySummary: jsonObject(row.quality_summary),
-    createdAt: String(row.created_at),
-  };
-}
-
-function jsonArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value === "string" && value.length > 0) {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.map(String) : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
-
-function jsonObject(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
-  if (typeof value === "string" && value.length > 0) {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
 }
 
 function stringArg(payload: Record<string, unknown>, ...keys: string[]): string {
@@ -771,27 +636,4 @@ function numberFromQuality(quality: Record<string, unknown>, keys: string[]): nu
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
-}
-
-function feedbackQueryKey(toolName: string, payload: Record<string, unknown>): string {
-  const value = payload.query ?? payload.q ?? payload.topic ?? payload.page ?? payload.table ?? payload.entityId ?? JSON.stringify(payload);
-  return `${toolName}:${String(value).trim().toLowerCase()}`;
-}
-
-function feedbackTitle(feedbackType: string, severity: string, query: string): string {
-  if (feedbackType === "miss") return severity === "blocking" ? `错误本候选：MCP 查询连续无命中 ${query}` : `MCP 查询无命中 ${query}`;
-  if (feedbackType === "low_quality_hit") return `MCP 低质量命中 ${query}`;
-  if (feedbackType === "evidence_insufficient") return `MCP 证据不足命中 ${query}`;
-  return `MCP 反馈 ${query}`;
-}
-
-function feedbackSuggestedAction(feedbackType: string): string {
-  if (feedbackType === "miss") return "补充 topic/page/table/index，使 Agent 查询能够命中当前发布知识。";
-  if (feedbackType === "low_quality_hit") return "补齐 wiki spec、证据引用和质量门禁缺口后重新构建资产包。";
-  if (feedbackType === "evidence_insufficient") return "补充来源引用和 evidence_records，确保回答可追溯。";
-  return "检查知识图谱关系和查询意图映射。";
-}
-
-function slug(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "item";
 }

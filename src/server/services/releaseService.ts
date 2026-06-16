@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from "../types";
+import { mapComponent, mapPackage, mapRelease } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 
 export interface CreateReleaseDraftInput {
@@ -299,79 +300,6 @@ function summarizePackages(packages: AssetPackage[], components: AssetComponent[
 
 function hashManifest(manifest: Record<string, unknown>): string {
   return `sha256:${createHash("sha256").update(stableStringify(manifest)).digest("hex")}`;
-}
-
-function mapRelease(row: Record<string, unknown>): ReleaseRecord {
-  return {
-    releaseId: row.release_id as string,
-    version: row.version as string,
-    status: row.status as ReleaseRecord["status"],
-    packageIds: jsonArray(row.package_ids),
-    publishedAt: row.published_at ? String(row.published_at) : null,
-    publishedBy: String(row.published_by ?? ""),
-    createdBy: String(row.created_by ?? ""),
-    createdAt: String(row.created_at ?? ""),
-    manifestHash: String(row.manifest_hash ?? ""),
-    manifest: jsonObject(row.manifest_json),
-    qualityGate: jsonObject(row.quality_gate),
-  };
-}
-
-function mapPackage(row: Record<string, unknown>): AssetPackage {
-  return {
-    packageId: row.package_id as string,
-    name: row.name as string,
-    kind: row.kind as string,
-    status: row.status as AssetPackage["status"],
-    description: row.description as string,
-    createdByRunId: row.created_by_run_id as string,
-    sourceVersionIds: jsonArray(row.source_version_ids),
-    legacyPaths: jsonArray(row.legacy_paths),
-    qualitySummary: jsonObject(row.quality_summary),
-    createdAt: String(row.created_at),
-  };
-}
-
-function mapComponent(row: Record<string, unknown>): AssetComponent {
-  return {
-    componentId: row.component_id as string,
-    packageId: row.package_id as string,
-    artifactId: row.artifact_id as string,
-    group: row.group_name as AssetComponent["group"],
-    kind: row.kind as string,
-    title: row.title as string,
-    status: row.status as string,
-    legacyPath: String(row.legacy_path ?? ""),
-    storageUri: String(row.storage_uri ?? ""),
-    sourceRefs: jsonArray(row.source_refs),
-    quality: jsonObject(row.quality),
-  };
-}
-
-function jsonArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String);
-  if (typeof value === "string" && value.length > 0) {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed.map(String) : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-}
-
-function jsonObject(value: unknown): Record<string, unknown> {
-  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
-  if (typeof value === "string" && value.length > 0) {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
 }
 
 function numberFromQuality(quality: Record<string, unknown>, keys: string[]): number | null {

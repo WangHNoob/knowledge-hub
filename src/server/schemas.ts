@@ -1,0 +1,89 @@
+import { z } from "zod";
+
+export const loginSchema = z.object({
+  username: z.string().min(1),
+  password: z.string().min(1)
+});
+
+export const legacyScanSchema = z.object({
+  path: z.string().min(1)
+});
+
+export const browseLocalFilesSchema = z.object({
+  path: z.string().min(1).optional()
+});
+
+export const importBundleSchema = z.object({
+  rootPath: z.string().min(1),
+  bundleId: z.string().min(1).optional(),
+  note: z.string().max(1024).optional()
+});
+
+export const pipelineStageSchema = z.enum(["convert", "extract", "tables", "graph", "viz"]);
+
+export const modelConfigSchema = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("deterministic"),
+    model: z.literal("deterministic").default("deterministic")
+  }),
+  z.object({
+    provider: z.literal("openai-compatible"),
+    baseUrl: z.string().url().default("https://api.openai.com/v1"),
+    model: z.string().min(1),
+    apiKey: z.string().min(1).optional()
+  }),
+  z.object({
+    provider: z.literal("anthropic"),
+    baseUrl: z.string().url().default("https://api.anthropic.com/v1"),
+    model: z.string().min(1),
+    apiKey: z.string().min(1).optional()
+  })
+]);
+
+export const buildRequestSchema = z.object({
+  stages: z.array(pipelineStageSchema).min(1).default(["convert", "extract", "tables", "graph", "viz"]),
+  model: z.string().min(1).default("deterministic"),
+  modelConfig: modelConfigSchema.optional(),
+  force: z.boolean().default(false),
+  only: z.string().min(1).nullable().default(null),
+  qualityProfileId: z.string().min(1).default("default")
+});
+
+export const qualityProfileUpdateSchema = z.object({
+  config: z.object({
+    minPackageScore: z.number().min(0).max(1),
+    rules: z.record(z.string(), z.record(z.string(), z.unknown()))
+  })
+});
+
+export const modelConnectivitySchema = z.object({
+  modelConfig: modelConfigSchema
+});
+
+export const createReleaseSchema = z.object({
+  version: z.string().min(1),
+  packageIds: z.array(z.string().min(1)).min(1)
+});
+
+export const rollbackReleaseSchema = z.object({
+  releaseId: z.string().min(1)
+});
+
+export const mcpQuerySchema = z.object({
+  toolName: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()).default({})
+});
+
+export const diagnosticLogQuerySchema = z.object({
+  level: z.string().optional(),
+  category: z.string().optional(),
+  status: z.string().optional(),
+  traceId: z.string().optional(),
+  runId: z.string().optional(),
+  releaseId: z.string().optional(),
+  entityId: z.string().optional(),
+  q: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional()
+});
