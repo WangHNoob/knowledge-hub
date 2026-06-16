@@ -64,6 +64,73 @@ describe("knowledge hub api", () => {
     expect(body.sources.latest).toBeNull();
   });
 
+  it("serves legislation profile read, create, and activate endpoints", async () => {
+    const { app, token } = await getToken();
+
+    const current = await app.inject({
+      method: "GET",
+      url: "/api/legislation/profile",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(current.statusCode).toBe(200);
+    expect(current.json().profile.profileId).toBeTruthy();
+    expect(current.json().profile.config.pageTypes.system).toBeTruthy();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/legislation/profile",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        name: "API profile",
+        activate: false,
+        config: {
+          ...current.json().profile.config,
+          entityTypes: [...current.json().profile.config.entityTypes, { id: "buff", label: "Buff", publishable: true }]
+        }
+      }
+    });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().profile.active).toBe(false);
+
+    const activated = await app.inject({
+      method: "POST",
+      url: "/api/legislation/profile/activate",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { profileId: created.json().profile.profileId }
+    });
+    expect(activated.statusCode).toBe(200);
+    expect(activated.json().profile.profileId).toBe(created.json().profile.profileId);
+    expect(activated.json().profile.active).toBe(true);
+  });
+
+  it("creates and lists agent output attribution audits through the api", async () => {
+    const { app, token } = await getToken();
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/agent/output-audits",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        releaseId: "rel_api_demo",
+        title: "API output audit",
+        segments: [
+          { text: "Battle uses Skill.", trace: { componentIds: ["cmp_1"], evidenceIds: ["ev_1"] } },
+          { text: "Add a new burst mode.", trace: { componentIds: [], evidenceIds: [] } }
+        ]
+      }
+    });
+    expect(created.statusCode).toBe(200);
+    expect(created.json().audit.segments.map((segment: { attributionType: string }) => segment.attributionType)).toEqual(["引用", "创作"]);
+
+    const list = await app.inject({
+      method: "GET",
+      url: "/api/agent/output-audits",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(list.statusCode).toBe(200);
+    expect(list.json().audits.some((audit: { auditId: string }) => audit.auditId === created.json().audit.auditId)).toBe(true);
+  });
+
   it("writes diagnostic logs for api requests and returns a trace id", async () => {
     const { app, token } = await getToken();
 

@@ -7,6 +7,8 @@ import type { SourceBundleService } from "../services/sourceBundleService";
 import type { KbBuilderPipelineService } from "../services/kbBuilderService";
 import type { ReleaseService } from "../services/releaseService";
 import type { KnowledgeQueryService } from "../services/knowledgeQueryService";
+import type { LegislationService } from "../services/legislationService";
+import type { AttributionAuditService } from "../services/attributionAuditService";
 
 export interface RouteContext {
   db: DatabaseHandle;
@@ -17,6 +19,8 @@ export interface RouteContext {
   kbBuilderService: KbBuilderPipelineService;
   releaseService: ReleaseService;
   queryService: KnowledgeQueryService;
+  legislationService: LegislationService;
+  attributionAuditService: AttributionAuditService;
 }
 
 export type RouteRegistrar = (app: FastifyInstance, ctx: RouteContext) => void | Promise<void>;

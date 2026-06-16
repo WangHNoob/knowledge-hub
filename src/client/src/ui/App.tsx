@@ -8,6 +8,7 @@ import {
   GitBranch,
   LogOut,
   PackagePlus,
+  ScrollText,
   SearchCheck
 } from "lucide-react";
 import { useState } from "react";
@@ -19,18 +20,20 @@ import { Assets } from "../pages/Assets";
 import { Dashboard } from "../pages/Dashboard";
 import { Diagnostics } from "../pages/Diagnostics";
 import { KnowledgeBuilder } from "../pages/KnowledgeBuilder";
+import { Legislation } from "../pages/Legislation";
 import { LoginScreen } from "../pages/Login";
 import { Maintenance } from "../pages/Maintenance";
 import { Release } from "../pages/Release";
 import { Review } from "../pages/Review";
 import { Sources } from "../pages/Sources";
 
-type View = "dashboard" | "sources" | "builder" | "assets" | "review" | "release" | "agent" | "diagnostics" | "maintenance";
+type View = "dashboard" | "sources" | "builder" | "legislation" | "assets" | "review" | "release" | "agent" | "diagnostics" | "maintenance";
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "首页", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
   { id: "builder", label: "知识构建", icon: PackagePlus },
+  { id: "legislation", label: "策划立法", icon: ScrollText },
   { id: "assets", label: "知识资产", icon: Boxes },
   { id: "review", label: "审核中心", icon: CheckCircle2 },
   { id: "release", label: "发布", icon: GitBranch },
@@ -98,6 +101,7 @@ export function App() {
         {view === "dashboard" && <Dashboard />}
         {view === "sources" && <Sources />}
         {view === "builder" && <KnowledgeBuilder onShowPackage={(packageId) => navigate("assets", packageId)} />}
+        {view === "legislation" && <Legislation />}
         {view === "assets" && <Assets highlightedPackage={highlightedPackage} onConsumeHighlight={() => setHighlightedPackage(null)} />}
         {view === "review" && <Review />}
         {view === "release" && <Release />}

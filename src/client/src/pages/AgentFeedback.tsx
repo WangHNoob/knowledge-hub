@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { listAgentEvents, listMcpAudit, simulateMcpQuery, type KnowledgeEnvelope } from "../api";
+import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 
 const MCP_TOOLS = [
@@ -33,6 +33,7 @@ export function AgentFeedback() {
   const [envelope, setEnvelope] = useState<KnowledgeEnvelope | null>(null);
   const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
   const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
+  const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({
     mutationFn: async () => simulateMcpQuery(toolName, JSON.parse(payload) as Record<string, unknown>),
     onSuccess: async (result) => {
@@ -44,8 +45,8 @@ export function AgentFeedback() {
       ]);
     }
   });
-  if (events.isLoading || audit.isLoading) return <Loading title="正在读取 MCP 控制台" />;
-  if (events.error || audit.error) return <ErrorState error={events.error ?? audit.error} />;
+  if (events.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
+  if (events.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? audit.error ?? outputAudits.error} />;
   const configSnippet = {
     mcpServers: {
       "knowledge-hub": {
@@ -135,6 +136,25 @@ export function AgentFeedback() {
                   {event.suggestedAction && <small>{event.suggestedAction}</small>}
                 </div>
                 <small>{event.taskId || event.createdAt}</small>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="mcp-panel">
+          <h2>输出归因审计</h2>
+          <div className="event-list">
+            {(outputAudits.data ?? []).map((auditRecord) => (
+              <article className="event" key={auditRecord.auditId}>
+                <Badge label={`${auditRecord.segments.length} 段`} tone={auditRecord.segments.some((segment) => segment.attributionType === "创作" || segment.attributionType === "无法判断") ? "warn" : "ok"} />
+                <div>
+                  <strong>{auditRecord.title}</strong>
+                  <span>{auditRecord.releaseId}</span>
+                  <small>
+                    {auditRecord.segments.map((segment) => `${segment.segmentId}:${segment.attributionType}`).join(" / ")}
+                  </small>
+                </div>
+                <small>{auditRecord.createdAt}</small>
               </article>
             ))}
           </div>

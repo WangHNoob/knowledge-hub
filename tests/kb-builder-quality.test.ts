@@ -55,4 +55,62 @@ describe("evaluateQualityGate", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("flags unconfirmed graph candidates and table relation candidates", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-quality-candidates-"));
+    try {
+      const specDir = join(dataDir, "processed", "wiki_specs");
+      mkdirSync(join(dataDir, "wiki", "systems"), { recursive: true });
+      mkdirSync(join(dataDir, "wiki", "_meta"), { recursive: true });
+      mkdirSync(join(dataDir, "wiki", "_tables"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system", "table", "concept"],
+        relation_types: ["configured_in", "references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview\n");
+      writeFileSync(join(dataDir, "wiki", "systems", "battle.md"), "---\ntype: system\ntitle: Battle\nsource: gamedocs/battle.md\n---\n\n## Overview\nBattle.");
+      writeFileSync(join(dataDir, "wiki", "_meta", "battle.json"), JSON.stringify({
+        title: "Battle",
+        source: "gamedocs/battle.md",
+        wiki_path: "wiki/systems/battle.md",
+        facts: {},
+        entities: [{ name: "Battle", type: "system" }],
+        relationships: []
+      }));
+      writeFileSync(join(dataDir, "wiki", "graph.json"), JSON.stringify({
+        nodes: [{ id: "Battle", label: "Battle", type: "system" }],
+        edges: [
+          { source: "Battle", target: "table:Skill", relation: "configured_in", edge_kind: "candidate", candidate_reason: "unknown target" }
+        ]
+      }));
+      writeFileSync(join(dataDir, "wiki", "_tables", "table_relation_candidates.json"), JSON.stringify([
+        { source: "Skill", target: "Buff", field: "BuffId", reason: "manual_confirmation_required" }
+      ]));
+
+      const result = evaluateQualityGate({
+        dataDir,
+        specs: loadWikiSpecs(specDir),
+        sourceLogicalPaths: new Set(["gamedocs/battle.md"]),
+        profile: {
+          minPackageScore: 0.75,
+          rules: {
+            wikiSpecCompleteness: { enabled: true, severity: "blocking", minScore: 0.75 },
+            requiredFacts: { enabled: true, severity: "warning", minScore: 0.7 },
+            frontmatterSource: { enabled: true, severity: "blocking" },
+            graphIntegrity: { enabled: true, severity: "blocking", minScore: 0.7 },
+            candidateRelationships: { enabled: true, severity: "blocking" },
+            tableRelationCandidates: { enabled: true, severity: "warning" },
+            conceptOveruse: { enabled: true, severity: "warning", maxRatio: 0.35 }
+          }
+        }
+      });
+
+      expect(result.findings.some((finding) => finding.ruleId === "candidateRelationships")).toBe(true);
+      expect(result.findings.some((finding) => finding.ruleId === "tableRelationCandidates")).toBe(true);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });

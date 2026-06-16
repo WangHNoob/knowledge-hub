@@ -1,55 +1,35 @@
-import { PGlite } from "@electric-sql/pglite";
 import pg from "pg";
 import bcrypt from "bcryptjs";
-import { join } from "node:path";
 
 import type { DatabaseHandle } from "./types";
-import { PostgresAdapter, PGliteAdapter, type DatabaseAdapter } from "./db-adapter";
+import { PostgresAdapter, type DatabaseAdapter } from "./db-adapter";
 
 export interface CreateDatabaseOptions {
-  /** PostgreSQL 连接串（服务端模式） */
+  /** PostgreSQL 连接串；缺省时从 DATABASE_URL 读取 */
   databaseUrl?: string;
-  /** PGlite 数据目录（桌面模式） */
-  dataDir?: string;
-  /** 模式名（仅 PostgreSQL） */
+  /** 模式名（默认 public） */
   schema?: string;
   /** 是否 seed 演示用户 */
   seedUsers?: boolean;
 }
 
 export async function createDatabase(options: CreateDatabaseOptions = {}): Promise<DatabaseHandle> {
-  let adapter: DatabaseAdapter;
-  let schema = "public";
-
-  // 优先 PGlite（桌面模式）
-  if (options.dataDir) {
-    const dbPath = join(options.dataDir, "knowledge-hub.db");
-    const pglite = new PGlite(dbPath);
-    adapter = new PGliteAdapter(pglite);
-    await migrate(adapter, "public");
-    if (options.seedUsers ?? true) {
-      await seedDefaultUsers(adapter, "public");
-    }
+  const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("缺少 DATABASE_URL（请在 .env 或部署环境中配置 PostgreSQL 连接串）。");
   }
-  // 否则 PostgreSQL（服务端模式）
-  else {
-    const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
-    if (!databaseUrl) {
-      throw new Error("缺少 DATABASE_URL 或 dataDir（请在 .env 或部署环境中配置）。");
-    }
-    schema = options.schema ?? "public";
-    const pool = new pg.Pool({ connectionString: databaseUrl });
+  const schema = options.schema ?? "public";
+  const pool = new pg.Pool({ connectionString: databaseUrl });
 
-    if (schema !== "public") {
-      await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
-      await pool.query(`SET search_path TO "${schema}"`);
-    }
+  if (schema !== "public") {
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS "${schema}"`);
+    await pool.query(`SET search_path TO "${schema}"`);
+  }
 
-    adapter = new PostgresAdapter(pool, schema);
-    await migrate(adapter, schema);
-    if (options.seedUsers ?? true) {
-      await seedDefaultUsers(adapter, schema);
-    }
+  const adapter: DatabaseAdapter = new PostgresAdapter(pool, schema);
+  await migrate(adapter, schema);
+  if (options.seedUsers ?? true) {
+    await seedDefaultUsers(adapter, schema);
   }
 
   return {
@@ -128,6 +108,16 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}knowledge_rule_profiles (
+      profile_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      active BOOLEAN NOT NULL DEFAULT false,
+      hash TEXT NOT NULL DEFAULT '',
+      config_json JSONB NOT NULL DEFAULT '{}',
+      created_by TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}knowledge_build_runs (
       run_id TEXT PRIMARY KEY,
       source_version_id TEXT NOT NULL REFERENCES ${p}source_bundle_versions(version_id) ON DELETE CASCADE,
@@ -138,6 +128,8 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       wiki_specs_hash TEXT NOT NULL DEFAULT '',
       quality_profile_id TEXT NOT NULL REFERENCES ${p}quality_gate_profiles(profile_id),
       status TEXT NOT NULL,
+      current_stage TEXT NOT NULL DEFAULT '',
+      completed_stages JSONB NOT NULL DEFAULT '[]',
       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       finished_at TIMESTAMPTZ,
       error TEXT NOT NULL DEFAULT '',
@@ -243,6 +235,15 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}attribution_audits (
+      audit_id TEXT PRIMARY KEY,
+      release_id TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      segments_json JSONB NOT NULL DEFAULT '[]',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}diagnostic_logs (
       log_id TEXT PRIMARY KEY,
       trace_id TEXT NOT NULL,
@@ -283,6 +284,9 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS feedback_type TEXT NOT NULL DEFAULT 'hit';
     ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS suggested_action TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS task_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}knowledge_build_runs ADD COLUMN IF NOT EXISTS current_stage TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}knowledge_build_runs ADD COLUMN IF NOT EXISTS completed_stages JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE ${p}knowledge_rule_profiles ADD COLUMN IF NOT EXISTS hash TEXT NOT NULL DEFAULT '';
   `);
 
   // 默认资料集
@@ -311,6 +315,75 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
      VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (profile_id) DO NOTHING`,
     ["default", "默认知识质量门禁", true, defaultQualityProfile, "system", new Date(0).toISOString()]
+  );
+
+  const defaultRuleProfile = {
+    pageTypes: {
+      system: {
+        id: "system",
+        label: "系统规则",
+        dir: "systems",
+        template: "system_rule.md",
+        requiredSections: ["Overview", "Data Dependencies"],
+        requiredFacts: ["config_table"],
+        evidenceRequired: true,
+        publishable: true
+      },
+      concept: {
+        id: "concept",
+        label: "概念说明",
+        dir: "concepts",
+        template: "concept.md",
+        requiredSections: ["Overview"],
+        requiredFacts: [],
+        evidenceRequired: false,
+        publishable: true
+      },
+      table: {
+        id: "table",
+        label: "配置表说明",
+        dir: "tables",
+        template: "table_schema.md",
+        requiredSections: ["Overview"],
+        requiredFacts: [],
+        evidenceRequired: true,
+        publishable: true
+      }
+    },
+    entityTypes: [
+      { id: "system", label: "系统", publishable: true },
+      { id: "activity", label: "活动", publishable: true },
+      { id: "table", label: "配置表", publishable: true },
+      { id: "resource", label: "资源", publishable: true },
+      { id: "attribute", label: "属性", publishable: true },
+      { id: "concept", label: "概念", publishable: true },
+      { id: "ui_element", label: "界面元素", publishable: true },
+      { id: "progression", label: "成长线", publishable: true },
+      { id: "field", label: "字段", publishable: true }
+    ],
+    relationTypes: [
+      { id: "depends_on", label: "依赖", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "unlocks", label: "解锁", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "configured_in", label: "配置于", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "configured_by_field", label: "由字段配置", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "produces", label: "产出", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "consumes", label: "消耗", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "belongs_to", label: "属于", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "references", label: "引用", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "has_field", label: "拥有字段", direction: "source_to_target", publishable: true, autoGenerated: true },
+      { id: "fk_to", label: "外键指向", direction: "source_to_target", publishable: true, autoGenerated: true }
+    ],
+    tableRules: {
+      autoConfirmFieldIdSuffixes: ["Id", "Ids"],
+      candidateFieldIdSuffixes: []
+    },
+    qualityRules: {}
+  };
+  await adapter.query(
+    `INSERT INTO ${p}knowledge_rule_profiles (profile_id, name, active, hash, config_json, created_by, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (profile_id) DO NOTHING`,
+    ["default", "默认策划立法规则", true, "", defaultRuleProfile, "system", new Date(0).toISOString()]
   );
 }
 

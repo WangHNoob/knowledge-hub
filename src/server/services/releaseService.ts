@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from "../types";
 import { mapComponent, mapPackage, mapRelease } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
+import { createLegislationService } from "./legislationService";
 
 export interface CreateReleaseDraftInput {
   version: string;
@@ -96,7 +97,8 @@ export class ReleaseService {
 
       const packages = await this.loadPackages(release.packageIds);
       const components = await this.loadComponents(release.packageIds);
-      const qualityGate = summarizePackages(packages, components);
+      const activeRuleProfile = await createLegislationService(this.db).getActiveProfile();
+      const qualityGate = summarizePackages(packages, components, activeRuleProfile.hash);
       const publishedAt = new Date().toISOString();
       const manifest = buildManifest({
         release,
@@ -105,6 +107,7 @@ export class ReleaseService {
         qualityGate,
         publishedAt,
         publishedBy,
+        activeRuleProfileHash: activeRuleProfile.hash,
       });
       const manifestHash = hashManifest(manifest);
 
@@ -243,6 +246,7 @@ function buildManifest(input: {
   qualityGate: Record<string, unknown>;
   publishedAt: string;
   publishedBy: string;
+  activeRuleProfileHash: string;
 }) {
   const componentIds = input.components.map((component) => component.componentId).sort();
   const sourceVersionIds = uniqueSorted(input.packages.flatMap((pkg) => pkg.sourceVersionIds));
@@ -252,6 +256,10 @@ function buildManifest(input: {
     packageIds: input.packages.map((pkg) => pkg.packageId).sort(),
     componentIds,
     sourceVersionIds,
+    legislationProfile: {
+      activeHash: input.activeRuleProfileHash,
+      packageProfiles: uniqueObjects(input.packages.map((pkg) => profileFromQuality(pkg.qualitySummary)).filter(Boolean)),
+    },
     packages: input.packages.map((pkg) => ({
       packageId: pkg.packageId,
       name: pkg.name,
@@ -277,7 +285,7 @@ function buildManifest(input: {
   };
 }
 
-function summarizePackages(packages: AssetPackage[], components: AssetComponent[] = []): Record<string, unknown> {
+function summarizePackages(packages: AssetPackage[], components: AssetComponent[] = [], activeRuleProfileHash = ""): Record<string, unknown> {
   const scores = packages
     .map((pkg) => numberFromQuality(pkg.qualitySummary, ["overallScore", "score", "confidence"]))
     .filter((score): score is number => Number.isFinite(score));
@@ -287,6 +295,12 @@ function summarizePackages(packages: AssetPackage[], components: AssetComponent[
   const allScores = [...scores, ...componentScores];
   const blockingCount = packages.reduce((sum, pkg) => sum + Number(pkg.qualitySummary.blockingCount ?? 0), 0);
   const warningCount = packages.reduce((sum, pkg) => sum + Number(pkg.qualitySummary.warningCount ?? 0), 0);
+  const staleRuleProfileCount = activeRuleProfileHash
+    ? packages.filter((pkg) => {
+      const profile = profileFromQuality(pkg.qualitySummary);
+      return profile?.hash && profile.hash !== activeRuleProfileHash;
+    }).length
+    : 0;
 
   return {
     packageCount: packages.length,
@@ -295,7 +309,29 @@ function summarizePackages(packages: AssetPackage[], components: AssetComponent[
     averageScore: allScores.length === 0 ? null : round2(allScores.reduce((sum, score) => sum + score, 0) / allScores.length),
     blockingCount,
     warningCount,
+    staleRuleProfileCount,
+    legislationProfileHash: activeRuleProfileHash || null,
   };
+}
+
+function profileFromQuality(quality: Record<string, unknown>): { profileId?: string; hash?: string } | null {
+  const value = quality.legislationProfile;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const profile = value as Record<string, unknown>;
+  return { profileId: typeof profile.profileId === "string" ? profile.profileId : undefined, hash: typeof profile.hash === "string" ? profile.hash : undefined };
+}
+
+function uniqueObjects(values: Array<{ profileId?: string; hash?: string } | null>): Array<{ profileId?: string; hash?: string }> {
+  const seen = new Set<string>();
+  const out: Array<{ profileId?: string; hash?: string }> = [];
+  for (const value of values) {
+    if (!value) continue;
+    const key = `${value.profileId ?? ""}:${value.hash ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
 }
 
 function hashManifest(manifest: Record<string, unknown>): string {

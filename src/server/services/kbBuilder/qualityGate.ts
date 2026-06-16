@@ -82,6 +82,9 @@ export function evaluateQualityGate(options: {
   const graphFinding = evaluateGraph(options.dataDir, options.specs, options.profile);
   if (graphFinding) findings.push(graphFinding);
 
+  findings.push(...evaluateCandidateRelationships(options.dataDir, options.profile));
+  findings.push(...evaluateTableRelationCandidates(options.dataDir, options.profile));
+
   const conceptFindings = evaluateConceptOveruse(options.dataDir, options.profile);
   findings.push(...conceptFindings);
 
@@ -93,6 +96,43 @@ export function evaluateQualityGate(options: {
     findings,
     componentQuality,
   };
+}
+
+function evaluateCandidateRelationships(dataDir: string, profile: QualityGateConfig): QualityFinding[] {
+  const candidateRule = rule(profile, "candidateRelationships");
+  if (!ruleEnabled(candidateRule)) return [];
+  const graphPath = join(dataDir, "wiki", "graph.json");
+  if (!existsSync(graphPath)) return [];
+  const graph = readJson<{ edges?: any[] }>(graphPath, {});
+  const candidates = (graph.edges ?? []).filter((edge) => edge.edge_kind === "candidate");
+  if (candidates.length === 0) return [];
+  return [finding(
+    "candidateRelationships",
+    severity(candidateRule, "blocking"),
+    "wiki/graph.json",
+    "Graph has unconfirmed candidate relationships",
+    `${candidates.length} candidate relationship(s) require manual confirmation before release.`,
+    "审核候选实体关系；确认后进入正式图谱，无法确认则移除或保留为非发布候选。",
+    1,
+  )];
+}
+
+function evaluateTableRelationCandidates(dataDir: string, profile: QualityGateConfig): QualityFinding[] {
+  const tableRule = rule(profile, "tableRelationCandidates");
+  if (!ruleEnabled(tableRule)) return [];
+  const candidatePath = join(dataDir, "wiki", "_tables", "table_relation_candidates.json");
+  if (!existsSync(candidatePath)) return [];
+  const candidates = readJson<any[]>(candidatePath, []);
+  if (candidates.length === 0) return [];
+  return [finding(
+    "tableRelationCandidates",
+    severity(tableRule, "warning"),
+    "wiki/_tables/table_relation_candidates.json",
+    "Table field relation candidates require review",
+    `${candidates.length} table field relation candidate(s) were inferred from naming conventions.`,
+    "由表负责人确认字段关系；确认后允许进入正式图谱。",
+    Math.min(1, candidates.length / 10),
+  )];
 }
 
 function evaluateWikiPage(

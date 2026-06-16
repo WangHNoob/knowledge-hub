@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative } from "node:path";
 import xlsx from "xlsx";
+import type { KnowledgeRuleConfig } from "../../types";
 import type { StageResult } from "./types";
 
 interface TableSchema {
@@ -18,7 +19,11 @@ interface ForeignKeyEdge {
   source_of_edge: "field_convention";
 }
 
-export async function runTableStage(options: { dataDir: string; force: boolean }): Promise<StageResult> {
+interface TableRelationCandidate extends ForeignKeyEdge {
+  reason: string;
+}
+
+export async function runTableStage(options: { dataDir: string; force: boolean; rules?: KnowledgeRuleConfig }): Promise<StageResult> {
   const gamedataDir = join(options.dataDir, "gamedata");
   if (!existsSync(gamedataDir)) {
     return {
@@ -40,18 +45,19 @@ export async function runTableStage(options: { dataDir: string; force: boolean }
     groups[group] = [...(groups[group] ?? []), relNoExt].sort();
   }
 
-  const fkEdges = detectFkEdges(schemas);
-  const outputPaths = writeTableOutputs(options.dataDir, schemas, groups, fkEdges);
+  const { confirmed, candidates } = detectFkEdges(schemas, options.rules);
+  const outputPaths = writeTableOutputs(options.dataDir, schemas, groups, confirmed, candidates);
   return { stage: "tables", status: "completed", outputPaths, warnings: [] };
 }
 
-export function detectFkEdges(schemas: Record<string, { fields: string[] }>): ForeignKeyEdge[] {
+export function detectFkEdges(schemas: Record<string, { fields: string[] }>, rules?: KnowledgeRuleConfig): { confirmed: ForeignKeyEdge[]; candidates: TableRelationCandidate[] } {
   const nameIndex = new Map<string, string>();
   for (const tableName of Object.keys(schemas)) {
     nameIndex.set(simpleTableName(tableName).toLowerCase(), tableName);
   }
 
   const edges: ForeignKeyEdge[] = [];
+  const candidates: TableRelationCandidate[] = [];
   const seen = new Set<string>();
   for (const [tableName, schema] of Object.entries(schemas)) {
     const sourceSimple = simpleTableName(tableName).toLowerCase();
@@ -63,10 +69,18 @@ export function detectFkEdges(schemas: Record<string, { fields: string[] }>): Fo
       const key = `${tableName}\0${target}\0${field}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      edges.push({ source: tableName, target, field, source_of_edge: "field_convention" });
+      const edge = { source: tableName, target, field, source_of_edge: "field_convention" as const };
+      if (rules && !autoConfirmField(field, rules)) {
+        candidates.push({ ...edge, reason: "manual_confirmation_required" });
+      } else {
+        edges.push(edge);
+      }
     }
   }
-  return edges.sort((a, b) => `${a.source}.${a.field}.${a.target}`.localeCompare(`${b.source}.${b.field}.${b.target}`));
+  return {
+    confirmed: edges.sort((a, b) => `${a.source}.${a.field}.${a.target}`.localeCompare(`${b.source}.${b.field}.${b.target}`)),
+    candidates: candidates.sort((a, b) => `${a.source}.${a.field}.${a.target}`.localeCompare(`${b.source}.${b.field}.${b.target}`)),
+  };
 }
 
 function readTableSchema(file: string, tableName: string, relPath: string): TableSchema {
@@ -100,8 +114,9 @@ function writeTableOutputs(
   schemas: Record<string, TableSchema>,
   groups: Record<string, string[]>,
   fkEdges: ForeignKeyEdge[],
+  relationCandidates: TableRelationCandidate[] = [],
 ): string[] {
-  const outputPaths = ["wiki/_tables/schemas.json", "wiki/_tables/groups.json", "wiki/_tables/table_fk_registry.json"];
+  const outputPaths = ["wiki/_tables/schemas.json", "wiki/_tables/groups.json", "wiki/_tables/table_fk_registry.json", "wiki/_tables/table_relation_candidates.json"];
   mkdirSync(join(dataDir, "wiki", "_tables"), { recursive: true });
   mkdirSync(join(dataDir, "table_schemas"), { recursive: true });
   mkdirSync(join(dataDir, "wiki", "tables"), { recursive: true });
@@ -109,6 +124,7 @@ function writeTableOutputs(
   writeFileSync(join(dataDir, "wiki", "_tables", "schemas.json"), `${JSON.stringify(sortObject(schemas), null, 2)}\n`);
   writeFileSync(join(dataDir, "wiki", "_tables", "groups.json"), `${JSON.stringify(sortObject(groups), null, 2)}\n`);
   writeFileSync(join(dataDir, "wiki", "_tables", "table_fk_registry.json"), `${JSON.stringify(fkEdges, null, 2)}\n`);
+  writeFileSync(join(dataDir, "wiki", "_tables", "table_relation_candidates.json"), `${JSON.stringify(relationCandidates, null, 2)}\n`);
 
   for (const [tableName, schema] of Object.entries(schemas).sort(([a], [b]) => a.localeCompare(b))) {
     const file = tableFileName(tableName);
@@ -123,6 +139,14 @@ function writeTableOutputs(
   }
 
   return outputPaths.sort();
+}
+
+function autoConfirmField(field: string, rules: KnowledgeRuleConfig): boolean {
+  const autoSuffixes = rules.tableRules.autoConfirmFieldIdSuffixes;
+  const candidateSuffixes = rules.tableRules.candidateFieldIdSuffixes;
+  if (candidateSuffixes.some((suffix) => field.endsWith(suffix))) return false;
+  if (autoSuffixes.length === 0) return false;
+  return autoSuffixes.some((suffix) => field.endsWith(suffix));
 }
 
 function renderTableGroupPage(group: string, tables: string[], schemas: Record<string, TableSchema>): string {

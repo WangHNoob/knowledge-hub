@@ -10,9 +10,12 @@ import type {
   QualityGateConfig,
   QualityGateProfile,
   QualityFinding,
+  KnowledgeRuleConfig,
+  KnowledgeRuleProfile,
 } from "../types";
 import { createSourceBundleService } from "./sourceBundleService";
 import { createKnowledgeService } from "./knowledgeService";
+import { createLegislationService } from "./legislationService";
 import { materializeSourceVersion } from "./kbBuilder/materialize";
 import { loadWikiSpecs } from "./kbBuilder/specs";
 import { runConvertStage } from "./kbBuilder/convertStage";
@@ -27,6 +30,7 @@ import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelC
 import type { DiagnosticLogger } from "./diagnosticService";
 
 const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "viz"];
+const TRACKED_STAGES: ReadonlySet<string> = new Set<string>(STAGE_ORDER);
 
 export function createKbBuilderPipelineService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
   return new KbBuilderPipelineService(db, dataDir, diagnostics);
@@ -42,6 +46,7 @@ interface BuildRunContext {
   workspaceRoot: string;
   sourceService: SourceBundleService;
   modelConfig: PipelineModelConfig;
+  ruleProfile: KnowledgeRuleProfile;
 }
 
 export class KbBuilderPipelineService {
@@ -79,6 +84,7 @@ export class KbBuilderPipelineService {
     const version = await sourceService.getVersion(options.versionId);
     if (!version || version.bundleId !== options.bundleId) throw new Error(`Unknown source version: ${options.versionId}`);
     const profile = await this.getQualityProfile(options.qualityProfileId);
+    const ruleProfile = await createLegislationService(this.db).getActiveProfile();
     const modelConfig = normalizeModelConfig(options.modelConfig, options.model);
     const runId = `run_${new Date().toISOString().replace(/[-:.TZ]/g, "")}_${nanoid(6)}`;
     const stages = STAGE_ORDER.filter((stage) => options.stages.includes(stage));
@@ -95,6 +101,8 @@ export class KbBuilderPipelineService {
       wikiSpecsHash: "",
       qualityProfileId: profile.profileId,
       status: "running",
+      currentStage: "",
+      completedStages: [],
       startedAt: now,
       finishedAt: null,
       error: "",
@@ -105,14 +113,19 @@ export class KbBuilderPipelineService {
         requestedBy: options.requestedBy,
         traceId: options.traceId,
         modelConfig: redactModelConfig(modelConfig),
+        ruleProfile: {
+          profileId: ruleProfile.profileId,
+          name: ruleProfile.name,
+          hash: ruleProfile.hash,
+        },
       },
     });
 
-    return { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig };
+    return { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig, ruleProfile };
   }
 
   private async executeRun(context: BuildRunContext): Promise<{ run: KnowledgeBuildRun; package: AssetPackage; qualitySummary: Record<string, unknown> }> {
-    const { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig } = context;
+    const { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig, ruleProfile } = context;
     const runSpan = this.diagnostics?.startSpan({
       traceId: options.traceId,
       category: "kb_build",
@@ -126,7 +139,9 @@ export class KbBuilderPipelineService {
         versionId: options.versionId,
         stages,
         model: modelName(modelConfig),
-        qualityProfileId: profile.profileId
+        qualityProfileId: profile.profileId,
+        ruleProfileId: ruleProfile.profileId,
+        ruleProfileHash: ruleProfile.hash
       }
     });
     try {
@@ -138,7 +153,7 @@ export class KbBuilderPipelineService {
         runId,
       }));
       const specs = await this.withStage(runId, options, "specs", async () => {
-        const specDir = ensureWikiSpecs(workspace.dataDir);
+        const specDir = ensureWikiSpecs(workspace.dataDir, ruleProfile.config);
         return loadWikiSpecs(specDir);
       });
 
@@ -147,16 +162,16 @@ export class KbBuilderPipelineService {
       await this.ensureRunActive(runId);
       if (stages.includes("extract")) await this.withStage(runId, options, "extract", async () => runExtractStage({ dataDir: workspace.dataDir, specs, model: modelName(modelConfig), modelConfig, force: options.force, only: options.only }));
       await this.ensureRunActive(runId);
-      if (stages.includes("tables")) await this.withStage(runId, options, "tables", async () => runTableStage({ dataDir: workspace.dataDir, force: options.force }));
+      if (stages.includes("tables")) await this.withStage(runId, options, "tables", async () => runTableStage({ dataDir: workspace.dataDir, force: options.force, rules: ruleProfile.config }));
       await this.ensureRunActive(runId);
-      if (stages.includes("graph")) await this.withStage(runId, options, "graph", async () => runGraphStage({ dataDir: workspace.dataDir }));
+      if (stages.includes("graph")) await this.withStage(runId, options, "graph", async () => runGraphStage({ dataDir: workspace.dataDir, rules: ruleProfile.config }));
       await this.ensureRunActive(runId);
       if (stages.includes("viz")) await this.withStage(runId, options, "viz", async () => runVizStage({ dataDir: workspace.dataDir }));
       await this.ensureRunActive(runId);
 
       const sourceLogicalPaths = new Set(workspace.files.map((file) => file.logicalPath));
       const quality = await this.withStage(runId, options, "quality", async () => {
-        const result = evaluateQualityGate({ dataDir: workspace.dataDir, specs, sourceLogicalPaths, profile: profile.config });
+        const result = evaluateQualityGate({ dataDir: workspace.dataDir, specs, sourceLogicalPaths, profile: mergeQualityRules(profile.config, ruleProfile.config) });
         mkdirSync(join(workspace.dataDir, "wiki"), { recursive: true });
         writeFileSync(join(workspace.dataDir, "wiki", "quality_report.json"), `${JSON.stringify(result, null, 2)}\n`);
         return result;
@@ -165,7 +180,7 @@ export class KbBuilderPipelineService {
       const packageId = `pkg_${runId}`;
       const artifacts = await this.withStage(runId, options, "collect", async () => collectPipelineArtifacts(workspace.dataDir, workspace.workspaceDir, quality.componentQuality));
       const pkg = await this.withStage(runId, options, "persist", async () => {
-        const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality);
+        const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality, ruleProfile);
         await this.completeRun(runId, packageId, specs.hash, workspace.workspaceDir);
         await this.insertReviewTasks(packageId, artifacts, quality.findings);
         return inserted;
@@ -180,6 +195,8 @@ export class KbBuilderPipelineService {
   }
 
   private async withStage<T>(runId: string, options: BuildPipelineOptions, stage: string, fn: () => Promise<T> | T): Promise<T> {
+    const tracked = TRACKED_STAGES.has(stage);
+    if (tracked) await this.markStageStarted(runId, stage);
     const span = this.diagnostics?.startSpan({
       traceId: options.traceId,
       category: stage === "extract" && options.modelConfig?.provider === "openai-compatible" ? "llm" : "kb_build",
@@ -192,12 +209,30 @@ export class KbBuilderPipelineService {
     });
     try {
       const result = await fn();
+      if (tracked) await this.markStageCompleted(runId, stage);
       await span?.complete({ stage });
       return result;
     } catch (error) {
       await span?.fail(error, { stage });
       throw error;
     }
+  }
+
+  private async markStageStarted(runId: string, stage: string): Promise<void> {
+    await this.adapter.query(
+      "UPDATE knowledge_build_runs SET current_stage = $2 WHERE run_id = $1 AND status = 'running'",
+      [runId, stage],
+    );
+  }
+
+  private async markStageCompleted(runId: string, stage: string): Promise<void> {
+    const run = await this.getRun(runId);
+    if (!run) return;
+    const completedStages = Array.from(new Set([...run.completedStages, stage]));
+    await this.adapter.query(
+      "UPDATE knowledge_build_runs SET completed_stages = $2, current_stage = $3 WHERE run_id = $1 AND status = 'running'",
+      [runId, JSON.stringify(completedStages), ""],
+    );
   }
 
   async listRuns(): Promise<KnowledgeBuildRun[]> {
@@ -264,20 +299,20 @@ export class KbBuilderPipelineService {
   private async insertRun(run: KnowledgeBuildRun): Promise<void> {
     await this.adapter.query(
       `INSERT INTO knowledge_build_runs
-        (run_id, source_version_id, package_id, adapter, stages, model, wiki_specs_hash, quality_profile_id, status, started_at, finished_at, error, output_uri, config_json)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        (run_id, source_version_id, package_id, adapter, stages, model, wiki_specs_hash, quality_profile_id, status, current_stage, completed_stages, started_at, finished_at, error, output_uri, config_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         run.runId, run.sourceVersionId, run.packageId, run.adapter, JSON.stringify(run.stages), run.model,
-        run.wikiSpecsHash, run.qualityProfileId, run.status, run.startedAt, run.finishedAt, run.error,
-        run.outputUri, JSON.stringify(run.config),
+        run.wikiSpecsHash, run.qualityProfileId, run.status, run.currentStage, JSON.stringify(run.completedStages),
+        run.startedAt, run.finishedAt, run.error, run.outputUri, JSON.stringify(run.config),
       ],
     );
   }
 
   private async completeRun(runId: string, packageId: string, wikiSpecsHash: string, outputUri: string): Promise<void> {
     await this.adapter.query(
-      "UPDATE knowledge_build_runs SET package_id = $2, status = $3, finished_at = $4, wiki_specs_hash = $5, output_uri = $6 WHERE run_id = $1 AND status = 'running'",
-      [runId, packageId, "completed", new Date().toISOString(), wikiSpecsHash, outputUri],
+      "UPDATE knowledge_build_runs SET package_id = $2, status = $3, finished_at = $4, wiki_specs_hash = $5, output_uri = $6, current_stage = $7 WHERE run_id = $1 AND status = 'running'",
+      [runId, packageId, "completed", new Date().toISOString(), wikiSpecsHash, outputUri, ""],
     );
   }
 
@@ -300,12 +335,17 @@ export class KbBuilderPipelineService {
     sourceRefs: string[],
     artifacts: CollectedArtifact[],
     quality: QualityGateResult,
+    ruleProfile: KnowledgeRuleProfile,
   ): Promise<AssetPackage> {
     const now = new Date().toISOString();
     const qualitySummary = {
       overallScore: quality.overallScore,
       blockingCount: quality.blockingCount,
       warningCount: quality.warningCount,
+      legislationProfile: {
+        profileId: ruleProfile.profileId,
+        hash: ruleProfile.hash,
+      },
     };
 
     await this.adapter.query("BEGIN");
@@ -345,7 +385,13 @@ export class KbBuilderPipelineService {
             artifact.legacyPath,
             artifact.storageUri,
             JSON.stringify(artifact.sourceRefs.length ? artifact.sourceRefs : sourceRefs),
-            JSON.stringify(artifact.quality),
+            JSON.stringify({
+              ...artifact.quality,
+              legislationProfile: {
+                profileId: ruleProfile.profileId,
+                hash: ruleProfile.hash,
+              },
+            }),
           ],
         );
       }
@@ -393,8 +439,20 @@ export class KbBuilderPipelineService {
   }
 }
 
-function ensureWikiSpecs(dataDir: string): string {
+function ensureWikiSpecs(dataDir: string, rules?: KnowledgeRuleConfig): string {
   const specDir = join(dataDir, "processed", "wiki_specs");
+  if (rules) {
+    mkdirSync(specDir, { recursive: true });
+    writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+      page_types: Object.fromEntries(Object.entries(rules.pageTypes).map(([id, spec]) => [id, { dir: spec.dir, template: spec.template }])),
+      entity_types: rules.entityTypes.map((item) => item.id),
+      relation_types: rules.relationTypes.map((item) => item.id),
+    }, null, 2));
+    for (const [id, spec] of Object.entries(rules.pageTypes)) {
+      writeFileSync(join(specDir, spec.template || `${id}.md`), renderRuleSpecTemplate(spec.requiredSections, spec.requiredFacts));
+    }
+    return specDir;
+  }
   if (existsSync(join(specDir, "manifest.json"))) return specDir;
   mkdirSync(specDir, { recursive: true });
   writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
@@ -412,6 +470,25 @@ function ensureWikiSpecs(dataDir: string): string {
   return specDir;
 }
 
+function renderRuleSpecTemplate(requiredSections: string[], requiredFacts: string[]): string {
+  const sections = requiredSections.length ? requiredSections : ["Overview"];
+  const lines = sections.map((section) => `## ${section}`);
+  if (requiredFacts.length > 0) {
+    lines.push("", "## Data Dependencies", "| key | required |", "| --- | --- |", ...requiredFacts.map((fact) => `| ${fact} | yes |`));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function mergeQualityRules(profile: QualityGateConfig, rules: KnowledgeRuleConfig): QualityGateConfig {
+  return {
+    minPackageScore: profile.minPackageScore,
+    rules: {
+      ...profile.rules,
+      ...rules.qualityRules,
+    },
+  };
+}
+
 function componentIdFor(packageId: string, legacyPath: string): string {
   return `cmp_${slug(packageId)}_${slug(legacyPath)}`;
 }
@@ -427,6 +504,8 @@ function mapRun(row: Record<string, unknown>): KnowledgeBuildRun {
     wikiSpecsHash: row.wiki_specs_hash as string,
     qualityProfileId: row.quality_profile_id as string,
     status: row.status as KnowledgeBuildRun["status"],
+    currentStage: (row.current_stage as string) ?? "",
+    completedStages: jsonValue<string[]>(row.completed_stages, []),
     startedAt: String(row.started_at),
     finishedAt: row.finished_at ? String(row.finished_at) : null,
     error: row.error as string,

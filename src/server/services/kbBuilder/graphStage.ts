@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { KnowledgeRuleConfig } from "../../types";
 import type { StageResult } from "./types";
 
 interface GraphNode {
@@ -15,12 +16,13 @@ interface GraphEdge {
   source: string;
   target: string;
   relation: string;
-  edge_kind: "semantic" | "table_field" | "fk";
+  edge_kind: "semantic" | "table_field" | "fk" | "candidate";
   from_doc?: string;
   field?: string;
+  candidate_reason?: string;
 }
 
-export async function runGraphStage(options: { dataDir: string }): Promise<StageResult> {
+export async function runGraphStage(options: { dataDir: string; rules?: KnowledgeRuleConfig }): Promise<StageResult> {
   const metas = loadMetas(join(options.dataDir, "wiki", "_meta"));
   const schemas = readJson<Record<string, { fields?: string[] }>>(join(options.dataDir, "wiki", "_tables", "schemas.json"), {});
   const fkEdges = readJson<Array<{ source: string; target: string; field: string }>>(
@@ -46,12 +48,14 @@ export async function runGraphStage(options: { dataDir: string }): Promise<Stage
 
     for (const relationship of Array.isArray(meta.relationships) ? meta.relationships : []) {
       if (!relationship?.source || !relationship?.target || !relationship?.relation) continue;
+      const candidateReason = candidateReasonForRelationship(relationship, nodes, options.rules);
       edges.push({
         source: relationship.source,
         target: relationship.target,
         relation: relationship.relation,
         from_doc: meta.source,
-        edge_kind: "semantic",
+        edge_kind: candidateReason ? "candidate" : "semantic",
+        ...(candidateReason ? { candidate_reason: candidateReason } : {}),
       });
     }
   }
@@ -85,6 +89,22 @@ export async function runGraphStage(options: { dataDir: string }): Promise<Stage
   writeFileSync(join(options.dataDir, "wiki", "graph.json"), `${JSON.stringify(graph, null, 2)}\n`);
   writeFileSync(join(options.dataDir, "wiki", "index.md"), renderIndex(graph));
   return { stage: "graph", status: "completed", outputPaths: ["wiki/graph.json", "wiki/index.md"], warnings: [] };
+}
+
+function candidateReasonForRelationship(
+  relationship: { source: string; target: string; relation: string },
+  nodes: Map<string, GraphNode>,
+  rules?: KnowledgeRuleConfig,
+): string {
+  if (!rules) return "";
+  const relation = rules.relationTypes.find((item) => item.id === relationship.relation);
+  if (!relation || !relation.publishable) return "unknown_or_unpublishable_relation";
+  const source = nodes.get(relationship.source);
+  const target = nodes.get(relationship.target);
+  if (!source || !target) return "unknown_endpoint";
+  const publishableEntityTypes = new Set(rules.entityTypes.filter((item) => item.publishable).map((item) => item.id));
+  if (!publishableEntityTypes.has(source.type) || !publishableEntityTypes.has(target.type)) return "unknown_or_unpublishable_entity_type";
+  return "";
 }
 
 function loadMetas(metaDir: string): any[] {

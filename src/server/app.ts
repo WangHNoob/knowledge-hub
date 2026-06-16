@@ -8,6 +8,8 @@ import { createDiagnosticLogger, type DiagnosticLogger } from "./services/diagno
 import { createKbBuilderPipelineService } from "./services/kbBuilderService";
 import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 import { createKnowledgeService } from "./services/knowledgeService";
+import { createLegislationService } from "./services/legislationService";
+import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
 import { createSourceBundleService } from "./services/sourceBundleService";
 import { registerAgentRoutes } from "./routes/agent";
@@ -16,6 +18,7 @@ import { registerBuilderRoutes } from "./routes/builder";
 import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerDiagnosticsRoutes } from "./routes/diagnostics";
 import { registerLegacyRoutes } from "./routes/legacy";
+import { registerLegislationRoutes } from "./routes/legislation";
 import { registerPackageRoutes } from "./routes/packages";
 import { registerQualityRoutes } from "./routes/quality";
 import { registerReleaseRoutes } from "./routes/releases";
@@ -55,7 +58,9 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     bundleService: createSourceBundleService(options.db, dataDir),
     kbBuilderService: createKbBuilderPipelineService(options.db, dataDir, diagnostics),
     releaseService: createReleaseService(options.db, diagnostics),
-    queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics)
+    queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
+    legislationService: createLegislationService(options.db),
+    attributionAuditService: createAttributionAuditService(options.db)
   };
 
   await app.register(cors, { origin: true, credentials: true });
@@ -74,6 +79,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerPackageRoutes(app, ctx);
   registerReviewRoutes(app, ctx);
   registerQualityRoutes(app, ctx);
+  registerLegislationRoutes(app, ctx);
   registerReleaseRoutes(app, ctx);
   registerAgentRoutes(app, ctx);
   registerDiagnosticsRoutes(app, ctx);
