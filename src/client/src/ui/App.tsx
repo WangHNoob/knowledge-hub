@@ -22,8 +22,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { isTauri, selectFolder } from "../tauri";
-
 import {
   getBundleVersion,
   getCurrentRelease,
@@ -232,7 +230,7 @@ function Dashboard() {
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
-type ModelProvider = "deterministic" | "openai-compatible" | "anthropic-compatible";
+type ModelProvider = "deterministic" | "openai-compatible" | "anthropic";
 
 function KnowledgeBuilder() {
   const queryClient = useQueryClient();
@@ -344,7 +342,7 @@ function KnowledgeBuilder() {
       setBaseUrl("https://api.openai.com/v1");
       setModel("gpt-4.1-mini");
     }
-    if (nextProvider === "anthropic-compatible" && provider !== "anthropic-compatible") {
+    if (nextProvider === "anthropic" && provider !== "anthropic") {
       setBaseUrl("https://api.anthropic.com/v1");
       setModel("claude-sonnet-4-5");
     }
@@ -417,20 +415,21 @@ function KnowledgeBuilder() {
               <select value={provider} onChange={(event) => selectProvider(event.target.value as ModelProvider)}>
                 <option value="deterministic">确定性（仅验证 pipeline）</option>
                 <option value="openai-compatible">OpenAI-compatible</option>
-                <option value="anthropic-compatible">Anthropic-compatible</option>
+                <option value="anthropic">Anthropic</option>
               </select>
             </label>
             {provider === "deterministic" ? (
-              <p className="notice">确定性模式只适合验证 pipeline。要生成高质量知识资产，请切换到 OpenAI-compatible 或 Anthropic-compatible 并完成连接测试。</p>
+              <p className="notice">确定性模式只适合验证 pipeline。要生成高质量知识资产，请切换到 OpenAI-compatible 或 Anthropic 并完成连接测试。</p>
             ) : (
               <div className="model-grid">
                 <label className="field-label">
                   Base URL
-                  <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={provider === "anthropic-compatible" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"} />
+                  <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={provider === "anthropic" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"} />
+                  {provider === "anthropic" && <small>支持填写服务根地址、/v1，或完整 /messages endpoint。</small>}
                 </label>
                 <label className="field-label">
                   Model
-                  <input value={model} onChange={(event) => setModel(event.target.value)} placeholder={provider === "anthropic-compatible" ? "claude-sonnet-4-5" : "gpt-4.1-mini"} />
+                  <input value={model} onChange={(event) => setModel(event.target.value)} placeholder={provider === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1-mini"} />
                 </label>
                 <label className="field-label model-secret">
                   <span className="secret-label-row">
@@ -440,7 +439,7 @@ function KnowledgeBuilder() {
                       在本机记住
                     </label>
                   </span>
-                  <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={provider === "anthropic-compatible" ? "sk-ant-..." : "sk-..."} />
+                  <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={provider === "anthropic" ? "sk-ant-..." : "sk-..."} />
                 </label>
               </div>
             )}
@@ -453,7 +452,7 @@ function KnowledgeBuilder() {
                 <KeyRound size={16} />
                 {modelTestMutation.isPending ? "测试中..." : "测试模型连接"}
               </button>
-              {provider === "deterministic" && <span>请选择 OpenAI-compatible 或 Anthropic-compatible 设置后测试。</span>}
+              {provider === "deterministic" && <span>请选择 OpenAI-compatible 或 Anthropic 设置后测试。</span>}
             </div>
             {modelTestMessage && (
               <p className={modelTestMessage.ok ? "notice" : "error"}>{modelTestMessage.text}</p>
@@ -549,18 +548,20 @@ function BuildRunCard({
 function loadModelPrefs(): { provider: ModelProvider; baseUrl: string; model: string; apiKey: string } {
   try {
     const parsed = JSON.parse(localStorage.getItem(MODEL_PREFS_KEY) ?? "{}") as Partial<{
-      provider: ModelProvider;
+      provider: ModelProvider | "anthropic-compatible";
       baseUrl: string;
       model: string;
       apiKey: string;
     }>;
-    const provider: ModelProvider = parsed.provider === "openai-compatible" || parsed.provider === "anthropic-compatible"
+    const provider: ModelProvider = parsed.provider === "openai-compatible" || parsed.provider === "anthropic"
       ? parsed.provider
+      : parsed.provider === "anthropic-compatible"
+        ? "anthropic"
       : "deterministic";
     return {
       provider,
-      baseUrl: parsed.baseUrl ?? (provider === "anthropic-compatible" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
-      model: parsed.model ?? (provider === "anthropic-compatible" ? "claude-sonnet-4-5" : "gpt-4.1-mini"),
+      baseUrl: parsed.baseUrl ?? (provider === "anthropic" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
+      model: parsed.model ?? (provider === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1-mini"),
       apiKey: parsed.apiKey ?? ""
     };
   } catch {
@@ -575,9 +576,9 @@ function createModelConfig(
   apiKey: string
 ): BuildModelConfig {
   if (provider === "deterministic") return { provider: "deterministic", model: "deterministic" };
-  if (provider === "anthropic-compatible") {
+  if (provider === "anthropic") {
     return {
-      provider: "anthropic-compatible",
+      provider: "anthropic",
       baseUrl: baseUrl.trim(),
       model: model.trim(),
       apiKey: apiKey.trim()
@@ -827,17 +828,6 @@ function Sources() {
             placeholder="例：D:/raw/2026-06-10"
             style={{ minWidth: 320 }}
           />
-          {isTauri && (
-            <button
-              type="button"
-              onClick={async () => {
-                const picked = await selectFolder("选择资料根目录");
-                if (picked) setRootPath(picked);
-              }}
-            >
-              选择目录
-            </button>
-          )}
           <input
             value={browsePath}
             onChange={(event) => setBrowsePath(event.target.value)}
@@ -1547,18 +1537,7 @@ function Maintenance() {
           <p>先扫描旧 kb-builder data 目录，只生成摘要，不导入、不改动文件。</p>
         </div>
         <div className="upload-form legacy">
-          <input value={path} onChange={(event) => setPath(event.target.value)} readOnly={isTauri} />
-          {isTauri && (
-            <button
-              type="button"
-              onClick={async () => {
-                const picked = await selectFolder("选择旧知识库目录");
-                if (picked) setPath(picked);
-              }}
-            >
-              选择目录
-            </button>
-          )}
+          <input value={path} onChange={(event) => setPath(event.target.value)} />
           <button
             onClick={async () => {
               setLoading(true);
