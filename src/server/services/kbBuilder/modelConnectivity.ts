@@ -96,7 +96,7 @@ async function testAnthropicConnectivity(
       headers: {
         "content-type": "application/json",
         "x-api-key": config.apiKey ?? "",
-        "anthropic-version": config.anthropicVersion,
+        "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
         model: config.model,

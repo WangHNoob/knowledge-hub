@@ -1,7 +1,7 @@
 export type PipelineModelConfig =
   | { provider: "deterministic"; model: "deterministic" }
   | { provider: "openai-compatible"; baseUrl: string; model: string; apiKey?: string }
-  | { provider: "anthropic-compatible"; baseUrl: string; model: string; apiKey?: string; anthropicVersion: string };
+  | { provider: "anthropic-compatible"; baseUrl: string; model: string; apiKey?: string };
 
 export function normalizeModelConfig(input: unknown, legacyModel = "deterministic"): PipelineModelConfig {
   if (isRecord(input) && input.provider === "openai-compatible") {
@@ -19,7 +19,6 @@ export function normalizeModelConfig(input: unknown, legacyModel = "deterministi
       baseUrl: stringValue(input.baseUrl, "https://api.anthropic.com/v1").replace(/\/+$/u, ""),
       model: stringValue(input.model, legacyModel === "deterministic" ? "claude-sonnet-4-5" : legacyModel),
       apiKey: optionalString(input.apiKey),
-      anthropicVersion: stringValue(input.anthropicVersion, "2023-06-01"),
     };
   }
 
@@ -37,7 +36,6 @@ export function redactModelConfig(config: PipelineModelConfig): Record<string, u
       provider: "anthropic-compatible",
       baseUrl: config.baseUrl,
       model: config.model,
-      anthropicVersion: config.anthropicVersion,
       apiKeyConfigured: Boolean(config.apiKey),
     };
   }

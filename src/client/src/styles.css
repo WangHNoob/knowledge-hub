@@ -988,30 +988,20 @@ code {
   accent-color: var(--olive);
 }
 
-.segmented {
+.model-provider {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  padding: 4px;
+  gap: 6px;
+}
+
+.model-provider select {
+  width: 100%;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
-}
-
-.segmented button {
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 14px;
-  background: transparent;
-  color: var(--ink-muted);
+  color: var(--ink);
+  font-size: 14px;
   cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.segmented button.active {
-  background: linear-gradient(135deg, var(--olive) 0%, var(--olive-dim) 100%);
-  color: #fff;
-  font-weight: 600;
-  box-shadow: 0 2px 10px rgba(95, 110, 63, 0.2);
 }
 
 .model-grid {

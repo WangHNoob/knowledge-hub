@@ -600,8 +600,7 @@ describe("knowledge hub api", () => {
             provider: "anthropic-compatible",
             baseUrl: "https://api.anthropic.com/v1",
             model: "claude-sonnet-4-5",
-            apiKey: "sk-ant-secret",
-            anthropicVersion: "2023-06-01"
+            apiKey: "sk-ant-secret"
           }
         }
       });

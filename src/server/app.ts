@@ -70,8 +70,7 @@ const modelConfigSchema = z.discriminatedUnion("provider", [
     provider: z.literal("anthropic-compatible"),
     baseUrl: z.string().url().default("https://api.anthropic.com/v1"),
     model: z.string().min(1),
-    apiKey: z.string().min(1).optional(),
-    anthropicVersion: z.string().min(1).default("2023-06-01")
+    apiKey: z.string().min(1).optional()
   })
 ]);
 const buildRequestSchema = z.object({

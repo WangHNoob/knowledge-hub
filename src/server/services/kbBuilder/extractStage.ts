@@ -251,7 +251,7 @@ async function extractWithAnthropic(markdown: string, rel: string, config: Extra
     headers: {
       "content-type": "application/json",
       "x-api-key": config.apiKey ?? "",
-      "anthropic-version": config.anthropicVersion,
+      "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
       model: config.model,
