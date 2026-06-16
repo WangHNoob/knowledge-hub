@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from "../types";
+import type { DiagnosticLogger } from "./diagnosticService";
 
 export interface CreateReleaseDraftInput {
   version: string;
@@ -10,119 +11,160 @@ export interface CreateReleaseDraftInput {
   requestedBy: string;
 }
 
-export function createReleaseService(db: DatabaseHandle) {
-  return new ReleaseService(db);
+export function createReleaseService(db: DatabaseHandle, diagnostics?: DiagnosticLogger) {
+  return new ReleaseService(db, diagnostics);
 }
 
 export class ReleaseService {
   private readonly adapter;
 
-  constructor(private readonly db: DatabaseHandle) {
+  constructor(private readonly db: DatabaseHandle, private readonly diagnostics?: DiagnosticLogger) {
     this.adapter = db.adapter;
   }
 
   async createDraft(input: CreateReleaseDraftInput): Promise<ReleaseRecord> {
+    const span = this.diagnostics?.startSpan({
+      category: "release",
+      message: "create release draft",
+      actor: input.requestedBy,
+      entityType: "release",
+      context: { version: input.version, packageIds: input.packageIds }
+    });
     const packageIds = uniqueSorted(input.packageIds);
-    if (packageIds.length === 0) throw new Error("Release must include at least one package.");
+    try {
+      if (packageIds.length === 0) throw new Error("Release must include at least one package.");
 
-    const packages = await this.loadPackages(packageIds);
-    if (packages.length !== packageIds.length) {
-      const found = new Set(packages.map((pkg) => pkg.packageId));
-      const missing = packageIds.filter((id) => !found.has(id));
-      throw new Error(`Unknown package(s): ${missing.join(", ")}`);
+      const packages = await this.loadPackages(packageIds);
+      if (packages.length !== packageIds.length) {
+        const found = new Set(packages.map((pkg) => pkg.packageId));
+        const missing = packageIds.filter((id) => !found.has(id));
+        throw new Error(`Unknown package(s): ${missing.join(", ")}`);
+      }
+
+      const releaseId = `rel_${compactDate(new Date())}_${nanoid(6)}`;
+      const qualityGate = summarizePackages(packages);
+      const createdAt = new Date().toISOString();
+
+      await this.adapter.query(
+        `INSERT INTO releases
+          (release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          releaseId,
+          input.version,
+          "draft",
+          JSON.stringify(packageIds),
+          "",
+          JSON.stringify({}),
+          input.requestedBy,
+          createdAt,
+          "",
+          null,
+          JSON.stringify(qualityGate),
+        ],
+      );
+
+      const release = await this.getRelease(releaseId);
+      if (!release) throw new Error("Failed to create release draft.");
+      await span?.complete({ releaseId });
+      return release;
+    } catch (error) {
+      await span?.fail(error);
+      throw error;
     }
-
-    const releaseId = `rel_${compactDate(new Date())}_${nanoid(6)}`;
-    const qualityGate = summarizePackages(packages);
-    const createdAt = new Date().toISOString();
-
-    await this.adapter.query(
-      `INSERT INTO releases
-        (release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [
-        releaseId,
-        input.version,
-        "draft",
-        JSON.stringify(packageIds),
-        "",
-        JSON.stringify({}),
-        input.requestedBy,
-        createdAt,
-        "",
-        null,
-        JSON.stringify(qualityGate),
-      ],
-    );
-
-    const release = await this.getRelease(releaseId);
-    if (!release) throw new Error("Failed to create release draft.");
-    return release;
   }
 
   async publish(releaseId: string, publishedBy: string): Promise<ReleaseRecord> {
-    const release = await this.getRelease(releaseId);
-    if (!release) throw new Error(`Unknown release: ${releaseId}`);
-    if (release.status === "published") throw new Error(`Release ${releaseId} is already published.`);
-
-    const blockers = await this.findOpenBlockingTasks(release.packageIds);
-    if (blockers.length > 0) {
-      throw new Error(`Cannot publish release with open blocking tasks: ${blockers.map((task) => task.task_id).join(", ")}`);
-    }
-
-    const packages = await this.loadPackages(release.packageIds);
-    const components = await this.loadComponents(release.packageIds);
-    const qualityGate = summarizePackages(packages, components);
-    const publishedAt = new Date().toISOString();
-    const manifest = buildManifest({
-      release,
-      packages,
-      components,
-      qualityGate,
-      publishedAt,
-      publishedBy,
+    const span = this.diagnostics?.startSpan({
+      category: "release",
+      message: "publish release",
+      actor: publishedBy,
+      entityType: "release",
+      entityId: releaseId,
+      releaseId
     });
-    const manifestHash = hashManifest(manifest);
-
-    await this.adapter.query("BEGIN");
     try {
-      await this.adapter.query(
-        `UPDATE releases
-         SET status = $2,
-             manifest_hash = $3,
-             manifest_json = $4,
-             quality_gate = $5,
-             published_by = $6,
-             published_at = $7
-         WHERE release_id = $1 AND status = 'draft'`,
-        [
-          releaseId,
-          "published",
-          manifestHash,
-          JSON.stringify(manifest),
-          JSON.stringify(qualityGate),
-          publishedBy,
-          publishedAt,
-        ],
-      );
-      await this.pointChannelToRelease(releaseId, publishedBy);
-      await this.adapter.query("COMMIT");
+      const release = await this.getRelease(releaseId);
+      if (!release) throw new Error(`Unknown release: ${releaseId}`);
+      if (release.status === "published") throw new Error(`Release ${releaseId} is already published.`);
+
+      const blockers = await this.findOpenBlockingTasks(release.packageIds);
+      if (blockers.length > 0) {
+        throw new Error(`Cannot publish release with open blocking tasks: ${blockers.map((task) => task.task_id).join(", ")}`);
+      }
+
+      const packages = await this.loadPackages(release.packageIds);
+      const components = await this.loadComponents(release.packageIds);
+      const qualityGate = summarizePackages(packages, components);
+      const publishedAt = new Date().toISOString();
+      const manifest = buildManifest({
+        release,
+        packages,
+        components,
+        qualityGate,
+        publishedAt,
+        publishedBy,
+      });
+      const manifestHash = hashManifest(manifest);
+
+      await this.adapter.query("BEGIN");
+      try {
+        await this.adapter.query(
+          `UPDATE releases
+           SET status = $2,
+               manifest_hash = $3,
+               manifest_json = $4,
+               quality_gate = $5,
+               published_by = $6,
+               published_at = $7
+           WHERE release_id = $1 AND status = 'draft'`,
+          [
+            releaseId,
+            "published",
+            manifestHash,
+            JSON.stringify(manifest),
+            JSON.stringify(qualityGate),
+            publishedBy,
+            publishedAt,
+          ],
+        );
+        await this.pointChannelToRelease(releaseId, publishedBy);
+        await this.adapter.query("COMMIT");
+      } catch (error) {
+        await this.adapter.query("ROLLBACK");
+        throw error;
+      }
+
+      const published = await this.getRelease(releaseId);
+      if (!published) throw new Error(`Unknown release after publish: ${releaseId}`);
+      await span?.complete({ manifestHash: published.manifestHash, packageIds: published.packageIds });
+      return published;
     } catch (error) {
-      await this.adapter.query("ROLLBACK");
+      await span?.fail(error);
       throw error;
     }
-
-    const published = await this.getRelease(releaseId);
-    if (!published) throw new Error(`Unknown release after publish: ${releaseId}`);
-    return published;
   }
 
   async rollback(releaseId: string, requestedBy: string): Promise<ReleaseRecord> {
-    const release = await this.getRelease(releaseId);
-    if (!release) throw new Error(`Unknown release: ${releaseId}`);
-    if (release.status !== "published") throw new Error("Can only rollback to a published release.");
-    await this.pointChannelToRelease(releaseId, requestedBy);
-    return release;
+    const span = this.diagnostics?.startSpan({
+      category: "release",
+      message: "rollback release",
+      actor: requestedBy,
+      entityType: "release",
+      entityId: releaseId,
+      releaseId
+    });
+    try {
+      const release = await this.getRelease(releaseId);
+      if (!release) throw new Error(`Unknown release: ${releaseId}`);
+      if (release.status !== "published") throw new Error("Can only rollback to a published release.");
+      await this.pointChannelToRelease(releaseId, requestedBy);
+      await span?.complete({ version: release.version });
+      return release;
+    } catch (error) {
+      await span?.fail(error);
+      throw error;
+    }
   }
 
   async getCurrent(): Promise<ReleaseRecord | null> {

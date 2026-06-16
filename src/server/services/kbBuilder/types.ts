@@ -18,6 +18,7 @@ export interface BuildPipelineOptions {
   force: boolean;
   only: string | null;
   qualityProfileId: string;
+  traceId?: string;
 }
 
 export interface StageResult {

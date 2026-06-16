@@ -18,7 +18,11 @@ export const config = {
   host: optional("HOST", "0.0.0.0"),
   dataDir: optional("KH_DATA_DIR", "./data"),
   jwtSecret: required("KH_JWT_SECRET"),
-  databaseUrl: optional("DATABASE_URL", "")  // 桌面模式可选，服务端模式必须
+  databaseUrl: optional("DATABASE_URL", ""),  // 桌面模式可选，服务端模式必须
+  logLevel: optional("KH_LOG_LEVEL", "info") as "debug" | "info" | "warn" | "error",
+  logRetentionDays: Number(optional("KH_LOG_RETENTION_DAYS", "14")),
+  logToFile: optional("KH_LOG_TO_FILE", "true") !== "false",
+  logToDb: optional("KH_LOG_TO_DB", "true") !== "false"
 };
 
 export const testConfig = {

@@ -5,12 +5,14 @@ import { nanoid } from "nanoid";
 import xlsx from "xlsx";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, ReleaseRecord } from "../types";
+import type { DiagnosticLogger } from "./diagnosticService";
 import { createReleaseService } from "./releaseService";
 import { createSourceBundleService } from "./sourceBundleService";
 
 export interface KnowledgeQueryContext {
   sessionId?: string;
   agentRole?: string;
+  traceId?: string;
 }
 
 interface ToolResult {
@@ -48,8 +50,8 @@ interface TableSchema {
   sheets?: string[];
 }
 
-export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string) {
-  return new KnowledgeQueryService(db, dataDir);
+export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
+  return new KnowledgeQueryService(db, dataDir, diagnostics);
 }
 
 export class KnowledgeQueryService {
@@ -57,7 +59,7 @@ export class KnowledgeQueryService {
   private readonly releaseService;
   private readonly sourceService;
 
-  constructor(private readonly db: DatabaseHandle, private readonly dataDir: string) {
+  constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
     this.adapter = db.adapter;
     this.releaseService = createReleaseService(db);
     this.sourceService = createSourceBundleService(db, dataDir);
@@ -65,8 +67,20 @@ export class KnowledgeQueryService {
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {
     const started = Date.now();
+    const span = this.diagnostics?.startSpan({
+      traceId: context.traceId,
+      category: "mcp",
+      message: `Knowledge MCP ${toolName}`,
+      actor: context.sessionId ?? "",
+      context: { toolName, agentRole: context.agentRole },
+      requestPayload: payload
+    });
     const release = await this.releaseService.getCurrent();
-    if (!release) throw new Error("No current published release. Publish a release before using Knowledge MCP tools.");
+    if (!release) {
+      const error = new Error("No current published release. Publish a release before using Knowledge MCP tools.");
+      await span?.fail(error);
+      throw error;
+    }
 
     let status: "hit" | "miss" | "error" = "error";
     let hitComponentIds: string[] = [];
@@ -102,6 +116,13 @@ export class KnowledgeQueryService {
         latencyMs: Date.now() - started,
       });
       await this.applyFeedbackRules(release, toolName, payload, hitComponentIds, qualityFlags, status);
+      await span?.complete({
+        releaseId: release.releaseId,
+        status,
+        hitComponentIds,
+        qualityFlags,
+        latencyMs: Date.now() - started
+      });
       return envelope;
     } catch (error) {
       await this.writeAudit({
@@ -114,6 +135,7 @@ export class KnowledgeQueryService {
         status: "error",
         latencyMs: Date.now() - started,
       });
+      await span?.fail(error, { releaseId: release.releaseId, hitComponentIds, qualityFlags });
       throw error;
     }
   }

@@ -198,6 +198,43 @@ export interface KnowledgeEnvelope<T = unknown> {
   trace: KnowledgeTrace;
 }
 
+export type DiagnosticLogLevel = "debug" | "info" | "warn" | "error";
+export type DiagnosticLogCategory = "http" | "source_import" | "kb_build" | "llm" | "release" | "mcp" | "db" | "system";
+export type DiagnosticLogStatus = "started" | "completed" | "failed" | "event";
+
+export interface DiagnosticLogRecord {
+  logId: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId: string;
+  level: DiagnosticLogLevel;
+  category: DiagnosticLogCategory;
+  message: string;
+  status: DiagnosticLogStatus;
+  durationMs: number | null;
+  actor: string;
+  route: string;
+  method: string;
+  entityType: string;
+  entityId: string;
+  runId: string;
+  releaseId: string;
+  requestPayload: Record<string, unknown>;
+  context: Record<string, unknown>;
+  errorName: string;
+  errorMessage: string;
+  errorStack: string;
+  createdAt: string;
+}
+
+export interface DiagnosticSummary {
+  errors24h: number;
+  slowRequests24h: number;
+  failedBuilds24h: number;
+  mcpErrors24h: number;
+  llmErrors24h: number;
+}
+
 export type PipelineStage = "convert" | "extract" | "tables" | "graph" | "viz";
 export type BuildRunStatus = "running" | "completed" | "failed";
 export type QualitySeverity = "blocking" | "warning" | "info";

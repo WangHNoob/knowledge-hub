@@ -3,8 +3,10 @@ import {
   Archive,
   BookOpen,
   Boxes,
+  Bug,
   CheckCircle2,
   Database,
+  File,
   GitBranch,
   KeyRound,
   LogOut,
@@ -12,9 +14,12 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
-  SearchCheck
+  SearchCheck,
+  Square,
+  Trash2,
+  Upload
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { isTauri, selectFolder } from "../tauri";
@@ -23,16 +28,21 @@ import {
   getBundleVersion,
   getCurrentRelease,
   getDashboard,
+  getDiagnosticSummary,
+  getDiagnosticTrace,
   getPackage,
   getQualityProfile,
   getToken,
   buildKnowledgePackage,
+  browseLocalFiles,
   createRelease,
+  deleteBuildRun,
   importLegacy,
   importSourceBundle,
   listAgentEvents,
   listBuildRuns,
   listBundleVersions,
+  listDiagnosticLogs,
   listMcpAudit,
   listPackages,
   listReleases,
@@ -43,18 +53,22 @@ import {
   scanLegacy,
   setToken,
   simulateMcpQuery,
+  stopBuildRun,
   testModelConnectivity,
   updateQualityProfile,
+  uploadSourceBundle,
   type AssetPackage,
   type BuildModelConfig,
+  type DiagnosticLogRecord,
   type KnowledgeEnvelope,
   type KnowledgeBuildRun,
+  type LocalBrowseResult,
   type ReleaseRecord,
   type SourceBundleVersion,
   type SourceFileChange
 } from "../api";
 
-type View = "dashboard" | "sources" | "builder" | "assets" | "review" | "release" | "agent" | "maintenance";
+type View = "dashboard" | "sources" | "builder" | "assets" | "review" | "release" | "agent" | "diagnostics" | "maintenance";
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "首页", icon: Activity },
@@ -64,6 +78,7 @@ const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "review", label: "审核中心", icon: CheckCircle2 },
   { id: "release", label: "发布", icon: GitBranch },
   { id: "agent", label: "Agent 反馈", icon: SearchCheck },
+  { id: "diagnostics", label: "运行诊断", icon: Bug },
   { id: "maintenance", label: "高级维护", icon: Archive }
 ];
 
@@ -124,6 +139,7 @@ export function App() {
         {view === "review" && <Review />}
         {view === "release" && <Release />}
         {view === "agent" && <AgentFeedback />}
+        {view === "diagnostics" && <Diagnostics />}
         {view === "maintenance" && <Maintenance />}
       </main>
       <a className="deerflow" href="https://deerflow.tech" target="_blank" rel="noreferrer" title="Created By Deerflow">
@@ -296,6 +312,24 @@ function KnowledgeBuilder() {
       setModelTestMessage({ ok: false, text: err instanceof Error ? err.message : "模型连接测试失败。" });
     }
   });
+  const stopRunMutation = useMutation({
+    mutationFn: stopBuildRun,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["build-runs"] });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "停止运行失败。");
+    }
+  });
+  const deleteRunMutation = useMutation({
+    mutationFn: deleteBuildRun,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["build-runs"] });
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "删除运行记录失败。");
+    }
+  });
 
   const activeRuns = (runs.data ?? []).filter((run) => run.status === "running");
   const selectedRuns = (runs.data ?? []).filter((run) => !selectedVersion || run.sourceVersionId === selectedVersion);
@@ -385,12 +419,14 @@ function KnowledgeBuilder() {
                   <input value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4.1-mini" />
                 </label>
                 <label className="field-label model-secret">
-                  API Key
+                  <span className="secret-label-row">
+                    API Key
+                    <label className="remember-secret inline">
+                      <input type="checkbox" checked={rememberApiKey} onChange={(event) => setRememberApiKey(event.target.checked)} />
+                      在本机记住
+                    </label>
+                  </span>
                   <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder="sk-..." />
-                </label>
-                <label className="remember-secret">
-                  <input type="checkbox" checked={rememberApiKey} onChange={(event) => setRememberApiKey(event.target.checked)} />
-                  在本机记住 API Key
                 </label>
               </div>
             ) : (
@@ -435,7 +471,15 @@ function KnowledgeBuilder() {
           </div>
           <div className="run-list">
             {selectedRuns.length === 0 && <p>暂无构建记录。</p>}
-            {selectedRuns.map((run) => <BuildRunCard key={run.runId} run={run} />)}
+            {selectedRuns.map((run) => (
+              <BuildRunCard
+                key={run.runId}
+                run={run}
+                onStop={() => stopRunMutation.mutate(run.runId)}
+                onDelete={() => deleteRunMutation.mutate(run.runId)}
+                busy={stopRunMutation.isPending || deleteRunMutation.isPending}
+              />
+            ))}
           </div>
         </aside>
       </section>
@@ -443,7 +487,18 @@ function KnowledgeBuilder() {
   );
 }
 
-function BuildRunCard({ run }: { run: KnowledgeBuildRun }) {
+function BuildRunCard({
+  run,
+  onStop,
+  onDelete,
+  busy
+}: {
+  run: KnowledgeBuildRun;
+  onStop: () => void;
+  onDelete: () => void;
+  busy: boolean;
+}) {
+  const traceId = typeof run.config.traceId === "string" ? run.config.traceId : "";
   return (
     <article className={`run-card ${run.status}`}>
       <div className="detail-head">
@@ -451,7 +506,19 @@ function BuildRunCard({ run }: { run: KnowledgeBuildRun }) {
           <strong>{run.model}</strong>
           <span>{run.runId}</span>
         </div>
-        <Badge label={runStatusLabel(run.status)} tone={run.status === "failed" ? "hot" : run.status === "running" ? "warn" : "ok"} />
+        <div className="run-actions">
+          <Badge label={runStatusLabel(run.status)} tone={run.status === "failed" ? "hot" : run.status === "running" ? "warn" : "ok"} />
+          {run.status === "running" && (
+            <button className="icon-button" disabled={busy} onClick={onStop} title="停止运行">
+              <Square size={15} />
+            </button>
+          )}
+          {run.status !== "running" && (
+            <button className="icon-button danger" disabled={busy} onClick={onDelete} title="删除运行记录">
+              <Trash2 size={15} />
+            </button>
+          )}
+        </div>
       </div>
       <div className="stage-row">
         {run.stages.map((stage) => <span key={stage}>{stage}</span>)}
@@ -459,6 +526,7 @@ function BuildRunCard({ run }: { run: KnowledgeBuildRun }) {
       <p>
         资料版本：<code>{run.sourceVersionId}</code>
       </p>
+      {traceId && <p>Trace：<code>{traceId}</code></p>}
       {run.packageId && <p>资产包：<code>{run.packageId}</code></p>}
       {run.error && <p className="error">{run.error}</p>}
       <small>{run.startedAt}{run.finishedAt ? ` → ${run.finishedAt}` : ""}</small>
@@ -543,15 +611,76 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function summarizeSelectedFiles(files: File[]): string[] {
+  const roots = new Set(files.map((file) => webkitRelativePath(file).split("/")[0]).filter(Boolean));
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  const samples = files.slice(0, 3).map((file) => webkitRelativePath(file) || file.name);
+  return [
+    roots.size ? `目录：${[...roots].slice(0, 3).join(", ")}` : "散装文件选择",
+    `文件：${files.length} 个，${formatBytes(totalBytes)}`,
+    ...samples
+  ];
+}
+
+function webkitRelativePath(file: File): string {
+  return typeof (file as File & { webkitRelativePath?: string }).webkitRelativePath === "string"
+    ? (file as File & { webkitRelativePath: string }).webkitRelativePath
+    : "";
+}
+
+function LocalFileBrowser({
+  data,
+  onOpen,
+  onUse
+}: {
+  data: LocalBrowseResult;
+  onOpen: (path: string) => void;
+  onUse: (path: string) => void;
+}) {
+  return (
+    <div className="local-browser">
+      <div className="local-browser-head">
+        <div>
+          <strong>{data.path}</strong>
+          <span>{data.entries.length} 个条目</span>
+        </div>
+        <div className="detail-actions">
+          {data.parentPath && <button type="button" onClick={() => onOpen(data.parentPath!)}>上级</button>}
+          <button type="button" onClick={() => onUse(data.path)}>使用当前目录</button>
+        </div>
+      </div>
+      <div className="local-browser-list">
+        {data.entries.map((entry) => (
+          <button
+            type="button"
+            key={entry.path}
+            className="local-browser-row"
+            onClick={() => entry.kind === "directory" ? onOpen(entry.path) : undefined}
+            disabled={entry.kind !== "directory"}
+          >
+            {entry.kind === "directory" ? <Database size={15} /> : <File size={15} />}
+            <span>{entry.name}</span>
+            <small>{entry.kind === "directory" ? "目录" : formatBytes(entry.size ?? 0)}</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Sources() {
   const queryClient = useQueryClient();
   const bundleId = "default";
   const [rootPath, setRootPath] = useState("");
   const [note, setNote] = useState("");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [browsePath, setBrowsePath] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const directoryInputRef = useRef<HTMLInputElement | null>(null);
 
   const versions = useQuery({
     queryKey: ["bundle-versions", bundleId],
@@ -562,6 +691,25 @@ function Sources() {
     queryFn: () => getBundleVersion(bundleId, selectedVersion!),
     enabled: Boolean(selectedVersion)
   });
+  const browser = useQuery({
+    queryKey: ["local-files", browsePath],
+    queryFn: () => browseLocalFiles(browsePath.trim() || undefined),
+    enabled: Boolean(browsePath)
+  });
+  const importUploadedFiles = async () => {
+    if (selectedFiles.length === 0) throw new Error("请选择文件或目录。");
+    return uploadSourceBundle(bundleId, selectedFiles, note.trim() || undefined);
+  };
+  const handleImportResult = async (result: Awaited<ReturnType<typeof importSourceBundle>>) => {
+    setMessage(
+      `已生成版本 ${result.version.label}：新增 ${result.version.addedCount}，修改 ${result.version.modifiedCount}，删除 ${result.version.removedCount}，未变 ${result.version.unchangedCount}（新增 blob ${result.newBlobCount}）。`
+    );
+    setSelectedVersion(result.version.versionId);
+    setNote("");
+    setSelectedFiles([]);
+    await queryClient.invalidateQueries({ queryKey: ["bundle-versions", bundleId] });
+    await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  };
   return (
     <Page
       title="资料库"
@@ -571,9 +719,83 @@ function Sources() {
         <div>
           <h2>批量导入新版本</h2>
           <p>
-            指向服务器上一个包含 <code>gamedata/</code> 与 <code>gamedocs/</code> 的目录；
-            未变化的文件会自动复用已有 blob，仅记录清单引用。
+            推荐根目录包含 <code>gamedata/</code> 和 <code>gamedocs/</code>。策划文档放在 gamedocs，
+            游戏配表放在 gamedata，可继续按系统或模块分子目录。
           </p>
+          <div className="folder-guide">
+            <code>资料根目录/</code>
+            <code>├─ gamedocs/战斗/技能设计.md</code>
+            <code>└─ gamedata/Combat/Skill.xlsx</code>
+          </div>
+        </div>
+        <div className="upload-stack">
+          <div className="upload-mode">
+            <div>
+              <strong>Web 上传</strong>
+              <span>{selectedFiles.length ? `${selectedFiles.length} 个文件已选择` : "适合本机浏览器直接导入"}</span>
+            </div>
+            <div className="detail-actions">
+              <button type="button" onClick={() => fileInputRef.current?.click()}>
+                <File size={15} />
+                选择文件
+              </button>
+              <button type="button" onClick={() => directoryInputRef.current?.click()}>
+                <Upload size={15} />
+                选择目录
+              </button>
+            </div>
+            <input
+              ref={fileInputRef}
+              className="hidden-input"
+              type="file"
+              multiple
+              onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))}
+            />
+            <input
+              ref={directoryInputRef}
+              className="hidden-input"
+              type="file"
+              multiple
+              {...{ webkitdirectory: "", directory: "" }}
+              onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))}
+            />
+          </div>
+          {selectedFiles.length > 0 && (
+            <div className="selected-files">
+              {summarizeSelectedFiles(selectedFiles).map((line) => <span key={line}>{line}</span>)}
+            </div>
+          )}
+          <div className="upload-form web">
+            <input
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="备注（可选）"
+            />
+            <button
+              disabled={selectedFiles.length === 0 || busy}
+              onClick={async () => {
+                setBusy(true);
+                setMessage("");
+                setError("");
+                try {
+                  await handleImportResult(await importUploadedFiles());
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "上传导入失败。");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "导入中..." : "上传并导入"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="upload-box">
+        <div>
+          <h2>服务器路径导入</h2>
+          <p>当资料已经在运行 Knowledge Hub 的机器上时，输入或浏览服务器本地目录；浏览器不会打开具体文件内容。</p>
         </div>
         <div className="upload-form">
           <input
@@ -581,7 +803,6 @@ function Sources() {
             onChange={(event) => setRootPath(event.target.value)}
             placeholder="例：D:/raw/2026-06-10"
             style={{ minWidth: 320 }}
-            readOnly={isTauri}
           />
           {isTauri && (
             <button
@@ -595,10 +816,13 @@ function Sources() {
             </button>
           )}
           <input
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            placeholder="备注（可选）"
+            value={browsePath}
+            onChange={(event) => setBrowsePath(event.target.value)}
+            placeholder="浏览路径（可选）"
           />
+          <button type="button" onClick={() => browser.refetch()}>
+            浏览
+          </button>
           <button
             disabled={!rootPath.trim() || busy}
             onClick={async () => {
@@ -607,13 +831,7 @@ function Sources() {
               setError("");
               try {
                 const result = await importSourceBundle(bundleId, rootPath.trim(), note.trim() || undefined);
-                setMessage(
-                  `已生成版本 ${result.version.label}：新增 ${result.version.addedCount}，修改 ${result.version.modifiedCount}，删除 ${result.version.removedCount}，未变 ${result.version.unchangedCount}（新增 blob ${result.newBlobCount}）。`
-                );
-                setSelectedVersion(result.version.versionId);
-                setNote("");
-                await queryClient.invalidateQueries({ queryKey: ["bundle-versions", bundleId] });
-                await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+                await handleImportResult(result);
               } catch (err) {
                 setError(err instanceof Error ? err.message : "导入失败。");
               } finally {
@@ -624,6 +842,15 @@ function Sources() {
             {busy ? "导入中..." : "导入新版本"}
           </button>
         </div>
+        {browser.data && (
+          <LocalFileBrowser
+            data={browser.data}
+            onOpen={(path) => {
+              setBrowsePath(path);
+            }}
+            onUse={(path) => setRootPath(path)}
+          />
+        )}
         {message && <p className="notice">{message}</p>}
         {error && <p className="error">{error}</p>}
       </section>
@@ -1102,6 +1329,183 @@ function AgentFeedback() {
   );
 }
 
+function Diagnostics() {
+  const [filters, setFilters] = useState({
+    level: "",
+    category: "",
+    status: "",
+    traceId: "",
+    runId: "",
+    releaseId: "",
+    entityId: "",
+    q: ""
+  });
+  const [selectedTraceId, setSelectedTraceId] = useState("");
+  const query = {
+    ...filters,
+    traceId: filters.traceId || undefined,
+    level: filters.level || undefined,
+    category: filters.category || undefined,
+    status: filters.status || undefined,
+    runId: filters.runId || undefined,
+    releaseId: filters.releaseId || undefined,
+    entityId: filters.entityId || undefined,
+    q: filters.q || undefined,
+    limit: 100
+  };
+  const summary = useQuery({ queryKey: ["diagnostics", "summary"], queryFn: getDiagnosticSummary, refetchInterval: 15000 });
+  const logs = useQuery({ queryKey: ["diagnostics", "logs", query], queryFn: () => listDiagnosticLogs(query), refetchInterval: 10000 });
+  const trace = useQuery({
+    queryKey: ["diagnostics", "trace", selectedTraceId],
+    queryFn: () => getDiagnosticTrace(selectedTraceId),
+    enabled: Boolean(selectedTraceId)
+  });
+  const selectedLog = (logs.data ?? [])[0] ?? null;
+
+  if (summary.isLoading && logs.isLoading) return <Loading title="正在读取运行诊断" />;
+  if (summary.error || logs.error) return <ErrorState error={summary.error ?? logs.error} />;
+
+  const applyTrace = (traceId: string) => {
+    setSelectedTraceId(traceId);
+    setFilters((current) => ({ ...current, traceId }));
+  };
+
+  return (
+    <Page title="运行诊断" subtitle="按 trace、run、release 和组件实体追踪 HTTP、构建、LLM、发布与 MCP 的运行问题。">
+      <div className="metrics compact diagnostics-metrics">
+        <Metric label="24h 错误" value={summary.data?.errors24h ?? 0} hint="error / failed" tone={(summary.data?.errors24h ?? 0) > 0 ? "hot" : "ok"} />
+        <Metric label="慢请求" value={summary.data?.slowRequests24h ?? 0} hint="HTTP >= 1000ms" tone={(summary.data?.slowRequests24h ?? 0) > 0 ? "warn" : "ok"} />
+        <Metric label="失败构建" value={summary.data?.failedBuilds24h ?? 0} hint="kb_build failed" tone={(summary.data?.failedBuilds24h ?? 0) > 0 ? "hot" : "ok"} />
+        <Metric label="MCP 错误" value={summary.data?.mcpErrors24h ?? 0} hint="Agent 查询异常" tone={(summary.data?.mcpErrors24h ?? 0) > 0 ? "warn" : "ok"} />
+        <Metric label="LLM 错误" value={summary.data?.llmErrors24h ?? 0} hint="连接 / 生成阶段" tone={(summary.data?.llmErrors24h ?? 0) > 0 ? "warn" : "ok"} />
+      </div>
+
+      <div className="diagnostics-workbench">
+        <section className="diagnostics-filter">
+          <h2>筛选</h2>
+          <label>
+            级别
+            <select value={filters.level} onChange={(event) => setFilters({ ...filters, level: event.target.value })}>
+              <option value="">全部</option>
+              {["debug", "info", "warn", "error"].map((item) => <option value={item} key={item}>{item}</option>)}
+            </select>
+          </label>
+          <label>
+            类别
+            <select value={filters.category} onChange={(event) => setFilters({ ...filters, category: event.target.value })}>
+              <option value="">全部</option>
+              {["http", "source_import", "kb_build", "llm", "release", "mcp", "db", "system"].map((item) => <option value={item} key={item}>{item}</option>)}
+            </select>
+          </label>
+          <label>
+            状态
+            <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+              <option value="">全部</option>
+              {["started", "completed", "failed", "event"].map((item) => <option value={item} key={item}>{item}</option>)}
+            </select>
+          </label>
+          <label>
+            Trace ID
+            <input value={filters.traceId} onChange={(event) => setFilters({ ...filters, traceId: event.target.value })} placeholder="trc_..." />
+          </label>
+          <label>
+            Run ID
+            <input value={filters.runId} onChange={(event) => setFilters({ ...filters, runId: event.target.value })} placeholder="run_..." />
+          </label>
+          <label>
+            Release ID
+            <input value={filters.releaseId} onChange={(event) => setFilters({ ...filters, releaseId: event.target.value })} placeholder="rel_..." />
+          </label>
+          <label>
+            Entity ID
+            <input value={filters.entityId} onChange={(event) => setFilters({ ...filters, entityId: event.target.value })} placeholder="component / package / release" />
+          </label>
+          <label>
+            关键词
+            <input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="错误、阶段、路径" />
+          </label>
+          <button type="button" onClick={() => setFilters({ level: "", category: "", status: "", traceId: "", runId: "", releaseId: "", entityId: "", q: "" })}>
+            清空筛选
+          </button>
+        </section>
+
+        <section className="diagnostics-list">
+          <div className="detail-head">
+            <div>
+              <h2>日志记录</h2>
+              <p>{logs.data?.length ?? 0} 条，按时间倒序</p>
+            </div>
+            <button type="button" className="icon-button" title="刷新" onClick={() => logs.refetch()}>
+              <RefreshCw size={16} />
+            </button>
+          </div>
+          <div className="log-list">
+            {(logs.data ?? []).map((log) => (
+              <button
+                type="button"
+                className={selectedTraceId === log.traceId ? "log-row active" : "log-row"}
+                key={log.logId}
+                onClick={() => applyTrace(log.traceId)}
+              >
+                <span className="log-row-top">
+                  <Badge label={log.level} tone={log.level === "error" ? "hot" : log.level === "warn" ? "warn" : "ok"} />
+                  <Badge label={log.category} />
+                  <strong>{log.message}</strong>
+                  <small>{formatTime(log.createdAt)}</small>
+                </span>
+                <span className="log-row-meta">
+                  <code>{log.traceId}</code>
+                  {log.runId && <code>{log.runId}</code>}
+                  {log.releaseId && <code>{log.releaseId}</code>}
+                  {log.durationMs !== null && <span>{log.durationMs}ms</span>}
+                </span>
+                {log.errorMessage && <span className="log-error">{log.errorMessage}</span>}
+              </button>
+            ))}
+            {(logs.data ?? []).length === 0 && <EmptyWork title="没有匹配日志" body="调整筛选条件或触发一次导入、构建、发布、MCP 查询。" />}
+          </div>
+        </section>
+
+        <section className="diagnostics-trace">
+          <div className="detail-head">
+            <div>
+              <h2>Trace 时间线</h2>
+              <p>{selectedTraceId || "选择一条日志查看完整链路"}</p>
+            </div>
+            {selectedTraceId && <button type="button" onClick={() => navigator.clipboard?.writeText(selectedTraceId)}>复制 trace</button>}
+          </div>
+          <div className="trace-timeline">
+            {(trace.data ?? []).map((log) => (
+              <article className={`trace-step ${log.status}`} key={log.logId}>
+                <div>
+                  <Badge label={log.status} tone={log.status === "failed" ? "hot" : log.level === "warn" ? "warn" : "ok"} />
+                  <strong>{log.message}</strong>
+                  <span>{log.durationMs !== null ? `${log.durationMs}ms` : formatTime(log.createdAt)}</span>
+                </div>
+                <code>{log.spanId}</code>
+                {(log.runId || log.releaseId || log.entityId) && (
+                  <small>{[log.runId, log.releaseId, log.entityId].filter(Boolean).join(" / ")}</small>
+                )}
+                {log.errorStack && <pre>{log.errorStack}</pre>}
+              </article>
+            ))}
+            {selectedTraceId && trace.isLoading && <Loading title="正在读取 trace" />}
+            {!selectedTraceId && selectedLog && (
+              <article className="trace-step event">
+                <div>
+                  <Badge label={selectedLog.status} />
+                  <strong>{selectedLog.message}</strong>
+                </div>
+                <pre>{JSON.stringify({ context: selectedLog.context, requestPayload: selectedLog.requestPayload }, null, 2)}</pre>
+              </article>
+            )}
+          </div>
+        </section>
+      </div>
+    </Page>
+  );
+}
+
 function Maintenance() {
   const [path, setPath] = useState("D:/projects/knowledge/data");
   const [summary, setSummary] = useState<Awaited<ReturnType<typeof scanLegacy>> | null>(null);
@@ -1309,6 +1713,18 @@ function formatCounts(counts: Record<string, number>): string {
 
 function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+function formatBytes(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MiB`;
+}
+
+function formatTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {

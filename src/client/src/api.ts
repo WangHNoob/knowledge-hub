@@ -165,6 +165,20 @@ export interface KnowledgeBuildRun {
   config: Record<string, unknown>;
 }
 
+export interface LocalFileEntry {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  size: number | null;
+  modifiedAt: string;
+}
+
+export interface LocalBrowseResult {
+  path: string;
+  parentPath: string | null;
+  entries: LocalFileEntry[];
+}
+
 export interface QualityGateProfile {
   profileId: string;
   name: string;
@@ -255,6 +269,57 @@ export interface KnowledgeEnvelope<T = unknown> {
     sourceVersionIds: string[];
     evidenceIds: string[];
   };
+}
+
+export type DiagnosticLogLevel = "debug" | "info" | "warn" | "error";
+export type DiagnosticLogCategory = "http" | "source_import" | "kb_build" | "llm" | "release" | "mcp" | "db" | "system";
+export type DiagnosticLogStatus = "started" | "completed" | "failed" | "event";
+
+export interface DiagnosticLogRecord {
+  logId: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId: string;
+  level: DiagnosticLogLevel;
+  category: DiagnosticLogCategory;
+  message: string;
+  status: DiagnosticLogStatus;
+  durationMs: number | null;
+  actor: string;
+  route: string;
+  method: string;
+  entityType: string;
+  entityId: string;
+  runId: string;
+  releaseId: string;
+  requestPayload: Record<string, unknown>;
+  context: Record<string, unknown>;
+  errorName: string;
+  errorMessage: string;
+  errorStack: string;
+  createdAt: string;
+}
+
+export interface DiagnosticSummary {
+  errors24h: number;
+  slowRequests24h: number;
+  failedBuilds24h: number;
+  mcpErrors24h: number;
+  llmErrors24h: number;
+}
+
+export interface DiagnosticLogQuery {
+  level?: string;
+  category?: string;
+  status?: string;
+  traceId?: string;
+  runId?: string;
+  releaseId?: string;
+  entityId?: string;
+  q?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
 }
 
 export interface LegacyScanSummary {
@@ -358,6 +423,27 @@ export async function listBuildRuns(): Promise<KnowledgeBuildRun[]> {
   return (await getJson<{ runs: KnowledgeBuildRun[] }>("/api/build-runs")).runs;
 }
 
+export async function stopBuildRun(runId: string): Promise<KnowledgeBuildRun> {
+  const response = await fetch(`/api/build-runs/${encodeURIComponent(runId)}/stop`, {
+    method: "POST",
+    headers: authHeaders()
+  });
+  return (await parseResponse<{ run: KnowledgeBuildRun }>(response)).run;
+}
+
+export async function deleteBuildRun(runId: string): Promise<boolean> {
+  const response = await fetch(`/api/build-runs/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+    headers: authHeaders()
+  });
+  return (await parseResponse<{ deleted: boolean }>(response)).deleted;
+}
+
+export async function browseLocalFiles(path?: string): Promise<LocalBrowseResult> {
+  const suffix = path ? `?path=${encodeURIComponent(path)}` : "";
+  return getJson(`/api/local-files/browse${suffix}`);
+}
+
 export async function testModelConnectivity(modelConfig: BuildModelConfig): Promise<ModelConnectivityResult> {
   const response = await fetch("/api/model-connectivity/test", {
     method: "POST",
@@ -366,6 +452,25 @@ export async function testModelConnectivity(modelConfig: BuildModelConfig): Prom
       "content-type": "application/json"
     },
     body: JSON.stringify({ modelConfig })
+  });
+  return parseResponse(response);
+}
+
+export async function uploadSourceBundle(
+  bundleId: string,
+  files: File[],
+  note?: string
+): Promise<ImportBundleResult> {
+  const form = new FormData();
+  if (note) form.set("note", note);
+  for (const file of files) {
+    const relativePath = webkitRelativePath(file) || file.name;
+    form.append("files", file, relativePath);
+  }
+  const response = await fetch(`/api/source-bundles/${encodeURIComponent(bundleId)}/uploads`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form
   });
   return parseResponse(response);
 }
@@ -450,6 +555,23 @@ export async function simulateMcpQuery(toolName: string, payload: Record<string,
   return (await parseResponse<{ envelope: KnowledgeEnvelope }>(response)).envelope;
 }
 
+export async function getDiagnosticSummary(): Promise<DiagnosticSummary> {
+  return (await getJson<{ summary: DiagnosticSummary }>("/api/diagnostics/summary")).summary;
+}
+
+export async function listDiagnosticLogs(query: DiagnosticLogQuery = {}): Promise<DiagnosticLogRecord[]> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") params.set(key, String(value));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return (await getJson<{ logs: DiagnosticLogRecord[] }>(`/api/diagnostics/logs${suffix}`)).logs;
+}
+
+export async function getDiagnosticTrace(traceId: string): Promise<DiagnosticLogRecord[]> {
+  return (await getJson<{ logs: DiagnosticLogRecord[] }>(`/api/diagnostics/logs/${encodeURIComponent(traceId)}`)).logs;
+}
+
 export async function scanLegacy(path: string): Promise<LegacyScanSummary> {
   const response = await fetch("/api/legacy/scan", {
     method: "POST",
@@ -492,4 +614,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
     throw new Error(payload.error ?? `HTTP ${response.status}`);
   }
   return payload as T;
+}
+
+function webkitRelativePath(file: File): string {
+  return typeof (file as File & { webkitRelativePath?: string }).webkitRelativePath === "string"
+    ? (file as File & { webkitRelativePath: string }).webkitRelativePath
+    : "";
 }

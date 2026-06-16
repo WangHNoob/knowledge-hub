@@ -3,9 +3,14 @@ import jwt from "@fastify/jwt";
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import bcrypt from "bcryptjs";
+import { createWriteStream, mkdirSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { z } from "zod";
 
 import type { DatabaseHandle, UserRecord } from "./types";
+import { config } from "./config";
+import { createDiagnosticLogger, type DiagnosticLogger } from "./services/diagnosticService";
 import { importLegacyAsDraftPackage } from "./services/legacyImportService";
 import { createKnowledgeService } from "./services/knowledgeService";
 import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
@@ -27,6 +32,7 @@ export interface BuildAppOptions {
   db: DatabaseHandle;
   jwtSecret: string;
   dataDir?: string;
+  diagnosticLogger?: DiagnosticLogger;
 }
 
 const loginSchema = z.object({
@@ -36,6 +42,10 @@ const loginSchema = z.object({
 
 const legacyScanSchema = z.object({
   path: z.string().min(1)
+});
+
+const browseLocalFilesSchema = z.object({
+  path: z.string().min(1).optional()
 });
 
 const importBundleSchema = z.object({
@@ -91,20 +101,90 @@ const mcpQuerySchema = z.object({
   payload: z.record(z.string(), z.unknown()).default({})
 });
 
+const diagnosticLogQuerySchema = z.object({
+  level: z.string().optional(),
+  category: z.string().optional(),
+  status: z.string().optional(),
+  traceId: z.string().optional(),
+  runId: z.string().optional(),
+  releaseId: z.string().optional(),
+  entityId: z.string().optional(),
+  q: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).optional()
+});
+
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const service = createKnowledgeService(options.db);
   const dataDir = options.dataDir ?? process.cwd();
+  const diagnostics = options.diagnosticLogger ?? createDiagnosticLogger(options.db, dataDir, {
+    level: config.logLevel,
+    retentionDays: config.logRetentionDays,
+    logToFile: config.logToFile,
+    logToDb: config.logToDb
+  });
   const bundleService = createSourceBundleService(options.db, dataDir);
-  const kbBuilderService = createKbBuilderPipelineService(options.db, dataDir);
-  const releaseService = createReleaseService(options.db);
-  const queryService = createKnowledgeQueryService(options.db, dataDir);
+  const kbBuilderService = createKbBuilderPipelineService(options.db, dataDir, diagnostics);
+  const releaseService = createReleaseService(options.db, diagnostics);
+  const queryService = createKnowledgeQueryService(options.db, dataDir, diagnostics);
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
   await app.register(multipart);
   app.decorate("authenticate", async (request: FastifyRequest) => {
     await request.jwtVerify();
+  });
+  app.addHook("onRequest", async (request, reply) => {
+    request.traceId = typeof request.headers["x-trace-id"] === "string" ? request.headers["x-trace-id"] : diagnostics.traceId();
+    reply.header("x-trace-id", request.traceId);
+  });
+  app.addHook("preHandler", async (request) => {
+    const route = request.routeOptions.url ?? request.url.split("?")[0] ?? "";
+    request.diagnosticSpan = diagnostics.startSpan({
+      traceId: request.traceId,
+      category: "http",
+      message: `${request.method} ${route}`,
+      route,
+      method: request.method,
+      requestPayload: request.body ?? {},
+      context: { query: request.query, params: request.params }
+    });
+  });
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (!request.diagnosticSpan) return payload;
+    await request.diagnosticSpan.complete({
+      statusCode: reply.statusCode,
+      user: request.user?.username ?? "",
+      role: request.user?.role ?? ""
+    });
+    return payload;
+  });
+  app.setErrorHandler(async (error, request, reply) => {
+    const statusCode = typeof error === "object" && error && "statusCode" in error && typeof error.statusCode === "number"
+      ? error.statusCode
+      : 500;
+    const message = error instanceof Error ? error.message : String(error);
+    if (request.diagnosticSpan) {
+      await request.diagnosticSpan.fail(error, {
+        statusCode,
+        user: request.user?.username ?? "",
+        role: request.user?.role ?? ""
+      });
+    } else {
+      await diagnostics.write({
+        traceId: request.traceId,
+        level: "error",
+        category: "http",
+        message: `${request.method} ${request.url} failed`,
+        status: "failed",
+        route: request.routeOptions.url ?? request.url.split("?")[0] ?? "",
+        method: request.method,
+        error
+      });
+    }
+    return reply.code(statusCode).send({ error: message });
   });
 
   app.get("/api/health", async () => ({ status: "ok" }));
@@ -125,6 +205,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.get("/api/me", { preHandler: app.authenticate }, async (request) => ({ user: request.user }));
   app.get("/api/dashboard", { preHandler: app.authenticate }, async () => service.getDashboardSummary());
+  app.get<{ Querystring: { path?: string } }>("/api/local-files/browse", { preHandler: app.authenticate }, async (request, reply) => {
+    const parsed = browseLocalFilesSchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid browse payload." });
+    try {
+      return browseLocalPath(parsed.data.path ?? dataDir);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "读取本地目录失败。" });
+    }
+  });
 
   // 资料集
   app.get("/api/source-bundles", { preHandler: app.authenticate }, async () => ({
@@ -156,14 +245,31 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     async (request, reply) => {
       const parsed = importBundleSchema.safeParse(request.body);
       if (!parsed.success) return reply.code(400).send({ error: "请提供 rootPath。" });
+      const span = diagnostics.startSpan({
+        traceId: request.traceId,
+        category: "source_import",
+        message: "import source directory",
+        actor: request.user.username,
+        entityType: "source_bundle",
+        entityId: request.params.bundleId,
+        requestPayload: parsed.data,
+        context: { bundleId: request.params.bundleId, rootPath: parsed.data.rootPath }
+      });
       try {
-        return await bundleService.importDirectoryAsVersion({
+        const result = await bundleService.importDirectoryAsVersion({
           rootPath: parsed.data.rootPath,
           bundleId: parsed.data.bundleId ?? request.params.bundleId,
           note: parsed.data.note,
           createdBy: request.user.username
         });
+        await span.complete({
+          versionId: result.version.versionId,
+          fileCount: result.version.fileCount,
+          totalBytes: result.version.totalBytes
+        });
+        return result;
       } catch (error) {
+        await span.fail(error);
         return reply.code(400).send({ error: error instanceof Error ? error.message : "导入失败。" });
       }
     }
@@ -183,7 +289,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
           ...parsed.data,
           bundleId: request.params.bundleId,
           versionId: request.params.versionId,
-          requestedBy: request.user.username
+          requestedBy: request.user.username,
+          traceId: request.traceId
         });
         return reply.code(202).send({ run });
       } catch (error) {
@@ -198,7 +305,19 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.post("/api/model-connectivity/test", { preHandler: app.authenticate }, async (request, reply) => {
     const parsed = modelConnectivitySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid model connectivity payload." });
-    return testModelConnectivity(normalizeModelConfig(parsed.data.modelConfig));
+    const modelConfig = normalizeModelConfig(parsed.data.modelConfig);
+    const span = diagnostics.startSpan({
+      traceId: request.traceId,
+      category: "llm",
+      message: "test model connectivity",
+      actor: request.user.username,
+      requestPayload: { modelConfig },
+      context: { provider: modelConfig.provider, model: modelConfig.model, baseUrl: "baseUrl" in modelConfig ? modelConfig.baseUrl : "" }
+    });
+    const result = await testModelConnectivity(modelConfig);
+    if (result.ok) await span.complete({ ok: result.ok, message: result.message });
+    else await span.fail(new Error(result.message), { ok: result.ok });
+    return result;
   });
   app.get<{ Params: { runId: string } }>(
     "/api/build-runs/:runId",
@@ -206,6 +325,75 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     async (request, reply) => {
       const run = await kbBuilderService.getRun(request.params.runId);
       return run ? { run } : reply.code(404).send({ error: "Unknown build run." });
+    }
+  );
+  app.post<{ Params: { bundleId: string } }>(
+    "/api/source-bundles/:bundleId/uploads",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const uploadRoot = join(dataDir, "web-imports", `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+      const span = diagnostics.startSpan({
+        traceId: request.traceId,
+        category: "source_import",
+        message: "upload source bundle",
+        actor: request.user.username,
+        entityType: "source_bundle",
+        entityId: request.params.bundleId,
+        context: { bundleId: request.params.bundleId, uploadRoot }
+      });
+      let note = "";
+      let fileCount = 0;
+      try {
+        for await (const part of request.parts()) {
+          if (part.type === "field") {
+            if (part.fieldname === "note") note = String(part.value ?? "");
+            continue;
+          }
+          const relativePath = safeUploadPath(part.filename);
+          const target = join(uploadRoot, relativePath);
+          mkdirSync(dirname(target), { recursive: true });
+          await pipeline(part.file, createWriteStream(target));
+          fileCount += 1;
+        }
+        if (fileCount === 0) {
+          const error = new Error("请选择要导入的文件或目录。");
+          await span.fail(error, { fileCount });
+          return reply.code(400).send({ error: error.message });
+        }
+        const result = await bundleService.importDirectoryAsVersion({
+          rootPath: uploadRoot,
+          bundleId: request.params.bundleId,
+          note,
+          createdBy: request.user.username
+        });
+        await span.complete({ fileCount, versionId: result.version.versionId, totalBytes: result.version.totalBytes });
+        return result;
+      } catch (error) {
+        await span.fail(error, { fileCount });
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "上传导入失败。" });
+      }
+    }
+  );
+  app.post<{ Params: { runId: string } }>(
+    "/api/build-runs/:runId/stop",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      try {
+        return { run: await kbBuilderService.stopRun(request.params.runId, request.user.username) };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "停止构建失败。" });
+      }
+    }
+  );
+  app.delete<{ Params: { runId: string } }>(
+    "/api/build-runs/:runId",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      try {
+        return { deleted: await kbBuilderService.deleteRun(request.params.runId) };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "删除构建记录失败。" });
+      }
     }
   );
   app.get("/api/quality-gate/profile", { preHandler: app.authenticate }, async () => ({
@@ -296,6 +484,32 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   });
   app.get("/api/agent/events", { preHandler: app.authenticate }, async () => ({ events: await service.listAgentEvents() }));
   app.get("/api/mcp/audit", { preHandler: app.authenticate }, async () => ({ audit: await service.listMcpAudit() }));
+  app.get<{ Querystring: z.infer<typeof diagnosticLogQuerySchema> }>(
+    "/api/diagnostics/logs",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (request.user.role === "viewer") return reply.code(403).send({ error: "Only operators can view diagnostics." });
+      const parsed = diagnosticLogQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid diagnostics query." });
+      return { logs: await diagnostics.listLogs(parsed.data) };
+    }
+  );
+  app.get<{ Params: { traceId: string } }>(
+    "/api/diagnostics/logs/:traceId",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (request.user.role === "viewer") return reply.code(403).send({ error: "Only operators can view diagnostics." });
+      return { logs: await diagnostics.trace(request.params.traceId) };
+    }
+  );
+  app.get(
+    "/api/diagnostics/summary",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (request.user.role === "viewer") return reply.code(403).send({ error: "Only operators can view diagnostics." });
+      return { summary: await diagnostics.summary() };
+    }
+  );
   app.post("/api/mcp/query", { preHandler: app.authenticate }, async (request, reply) => {
     const parsed = mcpQuerySchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid MCP query payload." });
@@ -303,7 +517,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       return {
         envelope: await queryService.runTool(parsed.data.toolName, parsed.data.payload, {
           sessionId: `web:${request.user.username}`,
-          agentRole: request.user.role
+          agentRole: request.user.role,
+          traceId: request.traceId
         })
       };
     } catch (error) {
@@ -330,8 +545,41 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   return app;
 }
 
+function browseLocalPath(inputPath: string) {
+  const target = resolve(inputPath);
+  const stat = statSync(target);
+  const dir = stat.isDirectory() ? target : dirname(target);
+  const entries = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => !entry.name.startsWith("."))
+    .map((entry) => {
+      const absolutePath = resolve(dir, entry.name);
+      const entryStat = statSync(absolutePath);
+      return {
+        name: entry.name,
+        path: absolutePath,
+        kind: entry.isDirectory() ? "directory" : "file",
+        size: entry.isDirectory() ? null : entryStat.size,
+        modifiedAt: entryStat.mtime.toISOString()
+      };
+    })
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  return { path: dir, parentPath: dirname(dir) === dir ? null : dirname(dir), entries };
+}
+
+function safeUploadPath(filename: string): string {
+  const normalized = filename.replace(/\\/g, "/").split("/").filter((part) => part && part !== "." && part !== "..");
+  return normalized.join("/") || "upload.bin";
+}
+
 declare module "fastify" {
   interface FastifyInstance {
     authenticate(request: FastifyRequest): Promise<void>;
+  }
+  interface FastifyRequest {
+    traceId?: string;
+    diagnosticSpan?: ReturnType<DiagnosticLogger["startSpan"]>;
   }
 }

@@ -24,11 +24,12 @@ import { evaluateQualityGate } from "./kbBuilder/qualityGate";
 import { collectPipelineArtifacts } from "./kbBuilder/collector";
 import type { BuildPipelineOptions, CollectedArtifact, QualityGateResult } from "./kbBuilder/types";
 import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelConfig } from "./kbBuilder/modelConfig";
+import type { DiagnosticLogger } from "./diagnosticService";
 
 const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "viz"];
 
-export function createKbBuilderPipelineService(db: DatabaseHandle, dataDir: string) {
-  return new KbBuilderPipelineService(db, dataDir);
+export function createKbBuilderPipelineService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
+  return new KbBuilderPipelineService(db, dataDir, diagnostics);
 }
 
 type SourceBundleService = ReturnType<typeof createSourceBundleService>;
@@ -46,14 +47,25 @@ interface BuildRunContext {
 export class KbBuilderPipelineService {
   private readonly adapter;
 
-  constructor(private readonly db: DatabaseHandle, private readonly dataDir: string) {
+  constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
     this.adapter = db.adapter;
   }
 
   async startBuild(options: BuildPipelineOptions): Promise<KnowledgeBuildRun> {
     const context = await this.createRun(options);
     void this.executeRun(context).catch((error) => {
-      console.error(error);
+      void this.diagnostics?.write({
+        traceId: context.options.traceId,
+        level: "error",
+        category: "kb_build",
+        message: "background build failed",
+        status: "failed",
+        actor: context.options.requestedBy,
+        entityType: "build_run",
+        entityId: context.runId,
+        runId: context.runId,
+        error
+      });
     });
     return this.requireRun(context.runId);
   }
@@ -91,6 +103,7 @@ export class KbBuilderPipelineService {
         force: options.force,
         only: options.only,
         requestedBy: options.requestedBy,
+        traceId: options.traceId,
         modelConfig: redactModelConfig(modelConfig),
       },
     });
@@ -100,36 +113,89 @@ export class KbBuilderPipelineService {
 
   private async executeRun(context: BuildRunContext): Promise<{ run: KnowledgeBuildRun; package: AssetPackage; qualitySummary: Record<string, unknown> }> {
     const { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig } = context;
+    const runSpan = this.diagnostics?.startSpan({
+      traceId: options.traceId,
+      category: "kb_build",
+      message: "knowledge build run",
+      actor: options.requestedBy,
+      entityType: "build_run",
+      entityId: runId,
+      runId,
+      context: {
+        bundleId: options.bundleId,
+        versionId: options.versionId,
+        stages,
+        model: modelName(modelConfig),
+        qualityProfileId: profile.profileId
+      }
+    });
     try {
-      const workspace = await materializeSourceVersion({
+      const workspace = await this.withStage(runId, options, "materialize", async () => materializeSourceVersion({
         db: this.db,
         sourceService,
         versionId: options.versionId,
         workspaceRoot,
         runId,
+      }));
+      const specs = await this.withStage(runId, options, "specs", async () => {
+        const specDir = ensureWikiSpecs(workspace.dataDir);
+        return loadWikiSpecs(specDir);
       });
-      const specDir = ensureWikiSpecs(workspace.dataDir);
-      const specs = loadWikiSpecs(specDir);
 
-      if (stages.includes("convert")) await runConvertStage({ dataDir: workspace.dataDir, force: options.force, only: options.only });
-      if (stages.includes("extract")) await runExtractStage({ dataDir: workspace.dataDir, specs, model: modelName(modelConfig), modelConfig, force: options.force, only: options.only });
-      if (stages.includes("tables")) await runTableStage({ dataDir: workspace.dataDir, force: options.force });
-      if (stages.includes("graph")) await runGraphStage({ dataDir: workspace.dataDir });
-      if (stages.includes("viz")) await runVizStage({ dataDir: workspace.dataDir });
+      await this.ensureRunActive(runId);
+      if (stages.includes("convert")) await this.withStage(runId, options, "convert", async () => runConvertStage({ dataDir: workspace.dataDir, force: options.force, only: options.only }));
+      await this.ensureRunActive(runId);
+      if (stages.includes("extract")) await this.withStage(runId, options, "extract", async () => runExtractStage({ dataDir: workspace.dataDir, specs, model: modelName(modelConfig), modelConfig, force: options.force, only: options.only }));
+      await this.ensureRunActive(runId);
+      if (stages.includes("tables")) await this.withStage(runId, options, "tables", async () => runTableStage({ dataDir: workspace.dataDir, force: options.force }));
+      await this.ensureRunActive(runId);
+      if (stages.includes("graph")) await this.withStage(runId, options, "graph", async () => runGraphStage({ dataDir: workspace.dataDir }));
+      await this.ensureRunActive(runId);
+      if (stages.includes("viz")) await this.withStage(runId, options, "viz", async () => runVizStage({ dataDir: workspace.dataDir }));
+      await this.ensureRunActive(runId);
 
       const sourceLogicalPaths = new Set(workspace.files.map((file) => file.logicalPath));
-      const quality = evaluateQualityGate({ dataDir: workspace.dataDir, specs, sourceLogicalPaths, profile: profile.config });
-      mkdirSync(join(workspace.dataDir, "wiki"), { recursive: true });
-      writeFileSync(join(workspace.dataDir, "wiki", "quality_report.json"), `${JSON.stringify(quality, null, 2)}\n`);
+      const quality = await this.withStage(runId, options, "quality", async () => {
+        const result = evaluateQualityGate({ dataDir: workspace.dataDir, specs, sourceLogicalPaths, profile: profile.config });
+        mkdirSync(join(workspace.dataDir, "wiki"), { recursive: true });
+        writeFileSync(join(workspace.dataDir, "wiki", "quality_report.json"), `${JSON.stringify(result, null, 2)}\n`);
+        return result;
+      });
 
       const packageId = `pkg_${runId}`;
-      const artifacts = collectPipelineArtifacts(workspace.dataDir, workspace.workspaceDir, quality.componentQuality);
-      const pkg = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality);
-      await this.completeRun(runId, packageId, specs.hash, workspace.workspaceDir);
-      await this.insertReviewTasks(packageId, artifacts, quality.findings);
+      const artifacts = await this.withStage(runId, options, "collect", async () => collectPipelineArtifacts(workspace.dataDir, workspace.workspaceDir, quality.componentQuality));
+      const pkg = await this.withStage(runId, options, "persist", async () => {
+        const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality);
+        await this.completeRun(runId, packageId, specs.hash, workspace.workspaceDir);
+        await this.insertReviewTasks(packageId, artifacts, quality.findings);
+        return inserted;
+      });
+      await runSpan?.complete({ packageId, artifactCount: artifacts.length, overallScore: quality.overallScore });
       return { run: await this.requireRun(runId), package: pkg, qualitySummary: pkg.qualitySummary };
     } catch (error) {
       await this.failRun(runId, error);
+      await runSpan?.fail(error);
+      throw error;
+    }
+  }
+
+  private async withStage<T>(runId: string, options: BuildPipelineOptions, stage: string, fn: () => Promise<T> | T): Promise<T> {
+    const span = this.diagnostics?.startSpan({
+      traceId: options.traceId,
+      category: stage === "extract" && options.modelConfig?.provider === "openai-compatible" ? "llm" : "kb_build",
+      message: `kb build stage ${stage}`,
+      actor: options.requestedBy,
+      entityType: "build_run",
+      entityId: runId,
+      runId,
+      context: { stage, versionId: options.versionId }
+    });
+    try {
+      const result = await fn();
+      await span?.complete({ stage });
+      return result;
+    } catch (error) {
+      await span?.fail(error, { stage });
       throw error;
     }
   }
@@ -142,6 +208,25 @@ export class KbBuilderPipelineService {
   async getRun(runId: string): Promise<KnowledgeBuildRun | null> {
     const { rows } = await this.adapter.query("SELECT * FROM knowledge_build_runs WHERE run_id = $1", [runId]);
     return rows.length ? mapRun(rows[0]) : null;
+  }
+
+  async stopRun(runId: string, requestedBy: string): Promise<KnowledgeBuildRun> {
+    const run = await this.getRun(runId);
+    if (!run) throw new Error(`Unknown build run: ${runId}`);
+    if (run.status !== "running") return run;
+    await this.adapter.query(
+      "UPDATE knowledge_build_runs SET status = $2, finished_at = $3, error = $4 WHERE run_id = $1 AND status = 'running'",
+      [runId, "failed", new Date().toISOString(), `Stopped by ${requestedBy}`],
+    );
+    return this.requireRun(runId);
+  }
+
+  async deleteRun(runId: string): Promise<boolean> {
+    const run = await this.getRun(runId);
+    if (!run) throw new Error(`Unknown build run: ${runId}`);
+    if (run.status === "running") throw new Error("Stop the running build before deleting it.");
+    await this.adapter.query("DELETE FROM knowledge_build_runs WHERE run_id = $1", [runId]);
+    return true;
   }
 
   async getActiveQualityProfile(): Promise<QualityGateProfile> {
@@ -191,16 +276,21 @@ export class KbBuilderPipelineService {
 
   private async completeRun(runId: string, packageId: string, wikiSpecsHash: string, outputUri: string): Promise<void> {
     await this.adapter.query(
-      "UPDATE knowledge_build_runs SET package_id = $2, status = $3, finished_at = $4, wiki_specs_hash = $5, output_uri = $6 WHERE run_id = $1",
+      "UPDATE knowledge_build_runs SET package_id = $2, status = $3, finished_at = $4, wiki_specs_hash = $5, output_uri = $6 WHERE run_id = $1 AND status = 'running'",
       [runId, packageId, "completed", new Date().toISOString(), wikiSpecsHash, outputUri],
     );
   }
 
   private async failRun(runId: string, error: unknown): Promise<void> {
     await this.adapter.query(
-      "UPDATE knowledge_build_runs SET status = $2, finished_at = $3, error = $4 WHERE run_id = $1",
+      "UPDATE knowledge_build_runs SET status = $2, finished_at = $3, error = $4 WHERE run_id = $1 AND status = 'running'",
       [runId, "failed", new Date().toISOString(), error instanceof Error ? error.message : String(error)],
     );
+  }
+
+  private async ensureRunActive(runId: string): Promise<void> {
+    const run = await this.requireRun(runId);
+    if (run.status !== "running") throw new Error(run.error || `Build run ${runId} is no longer running.`);
   }
 
   private async insertPackageAndArtifacts(

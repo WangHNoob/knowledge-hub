@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -62,6 +62,100 @@ describe("knowledge hub api", () => {
     expect(body.sources.bundles).toBe(1);
     expect(body.sources.versions).toBe(0);
     expect(body.sources.latest).toBeNull();
+  });
+
+  it("writes diagnostic logs for api requests and returns a trace id", async () => {
+    const { app, token } = await getToken();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/dashboard",
+      headers: { authorization: `Bearer ${token}` }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const traceId = response.headers["x-trace-id"];
+    expect(traceId).toEqual(expect.stringMatching(/^trc_/u));
+
+    const { rows } = await db.adapter.query(
+      "SELECT * FROM diagnostic_logs WHERE trace_id = $1 AND category = 'http' ORDER BY created_at ASC",
+      [traceId]
+    );
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "started", route: "/api/dashboard", method: "GET" }),
+      expect.objectContaining({ status: "completed", route: "/api/dashboard", method: "GET" })
+    ]));
+    expect(Number(rows.at(-1)?.duration_ms ?? 0)).toBeGreaterThanOrEqual(0);
+
+    const logPath = join(dir, "logs", `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    expect(existsSync(logPath)).toBe(true);
+    expect(readFileSync(logPath, "utf8")).toContain(String(traceId));
+  });
+
+  it("redacts sensitive payload fields from diagnostic logs", async () => {
+    const app = await buildApp(opts);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { username: "admin", password: "adminpw", apiKey: "secret-key", token: "raw-token" }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const traceId = response.headers["x-trace-id"];
+    const { rows } = await db.adapter.query(
+      "SELECT request_payload_json FROM diagnostic_logs WHERE trace_id = $1 AND status = 'started'",
+      [traceId]
+    );
+    const payload = JSON.stringify(rows[0]?.request_payload_json ?? "");
+    expect(payload).not.toContain("adminpw");
+    expect(payload).not.toContain("secret-key");
+    expect(payload).not.toContain("raw-token");
+    expect(payload).toContain("[REDACTED]");
+  });
+
+  it("serves diagnostic summaries, filtered logs, and trace timelines only to authenticated users", async () => {
+    const { app, token } = await getToken();
+    const dashboard = await app.inject({
+      method: "GET",
+      url: "/api/dashboard",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const traceId = String(dashboard.headers["x-trace-id"]);
+
+    const denied = await app.inject({ method: "GET", url: "/api/diagnostics/logs" });
+    expect(denied.statusCode).toBe(401);
+
+    const logs = await app.inject({
+      method: "GET",
+      url: `/api/diagnostics/logs?category=http&traceId=${encodeURIComponent(traceId)}&limit=5`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(logs.statusCode).toBe(200);
+    expect(logs.json().logs.every((log: { traceId: string; category: string }) => log.traceId === traceId && log.category === "http")).toBe(true);
+
+    const timeline = await app.inject({
+      method: "GET",
+      url: `/api/diagnostics/logs/${encodeURIComponent(traceId)}`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(timeline.statusCode).toBe(200);
+    expect(timeline.json().logs.length).toBeGreaterThanOrEqual(2);
+    expect(timeline.json().logs[0].traceId).toBe(traceId);
+
+    const summary = await app.inject({
+      method: "GET",
+      url: "/api/diagnostics/summary",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json().summary).toEqual(expect.objectContaining({
+      errors24h: expect.any(Number),
+      slowRequests24h: expect.any(Number),
+      failedBuilds24h: expect.any(Number),
+      mcpErrors24h: expect.any(Number),
+      llmErrors24h: expect.any(Number)
+    }));
   });
 
   it("imports a legacy directory into a draft package through the api", async () => {
@@ -180,7 +274,119 @@ describe("knowledge hub api", () => {
     const run = await waitForBuildRun(app, token, built.json().run.runId);
     expect(run.status).toBe("completed");
     expect(run.packageId).toMatch(/^pkg_/u);
+    const { rows: buildLogs } = await db.adapter.query(
+      "SELECT category, message, status, run_id FROM diagnostic_logs WHERE run_id = $1 ORDER BY created_at ASC",
+      [run.runId]
+    );
+    expect(buildLogs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: "kb_build", message: "knowledge build run", status: "started" }),
+      expect.objectContaining({ category: "kb_build", message: "kb build stage materialize", status: "started" }),
+      expect.objectContaining({ category: "llm", message: "kb build stage extract", status: "started" }),
+      expect.objectContaining({ category: "kb_build", message: "kb build stage persist completed", status: "completed" })
+    ]));
   }, 20000);
+
+  it("browses local directories without returning file contents", async () => {
+    const { app, token } = await getToken();
+    const root = join(dir, "browser-root");
+    mkdirSync(join(root, "gamedata", "Combat"), { recursive: true });
+    mkdirSync(join(root, "gamedocs"), { recursive: true });
+    writeFileSync(join(root, "gamedata", "Combat", "Skill.csv"), "Id,Name\n1,Slash\n");
+    writeFileSync(join(root, "gamedocs", "battle.md"), "# Battle\n");
+
+    const browsed = await app.inject({
+      method: "GET",
+      url: `/api/local-files/browse?path=${encodeURIComponent(root)}`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+
+    expect(browsed.statusCode).toBe(200);
+    const body = browsed.json();
+    expect(body.path).toBe(root);
+    expect(body.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "gamedata", kind: "directory" }),
+      expect.objectContaining({ name: "gamedocs", kind: "directory" })
+    ]));
+    expect(JSON.stringify(body)).not.toContain("Slash");
+  });
+
+  it("stops and deletes build runs through the api", async () => {
+    const { app, token } = await getToken();
+    for (const versionId of ["srcv_stop", "srcv_delete"]) {
+      await db.adapter.query(
+        `INSERT INTO source_bundle_versions
+          (version_id, bundle_id, parent_version_id, label, note, created_by, created_at, file_count, added_count, modified_count, removed_count, unchanged_count, total_bytes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [versionId, "default", null, versionId, "", "admin", new Date().toISOString(), 0, 0, 0, 0, 0, 0]
+      );
+    }
+    await db.adapter.query(
+      `INSERT INTO knowledge_build_runs
+        (run_id, source_version_id, package_id, adapter, stages, model, wiki_specs_hash, quality_profile_id, status, started_at, finished_at, error, output_uri, config_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        "run_api_stop",
+        "srcv_stop",
+        null,
+        "native",
+        JSON.stringify(["convert"]),
+        "deterministic",
+        "",
+        "default",
+        "running",
+        new Date().toISOString(),
+        null,
+        "",
+        "",
+        JSON.stringify({})
+      ]
+    );
+    await db.adapter.query(
+      `INSERT INTO knowledge_build_runs
+        (run_id, source_version_id, package_id, adapter, stages, model, wiki_specs_hash, quality_profile_id, status, started_at, finished_at, error, output_uri, config_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        "run_api_delete",
+        "srcv_delete",
+        null,
+        "native",
+        JSON.stringify(["convert"]),
+        "deterministic",
+        "",
+        "default",
+        "failed",
+        new Date().toISOString(),
+        new Date().toISOString(),
+        "fixture",
+        "",
+        JSON.stringify({})
+      ]
+    );
+
+    const stopped = await app.inject({
+      method: "POST",
+      url: "/api/build-runs/run_api_stop/stop",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.json().run.status).toBe("failed");
+    expect(stopped.json().run.error).toContain("Stopped");
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: "/api/build-runs/run_api_delete",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toEqual({ deleted: true });
+
+    const missing = await app.inject({
+      method: "GET",
+      url: "/api/build-runs/run_api_delete",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(missing.statusCode).toBe(404);
+  });
 
   it("allows admins and rejects non-admins for quality profile updates", async () => {
     const { app, token: adminToken } = await getToken();
@@ -270,6 +476,43 @@ describe("knowledge hub api", () => {
     });
     expect(rollback.statusCode).toBe(200);
     expect(rollback.json().release.releaseId).toBe(publishedOne.json().release.releaseId);
+  });
+
+  it("writes diagnostic logs for mcp queries alongside audit records", async () => {
+    const { app, token } = await getToken();
+    const fixture = await insertPackageFixture(db, "mcp_diag");
+    const draft = await app.inject({
+      method: "POST",
+      url: "/api/releases",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { version: "mcp.diag", packageIds: [fixture.packageId] }
+    });
+    const published = await app.inject({
+      method: "POST",
+      url: `/api/releases/${draft.json().release.releaseId}/publish`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(published.statusCode).toBe(200);
+
+    const queried = await app.inject({
+      method: "POST",
+      url: "/api/mcp/query",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { toolName: "kb_get_release", payload: {} }
+    });
+
+    expect(queried.statusCode).toBe(200);
+    const traceId = String(queried.headers["x-trace-id"]);
+    const { rows: audits } = await db.adapter.query("SELECT * FROM mcp_audit WHERE tool_name = $1", ["kb_get_release"]);
+    expect(audits.length).toBeGreaterThanOrEqual(1);
+    const { rows: logs } = await db.adapter.query(
+      "SELECT * FROM diagnostic_logs WHERE trace_id = $1 AND category = 'mcp'",
+      [traceId]
+    );
+    expect(logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: "Knowledge MCP kb_get_release", status: "started" }),
+      expect.objectContaining({ message: "Knowledge MCP kb_get_release completed", status: "completed" })
+    ]));
   });
 
   it("rejects publishing when selected packages have open blocking tasks", async () => {

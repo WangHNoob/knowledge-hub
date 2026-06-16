@@ -242,6 +242,36 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       latency_ms INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE TABLE IF NOT EXISTS ${p}diagnostic_logs (
+      log_id TEXT PRIMARY KEY,
+      trace_id TEXT NOT NULL,
+      span_id TEXT NOT NULL,
+      parent_span_id TEXT NOT NULL DEFAULT '',
+      level TEXT NOT NULL,
+      category TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL,
+      duration_ms INTEGER,
+      actor TEXT NOT NULL DEFAULT '',
+      route TEXT NOT NULL DEFAULT '',
+      method TEXT NOT NULL DEFAULT '',
+      entity_type TEXT NOT NULL DEFAULT '',
+      entity_id TEXT NOT NULL DEFAULT '',
+      run_id TEXT NOT NULL DEFAULT '',
+      release_id TEXT NOT NULL DEFAULT '',
+      request_payload_json JSONB NOT NULL DEFAULT '{}',
+      context_json JSONB NOT NULL DEFAULT '{}',
+      error_name TEXT NOT NULL DEFAULT '',
+      error_message TEXT NOT NULL DEFAULT '',
+      error_stack TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_diag_trace_created ON ${p}diagnostic_logs(trace_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_diag_filters ON ${p}diagnostic_logs(category, level, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_diag_run_created ON ${p}diagnostic_logs(run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_diag_release_created ON ${p}diagnostic_logs(release_id, created_at DESC);
   `);
 
   await adapter.exec(`
