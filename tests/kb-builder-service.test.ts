@@ -3,16 +3,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import xlsx from "xlsx";
-import { createDatabase } from "../src/server/db";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
 import { createKbBuilderPipelineService } from "../src/server/services/kbBuilderService";
+import { createTestDb } from "./helpers/testDb";
 
 describe("KbBuilderPipelineService", () => {
   it("builds one knowledge asset package from one source version", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-service-data-"));
     const sourceRoot = mkdtempSync(join(tmpdir(), "kh-kb-service-src-"));
-    const db = await createDatabase({ dataDir, seedUsers: false });
+    const { db, cleanup } = await createTestDb();
     try {
       mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
       mkdirSync(join(sourceRoot, "gamedata", "Combat"), { recursive: true });
@@ -79,7 +79,7 @@ describe("KbBuilderPipelineService", () => {
         "quality_report"
       ]));
     } finally {
-      await db.close();
+      await cleanup();
       rmSync(dataDir, { recursive: true, force: true });
       rmSync(sourceRoot, { recursive: true, force: true });
     }

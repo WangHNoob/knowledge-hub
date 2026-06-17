@@ -11,7 +11,6 @@ import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 const root = process.cwd();
 const dataDir = isAbsolute(config.dataDir) ? config.dataDir : resolve(root, config.dataDir);
 const db = await createDatabase({
-  dataDir,
   databaseUrl: config.databaseUrl,
 });
 const queryService = createKnowledgeQueryService(db, dataDir);

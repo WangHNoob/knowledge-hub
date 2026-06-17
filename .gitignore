@@ -1,8 +1,12 @@
 node_modules/
+knowledge/
+source_data
 dist/
 data/
 storage/
+*.html
 *.log
 .env
 .DS_Store
 .worktrees/
+.superpowers

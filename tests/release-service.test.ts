@@ -1,16 +1,13 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createDatabase } from "../src/server/db";
 import { createReleaseService } from "../src/server/services/releaseService";
+import { createTestDb, type TestDbHandle } from "./helpers/testDb";
 
 describe("ReleaseService", () => {
   it("blocks publishing when selected packages have open blocking tasks", async () => {
-    const { db, dataDir } = await setupReleaseFixture({ blockingTask: true });
+    const fixture = await setupReleaseFixture({ blockingTask: true });
     try {
-      const service = createReleaseService(db);
+      const service = createReleaseService(fixture.db);
       const draft = await service.createDraft({
         version: "2026.06.15.001",
         packageIds: ["pkg_demo"],
@@ -20,14 +17,13 @@ describe("ReleaseService", () => {
       await expect(service.publish(draft.releaseId, "admin")).rejects.toThrow(/blocking/i);
       await expect(service.getCurrent()).resolves.toBeNull();
     } finally {
-      await db.close();
-      rmSync(dataDir, { recursive: true, force: true });
+      await fixture.cleanup();
     }
   }, 15000);
 
   it("publishes an immutable manifest and rolls the current channel pointer", async () => {
     const first = await setupReleaseFixture({ packageId: "pkg_first" });
-    const second = await setupReleaseFixture({ db: first.db, dataDir: first.dataDir, packageId: "pkg_second" });
+    await setupReleaseFixture({ handle: first.handle, packageId: "pkg_second" });
     const service = createReleaseService(first.db);
 
     try {
@@ -50,20 +46,18 @@ describe("ReleaseService", () => {
       await expect(service.publish(pub1.releaseId, "admin")).rejects.toThrow(/already published/i);
       expect((await service.getRelease(pub1.releaseId))?.manifestHash).toBe(pub1.manifestHash);
     } finally {
-      await first.db.close();
-      rmSync(second.dataDir, { recursive: true, force: true });
+      await first.cleanup();
     }
   }, 15000);
 });
 
 async function setupReleaseFixture(options: {
-  db?: Awaited<ReturnType<typeof createDatabase>>;
-  dataDir?: string;
+  handle?: TestDbHandle;
   packageId?: string;
   blockingTask?: boolean;
-} = {}) {
-  const dataDir = options.dataDir ?? mkdtempSync(join(tmpdir(), "kh-release-"));
-  const db = options.db ?? await createDatabase({ dataDir, seedUsers: false });
+} = {}): Promise<{ handle: TestDbHandle; db: TestDbHandle["db"]; cleanup: () => Promise<void> }> {
+  const handle = options.handle ?? await createTestDb();
+  const db = handle.db;
   const packageId = options.packageId ?? "pkg_demo";
   const componentId = `cmp_${packageId}_page`;
 
@@ -112,5 +106,5 @@ async function setupReleaseFixture(options: {
     );
   }
 
-  return { db, dataDir };
+  return { handle, db, cleanup: handle.cleanup };
 }

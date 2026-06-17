@@ -3,21 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { createDatabase } from "../src/server/db";
 import { createKnowledgeQueryService } from "../src/server/services/knowledgeQueryService";
 import { createReleaseService } from "../src/server/services/releaseService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
+import { createTestDb, type TestDbHandle } from "./helpers/testDb";
 
 describe("KnowledgeQueryService", () => {
   it("returns a clear error when no current release exists", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-query-empty-"));
-    const db = await createDatabase({ dataDir, seedUsers: false });
+    const { db, cleanup } = await createTestDb();
     try {
       const service = createKnowledgeQueryService(db, dataDir);
       await expect(service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" }))
         .rejects.toThrow(/No current published release/i);
     } finally {
-      await db.close();
+      await cleanup();
       rmSync(dataDir, { recursive: true, force: true });
     }
   }, 15000);
@@ -62,7 +62,7 @@ describe("KnowledgeQueryService", () => {
       expect(auditRows.length).toBeGreaterThanOrEqual(9);
       expect(auditRows.at(-1)?.status).toBe("hit");
     } finally {
-      await fixture.db.close();
+      await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   }, 15000);
@@ -84,15 +84,16 @@ describe("KnowledgeQueryService", () => {
       expect(tasks.some((task) => task.severity === "blocking" && String(task.title).includes("错误本候选"))).toBe(true);
       expect(tasks.some((task) => task.severity === "warning" && String(task.title).includes("低质量命中"))).toBe(true);
     } finally {
-      await fixture.db.close();
+      await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   }, 15000);
 });
 
-async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean } = {}) {
+async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; cleanup: () => Promise<void> }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kh-query-"));
-  const db = await createDatabase({ dataDir, seedUsers: false });
+  const handle = await createTestDb();
+  const db = handle.db;
   const sourceRoot = join(dataDir, "raw");
   mkdirSync(join(sourceRoot, "gamedata", "Combat"), { recursive: true });
   mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
@@ -209,5 +210,5 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
   const releaseService = createReleaseService(db);
   const draft = await releaseService.createDraft({ version: "query.1", packageIds: [packageId], requestedBy: "admin" });
   const published = await releaseService.publish(draft.releaseId, "admin");
-  return { db, dataDir, releaseId: published.releaseId, pageComponentId };
+  return { db, dataDir, releaseId: published.releaseId, pageComponentId, cleanup: handle.cleanup };
 }

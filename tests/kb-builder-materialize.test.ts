@@ -2,11 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { createDatabase } from "../src/server/db";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
 import type { SourceBundleService } from "../src/server/services/sourceBundleService";
 import { materializeSourceVersion } from "../src/server/services/kbBuilder/materialize";
 import type { DatabaseHandle, SourceFileEntry } from "../src/server/types";
+import { createTestDb } from "./helpers/testDb";
 
 describe("materializeSourceVersion", () => {
   it("copies gamedocs and gamedata files into an isolated run workspace", async () => {
@@ -18,7 +18,7 @@ describe("materializeSourceVersion", () => {
     writeFileSync(join(sourceRoot, "gamedocs", "systems", "battle.md"), "# Battle\n");
     writeFileSync(join(sourceRoot, "gamedata", "Config", "Skill.csv"), "Id,Name\n1,Slash\n");
 
-    const db = await createDatabase({ dataDir, seedUsers: false });
+    const { db, cleanup } = await createTestDb();
     try {
       const sourceService = createSourceBundleService(db, dataDir);
       const imported = await sourceService.importDirectoryAsVersion({
@@ -46,7 +46,7 @@ describe("materializeSourceVersion", () => {
         "gamedocs/systems/battle.md"
       ]);
     } finally {
-      await db.close();
+      await cleanup();
       rmSync(dataDir, { recursive: true, force: true });
       rmSync(sourceRoot, { recursive: true, force: true });
       rmSync(workspaceRoot, { recursive: true, force: true });

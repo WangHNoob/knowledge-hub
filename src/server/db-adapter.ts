@@ -1,5 +1,5 @@
 /**
- * 数据库适配器接口：抽象 PostgreSQL 和 PGlite 的查询差异
+ * 数据库适配器接口：封装 PostgreSQL 连接池
  */
 
 export interface QueryResult<T = any> {
@@ -85,28 +85,5 @@ export class PostgresAdapter implements DatabaseAdapter {
     if (this.schema !== "public") {
       await client.query(`SET search_path TO "${this.schema}"`);
     }
-  }
-}
-
-/**
- * PGlite 嵌入式适配器
- */
-export class PGliteAdapter implements DatabaseAdapter {
-  constructor(private db: import("@electric-sql/pglite").PGlite) {}
-
-  async query<T = any>(sql: string, params?: any[]): Promise<QueryResult<T>> {
-    const result = await this.db.query(sql, params);
-    return {
-      rows: result.rows as T[],
-      rowCount: result.rows.length
-    };
-  }
-
-  async exec(sql: string): Promise<void> {
-    await this.db.exec(sql);
-  }
-
-  async close(): Promise<void> {
-    await this.db.close();
   }
 }
