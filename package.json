@@ -12,10 +12,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "mcp:stdio": "tsx src/server/mcpStdio.ts"
+    "mcp:stdio": "tsx src/server/mcpStdio.ts",
+    "okf:scan": "tsx src/server/services/okf/cli.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.1",
     "@fastify/cors": "^11.2.0",
     "@fastify/jwt": "^10.0.0",
     "@fastify/multipart": "^9.3.0",
