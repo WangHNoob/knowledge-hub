@@ -64,7 +64,7 @@ async function convertFile(path: string, ext: string): Promise<{ markdown: strin
   if (ext === ".docx") {
     const result = await mammothMarkdown.convertToMarkdown({ path });
     return {
-      markdown: result.value,
+      markdown: stripInlineImageData(result.value),
       warnings: result.messages.map((message) => message.message),
     };
   }
@@ -117,6 +117,15 @@ function markdownCell(value: unknown): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// mammoth inlines embedded images as base64 data-URIs, which can balloon a docx
+// to many MB and blow past the LLM context window. Image bytes carry no value for
+// text/knowledge extraction, so replace each inline image with a lightweight marker.
+function stripInlineImageData(markdown: string): string {
+  return markdown
+    .replace(/!\[[^\]]*\]\(data:[^)]*\)/gu, "![image]")
+    .replace(/<img[^>]*src="data:[^"]*"[^>]*>/giu, "");
 }
 
 function walkFiles(root: string): string[] {

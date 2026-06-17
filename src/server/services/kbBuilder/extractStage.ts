@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { PipelineModelConfig } from "./modelConfig";
+import { extractMaxTokens } from "./modelConfig";
 import { anthropicMessagesEndpoint } from "./modelConnectivity";
 import type { WikiSpecSet } from "./specs";
 import type { StageResult } from "./types";
@@ -86,12 +87,14 @@ async function extractPage(markdown: string, rel: string, options: ExtractOption
   const structured = parseStructuredFrontmatter(markdown);
   if (structured) return structured;
 
+  const guidance = buildSpecGuidance(options.specs);
+
   if (options.modelConfig?.provider === "openai-compatible" && options.modelConfig.apiKey) {
-    return extractWithOpenAI(markdown, rel, options.modelConfig);
+    return extractWithOpenAI(markdown, rel, options.modelConfig, guidance);
   }
 
   if (options.modelConfig?.provider === "anthropic" && options.modelConfig.apiKey) {
-    return extractWithAnthropic(markdown, rel, options.modelConfig);
+    return extractWithAnthropic(markdown, rel, options.modelConfig, guidance);
   }
 
   if (options.model !== "deterministic" && process.env.OPENAI_API_KEY) {
@@ -100,10 +103,31 @@ async function extractPage(markdown: string, rel: string, options: ExtractOption
       baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
       model: options.model,
       apiKey: process.env.OPENAI_API_KEY,
-    });
+    }, guidance);
   }
 
   return deterministicFallback(markdown, rel);
+}
+
+// Steer the model to emit a page `type` from the active legislation profile's
+// page types (otherwise extract silently skips every page as "unknown page type"),
+// and to follow each type's required sections/facts plus the allowed entity/relation types.
+function buildSpecGuidance(specs: WikiSpecSet): string {
+  const lines: string[] = [];
+  const pageTypeIds = Object.keys(specs.manifest.pageTypes);
+  lines.push(`The "type" field MUST be exactly one of these page type ids: ${pageTypeIds.join(", ")}.`);
+  lines.push("Pick the single best-fitting type. Do not invent new type values.");
+  for (const id of pageTypeIds) {
+    const spec = specs.specs[id];
+    if (!spec) continue;
+    const parts: string[] = [];
+    if (spec.requiredSections.length) parts.push(`required sections (use as "## " headings in body): ${spec.requiredSections.join(", ")}`);
+    if (spec.requiredFacts.length) parts.push(`required facts keys: ${spec.requiredFacts.join(", ")}`);
+    if (parts.length) lines.push(`- ${id}: ${parts.join("; ")}`);
+  }
+  if (specs.entityTypes.size) lines.push(`Each entity "type" should be one of: ${[...specs.entityTypes].join(", ")}.`);
+  if (specs.relationTypes.size) lines.push(`Each relationship "relation" should be one of: ${[...specs.relationTypes].join(", ")}.`);
+  return lines.join("\n");
 }
 
 function parseStructuredFrontmatter(markdown: string): ExtractedPage | null {
@@ -210,7 +234,7 @@ function parseRelationshipsBlock(lines: string[]): Relationship[] {
     );
 }
 
-async function extractWithOpenAI(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "openai-compatible" }>): Promise<ExtractedPage> {
+async function extractWithOpenAI(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "openai-compatible" }>, guidance: string): Promise<ExtractedPage> {
   const baseUrl = config.baseUrl.replace(/\/+$/u, "");
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -225,7 +249,8 @@ async function extractWithOpenAI(markdown: string, rel: string, config: Extract<
         {
           role: "system",
           content:
-            "Extract a wiki page from markdown. Return JSON with type, title, source, facts, entities, relationships, and body.",
+            "Extract a wiki page from markdown. Return JSON with type, title, source, facts, entities, relationships, and body.\n" +
+            guidance,
         },
         { role: "user", content: `Source path: processed/parsed/${rel}\n\n${markdown}` },
       ],
@@ -233,7 +258,7 @@ async function extractWithOpenAI(markdown: string, rel: string, config: Extract<
   });
 
   if (!response.ok) {
-    throw new Error(`OpenAI extraction failed for ${rel}: ${response.status} ${response.statusText}`);
+    throw new Error(`OpenAI extraction failed for ${rel}: ${response.status} ${response.statusText}${await formatErrorBody(response)}`);
   }
 
   const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
@@ -245,7 +270,7 @@ async function extractWithOpenAI(markdown: string, rel: string, config: Extract<
   return normalizeExtractedJson(JSON.parse(content), markdown, rel);
 }
 
-async function extractWithAnthropic(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "anthropic" }>): Promise<ExtractedPage> {
+async function extractWithAnthropic(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "anthropic" }>, guidance: string): Promise<ExtractedPage> {
   const response = await fetch(anthropicMessagesEndpoint(config.baseUrl), {
     method: "POST",
     headers: {
@@ -255,8 +280,8 @@ async function extractWithAnthropic(markdown: string, rel: string, config: Extra
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 4096,
-      system: "Extract a wiki page from markdown. Return only JSON with type, title, source, facts, entities, relationships, and body.",
+      max_tokens: extractMaxTokens(),
+      system: "Extract a wiki page from markdown. Return only JSON with type, title, source, facts, entities, relationships, and body.\n" + guidance,
       messages: [
         { role: "user", content: [{ type: "text", text: `Source path: processed/parsed/${rel}\n\n${markdown}` }] },
       ],
@@ -264,7 +289,7 @@ async function extractWithAnthropic(markdown: string, rel: string, config: Extra
   });
 
   if (!response.ok) {
-    throw new Error(`Anthropic extraction failed for ${rel}: ${response.status} ${response.statusText}`);
+    throw new Error(`Anthropic extraction failed for ${rel}: ${response.status} ${response.statusText}${await formatErrorBody(response)}`);
   }
 
   const json = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
@@ -295,6 +320,17 @@ function normalizeExtractedJson(value: unknown, markdown: string, rel: string): 
     })),
     body: stringValue(input.body) ?? fallback.body,
   };
+}
+
+async function formatErrorBody(response: Response): Promise<string> {
+  try {
+    const text = (await response.text()).trim();
+    if (!text) return "";
+    const trimmed = text.length > 800 ? `${text.slice(0, 800)}…` : text;
+    return ` — ${trimmed}`;
+  } catch {
+    return "";
+  }
 }
 
 function deterministicFallback(markdown: string, rel: string): ExtractedPage {
