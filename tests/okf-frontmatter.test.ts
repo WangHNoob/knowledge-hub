@@ -1,6 +1,7 @@
 // tests/okf-frontmatter.test.ts
 import { describe, expect, it } from "vitest";
 import { scanFrontmatter } from "../src/server/services/okf/frontmatter";
+import { scanMarkdown } from "../src/server/services/okf/markdownScan";
 
 describe("scanFrontmatter", () => {
   it("parses a valid block: type, top-level keys, body", () => {
@@ -39,5 +40,22 @@ describe("scanFrontmatter", () => {
 
   it("treats empty type value as missing type", () => {
     expect(scanFrontmatter(`---\ntype:\ntitle: x\n---\nb`).type).toBe("");
+  });
+});
+
+describe("scanMarkdown", () => {
+  it("collects obsidian links", () => {
+    const r = scanMarkdown("see [[海图绘]] and [[SwitchCondition]]");
+    expect(r.obsidian).toEqual(["海图绘", "SwitchCondition"]);
+  });
+
+  it("collects bundle-relative markdown links to .md targets", () => {
+    const r = scanMarkdown("[SwitchCondition](/tables/SwitchCondition.md) and [ext](https://x.com)");
+    expect(r.bundleLinks).toEqual(["/tables/SwitchCondition.md"]);
+  });
+
+  it("detects a # Citations section", () => {
+    expect(scanMarkdown("body\n\n# Citations\n[1] [x](/r/x.md)").hasCitations).toBe(true);
+    expect(scanMarkdown("body only").hasCitations).toBe(false);
   });
 });
