@@ -17,7 +17,7 @@ export {
   stopBuildRun,
   testModelConnectivity
 } from "./builder";
-export { getPackage, listEvidence, listPackages } from "./packages";
+export { getComponentContent, getPackage, listEvidence, listPackages } from "./packages";
 export { listReviewTasks } from "./review";
 export { getQualityProfile, updateQualityProfile } from "./quality";
 export {

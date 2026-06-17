@@ -107,6 +107,15 @@ export interface PackageDetail {
   evidenceCoverage: EvidenceCoverage;
 }
 
+export interface ComponentContent {
+  componentId: string;
+  kind: string;
+  legacyPath: string;
+  storageUri: string;
+  content: string;
+  truncated: boolean;
+}
+
 export interface EvidenceRecord {
   evidenceId: string;
   packageId: string;
