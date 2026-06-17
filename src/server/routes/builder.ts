@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { normalizeModelConfig } from "../services/kbBuilder/modelConfig";
 import { testModelConnectivity } from "../services/kbBuilder/modelConnectivity";
 import { buildRequestSchema, modelConnectivitySchema } from "../schemas";
+import { formatSseFrame } from "../services/sse";
 import type { RouteContext } from "./context";
 
 export function registerBuilderRoutes(app: FastifyInstance, ctx: RouteContext) {
@@ -41,6 +42,46 @@ export function registerBuilderRoutes(app: FastifyInstance, ctx: RouteContext) {
     async (request, reply) => {
       const run = await ctx.kbBuilderService.getRun(request.params.runId);
       return run ? { run } : reply.code(404).send({ error: "Unknown build run." });
+    }
+  );
+
+  app.get<{ Params: { runId: string } }>(
+    "/api/build-runs/:runId/stream",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const { runId } = request.params;
+      reply.raw.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      reply.hijack();
+
+      // 1) replay history for this run (ascending), capped
+      const history = await ctx.diagnostics.listLogs({ runId, limit: 500 });
+      for (const record of history.reverse()) {
+        reply.raw.write(formatSseFrame(record));
+      }
+
+      // 2) live tail
+      const isTerminal = (r: { runId: string; entityType: string; status: string }) =>
+        r.runId === runId && r.entityType === "build_run" && (r.status === "completed" || r.status === "failed");
+      const unsubscribe = ctx.diagnostics.subscribe((record) => {
+        if (record.runId !== runId) return;
+        reply.raw.write(formatSseFrame(record));
+        if (isTerminal(record)) {
+          reply.raw.write(formatSseFrame({ runId }, "end"));
+          cleanup();
+        }
+      });
+      const heartbeat = setInterval(() => reply.raw.write(": ping\n\n"), 15000);
+      function cleanup() {
+        clearInterval(heartbeat);
+        unsubscribe();
+        reply.raw.end();
+      }
+      request.raw.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
     }
   );
 
