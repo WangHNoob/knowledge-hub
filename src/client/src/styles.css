@@ -253,6 +253,13 @@ nav {
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
+/* Container panels that only carried a `gap` — give their content room to breathe
+   so headings and text no longer sit flush against the card edge. */
+.release-panel,
+.build-panel {
+  padding: 24px;
+}
+
 .metric:hover,
 .run-card:hover,
 .asset-item:hover,
@@ -603,7 +610,7 @@ nav {
 .package-list,
 .package-detail {
   border-radius: var(--radius-md);
-  padding: 16px;
+  padding: 22px;
 }
 
 .package-list h3 {
@@ -694,7 +701,7 @@ code {
 .event,
 .table-row {
   border-radius: var(--radius-sm);
-  padding: 16px;
+  padding: 18px;
 }
 
 .source-row {
@@ -902,7 +909,7 @@ code {
   display: grid;
   gap: 14px;
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 24px;
 }
 
 /* ── Builder ── */
@@ -924,7 +931,7 @@ code {
   display: grid;
   gap: 16px;
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 24px;
 }
 
 .builder-panel h2,
@@ -1115,7 +1122,7 @@ code {
   display: grid;
   gap: 12px;
   border-left: 4px solid var(--moss);
-  padding: 14px;
+  padding: 18px;
 }
 
 .run-card.running {
@@ -1159,6 +1166,148 @@ code {
   border-color: var(--line-strong);
 }
 
+.stage-pill.done {
+  border-color: var(--moss);
+  color: var(--moss);
+  background: rgba(143, 168, 79, 0.12);
+}
+
+.stage-pill.current {
+  border-color: var(--gold);
+  color: var(--gold-dim);
+  background: rgba(201, 162, 39, 0.12);
+  animation: pulse-gold 2s infinite;
+}
+
+.stage-pill.pending {
+  opacity: 0.55;
+}
+
+.stage-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.stage-progress-bar {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.stage-progress-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--moss), var(--gold));
+  transition: width 0.4s ease;
+}
+
+.run-package {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--gold-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.completion-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: 8px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.completion-banner.completed {
+  border-color: var(--moss);
+  background: rgba(143, 168, 79, 0.1);
+}
+
+.completion-banner.failed {
+  border-color: var(--rust);
+  background: rgba(180, 90, 54, 0.08);
+}
+
+.completion-banner strong {
+  display: block;
+}
+
+.completion-banner span {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.completion-banner > div {
+  flex: 1;
+}
+
+.completion-banner .primary-action {
+  padding: 8px 14px;
+}
+
+.advanced-toggle {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.advanced-toggle:hover {
+  color: var(--gold-dim);
+}
+
+.advanced-panel {
+  display: grid;
+  gap: 18px;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.advanced-section {
+  display: grid;
+  gap: 12px;
+}
+
+.advanced-section h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.notice.subtle {
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
 /* ── Release ── */
 
 .release-workbench {
@@ -1189,7 +1338,7 @@ code {
 .history-row {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 14px;
+  padding: 16px;
   background: var(--surface-raised);
   transition: box-shadow 0.2s ease;
 }
@@ -1264,7 +1413,7 @@ code {
   gap: 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
-  padding: 16px;
+  padding: 20px;
   background: var(--surface-raised);
   box-shadow: var(--shadow-soft);
 }
@@ -1415,6 +1564,7 @@ code {
 .mcp-panel {
   display: grid;
   gap: 16px;
+  padding: 24px;
 }
 
 .mcp-panel:nth-child(n + 3) {
@@ -1896,6 +2046,117 @@ form button:active:not(:disabled) {
   50% {
     box-shadow: var(--shadow), 0 0 24px rgba(201, 162, 39, 0.12);
   }
+}
+
+/* ── Sub-page tabs (in-page segmented navigation) ── */
+
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  margin-bottom: 28px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 1px 3px rgba(63, 57, 38, 0.05);
+}
+
+.subnav-tab {
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  transition: color 0.2s ease, background 0.2s ease, box-shadow 0.25s ease;
+}
+
+.subnav-tab svg {
+  opacity: 0.75;
+  transition: transform 0.25s ease, opacity 0.2s ease;
+}
+
+.subnav-tab:hover {
+  color: var(--ink);
+  background: rgba(95, 110, 63, 0.07);
+}
+
+.subnav-tab:hover svg {
+  transform: translateY(-1px);
+}
+
+.subnav-tab.active {
+  color: var(--olive-dim);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft), inset 0 0 0 1px var(--line);
+}
+
+.subnav-tab.active svg {
+  color: var(--olive);
+  opacity: 1;
+}
+
+.subnav-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: #fff;
+  background: linear-gradient(135deg, var(--olive) 0%, var(--moss) 100%);
+  box-shadow: 0 2px 6px rgba(95, 110, 63, 0.3);
+}
+
+.tab-panel {
+  animation: fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* a slim, always-reachable action bar that sits above the tabs */
+.workbench-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 18px 22px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+}
+
+.workbench-bar .workbench-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  flex: 1 1 auto;
+}
+
+.workbench-bar .field-label {
+  min-width: 180px;
+}
+
+.workbench-bar .workbench-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.workbench-bar .error {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 /* ── Scrollbar ── */

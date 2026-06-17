@@ -1,4 +1,4 @@
-import { ArrowRight, Bug, CheckCircle2, ChevronDown, ChevronRight, KeyRound, Play, RefreshCw } from "lucide-react";
+import { Activity, ArrowRight, Bug, CheckCircle2, KeyRound, Play, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -12,17 +12,19 @@ import {
   type BuildModelConfig,
   type KnowledgeBuildRun
 } from "../api";
-import { Badge, Page } from "../components/Atoms";
+import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildRunCard } from "../components/BuildRunCard";
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
 type ModelProvider = "deterministic" | "openai-compatible" | "anthropic";
+type BuilderTab = "build" | "advanced" | "runs";
 
 export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId: string) => void }) {
   const queryClient = useQueryClient();
   const bundleId = "default";
   const prefs = useMemo(loadModelPrefs, []);
+  const [tab, setTab] = useState<BuilderTab>("build");
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [stages, setStages] = useState<string[]>(BUILD_STAGES);
   const [provider, setProvider] = useState<ModelProvider>(prefs.provider);
@@ -32,7 +34,6 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
   const [rememberApiKey, setRememberApiKey] = useState(Boolean(prefs.apiKey));
   const [force, setForce] = useState(false);
   const [only, setOnly] = useState("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState("");
   const [modelTestMessage, setModelTestMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -102,6 +103,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       setError("");
       setActiveRunId(result.run.runId);
       setCompletion(null);
+      setTab("runs");
       lastSeenStatus.current[result.run.runId] = result.run.status;
       queryClient.setQueryData<KnowledgeBuildRun[]>(["build-runs"], (current = []) => [
         result.run,
@@ -163,6 +165,12 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     }
   };
 
+  const tabs: ReadonlyArray<TabItem<BuilderTab>> = [
+    { id: "build", label: "构建", icon: Play },
+    { id: "advanced", label: "高级设置", icon: SlidersHorizontal },
+    { id: "runs", label: "运行进度", icon: Activity, count: activeRuns.length }
+  ];
+
   return (
     <Page
       title="知识构建"
@@ -201,13 +209,16 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
           )}
         </div>
       )}
-      <section className="builder-layout">
-        <div className="builder-main">
+
+      <Tabs items={tabs} active={tab} onChange={setTab} />
+
+      <div className="tab-panel" key={tab}>
+        {tab === "build" && (
           <section className="builder-panel">
             <div className="detail-head">
               <div>
                 <h2>构建输入</h2>
-                <p>从已导入的资料版本生成一份知识资产包，过程会在右侧实时显示。</p>
+                <p>从已导入的资料版本生成一份知识资产包，启动后会自动跳到“运行进度”。</p>
               </div>
               <Badge label={activeRuns.length ? `${activeRuns.length} 个运行中` : "空闲"} tone={activeRuns.length ? "warn" : "ok"} />
             </div>
@@ -231,123 +242,130 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
             </button>
             {provider === "deterministic" && (
               <p className="notice subtle">
-                当前使用确定性模式（仅做 pipeline 验证）。要生成高质量知识，请在"高级选项"切换并配置 LLM。
+                当前使用确定性模式（仅做 pipeline 验证）。要生成高质量知识，请到“高级设置”切换并配置 LLM。
               </p>
             )}
             {error && <p className="error">{error}</p>}
-            <button type="button" className="advanced-toggle" onClick={() => setShowAdvanced((flag) => !flag)}>
-              {showAdvanced ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              高级选项（pipeline 阶段、LLM 设置、强制重建）
-            </button>
-            {showAdvanced && (
-              <div className="advanced-panel">
-                <div className="advanced-section">
-                  <h3>Pipeline 阶段</h3>
-                  <div className="stage-toggle-grid">
-                    {BUILD_STAGES.map((stage) => (
-                      <label key={stage} className={stages.includes(stage) ? "stage-toggle selected" : "stage-toggle"}>
-                        <input
-                          type="checkbox"
-                          checked={stages.includes(stage)}
-                          onChange={(event) => {
-                            setStages((current) => event.target.checked
-                              ? [...current, stage].filter((value, index, array) => array.indexOf(value) === index)
-                              : current.filter((item) => item !== stage));
-                          }}
-                        />
-                        <span>{stage}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <div className="inline-controls">
-                    <label>
-                      <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
-                      强制重建
+          </section>
+        )}
+
+        {tab === "advanced" && (
+          <section className="builder-panel">
+            <div className="detail-head">
+              <div>
+                <h2>高级设置</h2>
+                <p>选择 pipeline 阶段、配置大模型，并测试连接；设置会在本机记住，回到“构建”即可启动。</p>
+              </div>
+            </div>
+            <div className="advanced-panel">
+              <div className="advanced-section">
+                <h3>Pipeline 阶段</h3>
+                <div className="stage-toggle-grid">
+                  {BUILD_STAGES.map((stage) => (
+                    <label key={stage} className={stages.includes(stage) ? "stage-toggle selected" : "stage-toggle"}>
+                      <input
+                        type="checkbox"
+                        checked={stages.includes(stage)}
+                        onChange={(event) => {
+                          setStages((current) => event.target.checked
+                            ? [...current, stage].filter((value, index, array) => array.indexOf(value) === index)
+                            : current.filter((item) => item !== stage));
+                        }}
+                      />
+                      <span>{stage}</span>
                     </label>
-                    <input
-                      value={only}
-                      onChange={(event) => setOnly(event.target.value)}
-                      placeholder="只处理某个路径，可留空"
-                    />
-                  </div>
+                  ))}
                 </div>
-                <div className="advanced-section">
-                  <h3>大模型设置</h3>
-                  <label className="field-label model-provider">
-                    LLM Provider
-                    <select value={provider} onChange={(event) => selectProvider(event.target.value as ModelProvider)}>
-                      <option value="deterministic">确定性（仅验证 pipeline）</option>
-                      <option value="openai-compatible">OpenAI-compatible</option>
-                      <option value="anthropic">Anthropic</option>
-                    </select>
+                <div className="inline-controls">
+                  <label>
+                    <input type="checkbox" checked={force} onChange={(event) => setForce(event.target.checked)} />
+                    强制重建
                   </label>
-                  {provider !== "deterministic" && (
-                    <div className="model-grid">
-                      <label className="field-label">
-                        Base URL
-                        <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={provider === "anthropic" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"} />
-                        {provider === "anthropic" && <small>支持填写服务根地址、/v1，或完整 /messages endpoint。</small>}
-                      </label>
-                      <label className="field-label">
-                        Model
-                        <input value={model} onChange={(event) => setModel(event.target.value)} placeholder={provider === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1-mini"} />
-                      </label>
-                      <label className="field-label model-secret">
-                        <span className="secret-label-row">
-                          API Key
-                          <label className="remember-secret inline">
-                            <input type="checkbox" checked={rememberApiKey} onChange={(event) => setRememberApiKey(event.target.checked)} />
-                            在本机记住
-                          </label>
-                        </span>
-                        <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={provider === "anthropic" ? "sk-ant-..." : "sk-..."} />
-                      </label>
-                    </div>
-                  )}
-                  <div className="model-actions">
-                    <button
-                      type="button"
-                      disabled={!canTestModel}
-                      onClick={() => modelTestMutation.mutate()}
-                    >
-                      <KeyRound size={16} />
-                      {modelTestMutation.isPending ? "测试中..." : "测试模型连接"}
-                    </button>
-                  </div>
-                  {modelTestMessage && (
-                    <p className={modelTestMessage.ok ? "notice" : "error"}>{modelTestMessage.text}</p>
-                  )}
+                  <input
+                    value={only}
+                    onChange={(event) => setOnly(event.target.value)}
+                    placeholder="只处理某个路径，可留空"
+                  />
                 </div>
               </div>
-            )}
-          </section>
-        </div>
-
-        <aside className="builder-runs">
-          <div className="detail-head">
-            <div>
-              <h2>构建进度</h2>
-              <p>每 2 秒自动刷新；可随时切到其他页面，回来仍可见。</p>
+              <div className="advanced-section">
+                <h3>大模型设置</h3>
+                <label className="field-label model-provider">
+                  LLM Provider
+                  <select value={provider} onChange={(event) => selectProvider(event.target.value as ModelProvider)}>
+                    <option value="deterministic">确定性（仅验证 pipeline）</option>
+                    <option value="openai-compatible">OpenAI-compatible</option>
+                    <option value="anthropic">Anthropic</option>
+                  </select>
+                </label>
+                {provider !== "deterministic" && (
+                  <div className="model-grid">
+                    <label className="field-label">
+                      Base URL
+                      <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={provider === "anthropic" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"} />
+                      {provider === "anthropic" && <small>支持填写服务根地址、/v1，或完整 /messages endpoint。</small>}
+                    </label>
+                    <label className="field-label">
+                      Model
+                      <input value={model} onChange={(event) => setModel(event.target.value)} placeholder={provider === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1-mini"} />
+                    </label>
+                    <label className="field-label model-secret">
+                      <span className="secret-label-row">
+                        API Key
+                        <label className="remember-secret inline">
+                          <input type="checkbox" checked={rememberApiKey} onChange={(event) => setRememberApiKey(event.target.checked)} />
+                          在本机记住
+                        </label>
+                      </span>
+                      <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" placeholder={provider === "anthropic" ? "sk-ant-..." : "sk-..."} />
+                    </label>
+                  </div>
+                )}
+                <div className="model-actions">
+                  <button
+                    type="button"
+                    disabled={!canTestModel}
+                    onClick={() => modelTestMutation.mutate()}
+                  >
+                    <KeyRound size={16} />
+                    {modelTestMutation.isPending ? "测试中..." : "测试模型连接"}
+                  </button>
+                </div>
+                {modelTestMessage && (
+                  <p className={modelTestMessage.ok ? "notice" : "error"}>{modelTestMessage.text}</p>
+                )}
+              </div>
             </div>
-            <button className="icon-button" onClick={() => runs.refetch()} title="刷新运行记录">
-              <RefreshCw size={16} />
-            </button>
-          </div>
-          <div className="run-list">
-            {selectedRuns.length === 0 && <p>暂无构建记录。</p>}
-            {selectedRuns.map((run) => (
-              <BuildRunCard
-                key={run.runId}
-                run={run}
-                onStop={() => stopRunMutation.mutate(run.runId)}
-                onDelete={() => deleteRunMutation.mutate(run.runId)}
-                onShowPackage={onShowPackage}
-                busy={stopRunMutation.isPending || deleteRunMutation.isPending}
-              />
-            ))}
-          </div>
-        </aside>
-      </section>
+          </section>
+        )}
+
+        {tab === "runs" && (
+          <section className="builder-runs">
+            <div className="detail-head">
+              <div>
+                <h2>构建进度</h2>
+                <p>每 2 秒自动刷新；可随时切到其他页面，回来仍可见。</p>
+              </div>
+              <button className="icon-button" onClick={() => runs.refetch()} title="刷新运行记录">
+                <RefreshCw size={16} />
+              </button>
+            </div>
+            <div className="run-list">
+              {selectedRuns.length === 0 && <p>暂无构建记录。</p>}
+              {selectedRuns.map((run) => (
+                <BuildRunCard
+                  key={run.runId}
+                  run={run}
+                  onStop={() => stopRunMutation.mutate(run.runId)}
+                  onDelete={() => deleteRunMutation.mutate(run.runId)}
+                  onShowPackage={onShowPackage}
+                  busy={stopRunMutation.isPending || deleteRunMutation.isPending}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
     </Page>
   );
 }

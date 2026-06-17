@@ -1,10 +1,10 @@
-import { Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { Boxes, Braces, FileText, LayoutDashboard, Plus, Save, Share2, ShieldAlert, ShieldCheck, Table, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { activateLegislationProfile, createLegislationProfile, getLegislationProfile } from "../api";
 import type { KnowledgeRuleConfig, RelationTypeSpec } from "../api/types";
-import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
 import {
   addEntityType,
   addPageType,
@@ -23,9 +23,12 @@ import {
   updateTableRuleTags
 } from "./legislationEditor";
 
+type LegislationTab = "pages" | "entities" | "relations" | "tables" | "quality" | "overview" | "json";
+
 export function Legislation() {
   const queryClient = useQueryClient();
   const profiles = useQuery({ queryKey: ["legislation-profile"], queryFn: getLegislationProfile });
+  const [tab, setTab] = useState<LegislationTab>("pages");
   const [name, setName] = useState("策划立法规则");
   const [activate, setActivate] = useState(true);
   const [config, setConfig] = useState<KnowledgeRuleConfig | null>(null);
@@ -79,92 +82,118 @@ export function Legislation() {
   const active = profiles.data?.profile;
   const history = profiles.data?.profiles ?? [];
 
+  const tabs: ReadonlyArray<TabItem<LegislationTab>> = [
+    { id: "pages", label: "页面类型", icon: FileText, count: config ? Object.keys(config.pageTypes).length : 0 },
+    { id: "entities", label: "实体类型", icon: Boxes, count: config?.entityTypes.length ?? 0 },
+    { id: "relations", label: "关系类型", icon: Share2, count: config?.relationTypes.length ?? 0 },
+    { id: "tables", label: "表字段", icon: Table },
+    { id: "quality", label: "质量红线", icon: ShieldAlert, count: config ? Object.keys(config.qualityRules).length : 0 },
+    { id: "overview", label: "概览 / 历史", icon: LayoutDashboard, count: history.length },
+    { id: "json", label: "规则 JSON", icon: Braces }
+  ];
+
   return (
     <Page title="策划立法" subtitle="用业务语言维护页面类型、实体关系、Wiki 标准、表字段策略和质量红线；系统负责把规则编译进构建 Pipeline。">
-      {active && (
-        <section className="release-panel">
-          <div className="detail-head">
-            <div>
-              <h2>{active.name}</h2>
-              <p>{active.profileId}</p>
-            </div>
-            <Badge label="active" tone="ok" />
-          </div>
-          <div className="metrics compact">
-            <Metric label="页面类型" value={Object.keys(active.config.pageTypes).length} hint="page types" />
-            <Metric label="实体类型" value={active.config.entityTypes.length} hint="entity types" />
-            <Metric label="关系类型" value={active.config.relationTypes.length} hint="relation types" />
-            <Metric label="Hash" value={active.hash.slice(0, 12)} hint={active.hash} />
-          </div>
-        </section>
-      )}
-
       {config && (
-        <section className="legislation-workbench">
-          <div className="release-panel legislation-save-panel">
-            <div className="detail-head">
-              <div>
-                <h2>规则版本</h2>
-                <p>保存会生成新版本；启用后，新的知识构建会使用这套规则。</p>
-              </div>
-              <Badge label={activate ? "保存并启用" : "保存草稿"} tone={activate ? "ok" : undefined} />
-            </div>
-            <div className="model-grid">
-              <label className="field-label">
-                版本名称
-                <input value={name} onChange={(event) => setName(event.target.value)} />
-              </label>
-              <label className="field-label">
-                保存动作
-                <select value={activate ? "yes" : "no"} onChange={(event) => setActivate(event.target.value === "yes")}>
-                  <option value="yes">保存并启用</option>
-                  <option value="no">只保存为草稿</option>
-                </select>
-              </label>
-            </div>
-            {error && <p className="error">{error}</p>}
+        <div className="workbench-bar">
+          <div className="workbench-fields">
+            <label className="field-label">
+              版本名称
+              <input value={name} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label className="field-label">
+              保存动作
+              <select value={activate ? "yes" : "no"} onChange={(event) => setActivate(event.target.value === "yes")}>
+                <option value="yes">保存并启用</option>
+                <option value="no">只保存为草稿</option>
+              </select>
+            </label>
+          </div>
+          <div className="workbench-actions">
+            <Badge label={activate ? "保存并启用" : "保存草稿"} tone={activate ? "ok" : undefined} />
             <button className="primary-action" disabled={save.isPending} onClick={() => save.mutate()}>
               <Save size={16} />
               {save.isPending ? "保存中..." : "保存规则 Profile"}
             </button>
           </div>
-
-          <PageTypeSection config={config} onChange={setConfig} />
-          <EntityTypeSection config={config} onChange={setConfig} />
-          <RelationTypeSection config={config} onChange={setConfig} />
-          <TableRuleSection config={config} onChange={setConfig} />
-          <QualityRuleSection config={config} onChange={setConfig} />
-
-          <section className="release-panel">
-            <details className="advanced-json">
-              <summary>高级：规则 JSON 预览 / 导入</summary>
-              <p>这个区域用于开发排查或跨环境复制，不作为策划日常维护入口。</p>
-              <textarea className="code-editor small" value={jsonText} onChange={(event) => setJsonText(event.target.value)} spellCheck={false} />
-              <button className="secondary-action" type="button" onClick={applyJson}>从 JSON 覆盖当前表单</button>
-            </details>
-          </section>
-        </section>
+          {error && <p className="error">{error}</p>}
+        </div>
       )}
 
-      <section className="release-panel">
-        <h2>历史版本</h2>
-        <div className="event-list">
-          {history.map((profile) => (
-            <article className="event" key={profile.profileId}>
-              <Badge label={profile.active ? "active" : "saved"} tone={profile.active ? "ok" : undefined} />
-              <div>
-                <strong>{profile.name}</strong>
-                <span>{profile.profileId}</span>
-                <small>{profile.hash}</small>
+      <Tabs items={tabs} active={tab} onChange={setTab} />
+
+      <div className="tab-panel" key={tab}>
+        {!config && tab !== "overview" ? (
+          <Loading title="正在加载规则草稿" />
+        ) : null}
+
+        {config && tab === "pages" && <PageTypeSection config={config} onChange={setConfig} />}
+        {config && tab === "entities" && <EntityTypeSection config={config} onChange={setConfig} />}
+        {config && tab === "relations" && <RelationTypeSection config={config} onChange={setConfig} />}
+        {config && tab === "tables" && <TableRuleSection config={config} onChange={setConfig} />}
+        {config && tab === "quality" && <QualityRuleSection config={config} onChange={setConfig} />}
+
+        {tab === "overview" && (
+          <section className="legislation-workbench">
+            {active ? (
+              <section className="release-panel">
+                <div className="detail-head">
+                  <div>
+                    <h2>{active.name}</h2>
+                    <p>{active.profileId}</p>
+                  </div>
+                  <Badge label="active" tone="ok" />
+                </div>
+                <div className="metrics compact">
+                  <Metric label="页面类型" value={Object.keys(active.config.pageTypes).length} hint="page types" />
+                  <Metric label="实体类型" value={active.config.entityTypes.length} hint="entity types" />
+                  <Metric label="关系类型" value={active.config.relationTypes.length} hint="relation types" />
+                  <Metric label="Hash" value={active.hash.slice(0, 12)} hint={active.hash} />
+                </div>
+              </section>
+            ) : (
+              <section className="release-panel">
+                <h2>尚无启用的规则</h2>
+                <p>编辑左侧各页规则后保存并启用，这里会显示当前生效的 Profile 摘要。</p>
+              </section>
+            )}
+
+            <section className="release-panel">
+              <h2>历史版本</h2>
+              <div className="event-list">
+                {history.length === 0 && <p>暂无历史版本。</p>}
+                {history.map((profile) => (
+                  <article className="event" key={profile.profileId}>
+                    <Badge label={profile.active ? "active" : "saved"} tone={profile.active ? "ok" : undefined} />
+                    <div>
+                      <strong>{profile.name}</strong>
+                      <span>{profile.profileId}</span>
+                      <small>{profile.hash}</small>
+                    </div>
+                    <button disabled={profile.active || activateMutation.isPending} onClick={() => activateMutation.mutate(profile.profileId)}>
+                      <ShieldCheck size={14} />
+                      启用
+                    </button>
+                  </article>
+                ))}
               </div>
-              <button disabled={profile.active || activateMutation.isPending} onClick={() => activateMutation.mutate(profile.profileId)}>
-                <ShieldCheck size={14} />
-                启用
-              </button>
-            </article>
-          ))}
-        </div>
-      </section>
+            </section>
+          </section>
+        )}
+
+        {config && tab === "json" && (
+          <section className="release-panel">
+            <div className="detail-head">
+              <div>
+                <h2>规则 JSON 预览 / 导入</h2>
+                <p>这个区域用于开发排查或跨环境复制，不作为策划日常维护入口。</p>
+              </div>
+            </div>
+            <textarea className="code-editor small" value={jsonText} onChange={(event) => setJsonText(event.target.value)} spellCheck={false} />
+            <button className="secondary-action" type="button" onClick={applyJson}>从 JSON 覆盖当前表单</button>
+          </section>
+        )}
+      </div>
     </Page>
   );
 }
