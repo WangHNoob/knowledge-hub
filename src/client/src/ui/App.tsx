@@ -32,8 +32,8 @@ type View = "dashboard" | "sources" | "builder" | "legislation" | "assets" | "re
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "首页", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
-  { id: "builder", label: "知识构建", icon: PackagePlus },
   { id: "legislation", label: "策划立法", icon: ScrollText },
+  { id: "builder", label: "知识构建", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
   { id: "review", label: "审核中心", icon: CheckCircle2 },
   { id: "release", label: "发布", icon: GitBranch },
