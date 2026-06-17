@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 
 import { nanoid } from "nanoid";
 import xlsx from "xlsx";
@@ -463,6 +463,57 @@ export class KnowledgeQueryService {
     const placeholders = release.packageIds.map((_, index) => `$${index + 1}`).join(",");
     const { rows } = await this.adapter.query(`SELECT * FROM asset_packages WHERE package_id IN (${placeholders})`, release.packageIds);
     return rows.map(mapPackage);
+  }
+
+  async getComponentFile(packageId: string, componentId: string): Promise<{
+    componentId: string;
+    kind: string;
+    legacyPath: string;
+    storageUri: string;
+    content: string;
+    truncated: boolean;
+  }> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM asset_components WHERE component_id = $1 AND package_id = $2",
+      [componentId, packageId],
+    );
+    if (rows.length === 0) throw new Error(`Component not found in package: ${componentId}`);
+    const component = mapComponent(rows[0]);
+    if (component.storageUri.startsWith("legacy://")) {
+      throw new Error(`Legacy component is not materialized locally: ${componentId}`);
+    }
+
+    const packages = await this.releasePackages({ packageIds: [component.packageId] } as ReleaseRecord);
+    const runId = packages[0]?.createdByRunId ?? "";
+    const runRoot = runId ? join(this.dataDir, "kb-build-runs", runId) : "";
+    const candidates = [
+      isAbsolute(component.storageUri) ? component.storageUri : "",
+      runRoot ? join(runRoot, component.storageUri) : "",
+      join(this.dataDir, component.storageUri),
+    ].filter(Boolean);
+
+    const resolved = candidates.find((candidate) => existsSync(candidate));
+    if (!resolved) throw new Error(`Artifact file not found for component ${componentId}: ${component.storageUri}`);
+
+    // Path-containment guard: resolved file must stay under the run workspace or the data dir.
+    const allowedRoots = [runRoot, this.dataDir].filter(Boolean);
+    const contained = allowedRoots.some((root) => {
+      const rel = relative(root, resolved);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    });
+    if (!contained) throw new Error(`Refusing to read file outside allowed roots: ${componentId}`);
+
+    const MAX_BYTES = 512 * 1024;
+    const raw = readFileSync(resolved, "utf8");
+    const truncated = raw.length > MAX_BYTES;
+    return {
+      componentId: component.componentId,
+      kind: component.kind,
+      legacyPath: component.legacyPath,
+      storageUri: component.storageUri,
+      content: truncated ? `${raw.slice(0, MAX_BYTES)}\n\n…[truncated ${raw.length - MAX_BYTES} chars]` : raw,
+      truncated,
+    };
   }
 
   private async readComponentText(component: AssetComponent): Promise<string> {
