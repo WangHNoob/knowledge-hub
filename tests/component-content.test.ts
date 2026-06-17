@@ -22,7 +22,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await db.close();
+  try { await db.close(); } catch { /* app.close may have already closed the pool */ }
   const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL });
   try {
     await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
@@ -71,5 +71,46 @@ describe("getComponentFile", () => {
     await insertPackageWithComponent({ runId: "run_x", storageUri: "legacy://wiki/x.md" });
     const svc = createKnowledgeQueryService(db, dir);
     await expect(svc.getComponentFile("pkg_t", "cmp_t")).rejects.toThrow(/legacy/i);
+  });
+});
+
+import { buildApp } from "../src/server/app";
+
+describe("GET /api/packages/:packageId/components/:componentId/content", () => {
+  async function tokenFor(app: Awaited<ReturnType<typeof buildApp>>) {
+    const res = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "admin", password: "adminpw" } });
+    return JSON.parse(res.body).token as string;
+  }
+
+  it("serves component content via HTTP", async () => {
+    const runId = "run_http_0001";
+    const fileAbs = path.join(dir, "kb-build-runs", runId, "data", "wiki", "systems", "成就.md");
+    mkdirSync(path.dirname(fileAbs), { recursive: true });
+    writeFileSync(fileAbs, "# 成就系统", "utf8");
+    await insertPackageWithComponent({ runId, storageUri: "data/wiki/systems/成就.md" });
+
+    const app = await buildApp({ db, dataDir: dir, jwtSecret: "test-secret" });
+    const token = await tokenFor(app);
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/packages/pkg_t/components/cmp_t/content",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).content).toContain("成就系统");
+    await app.close();
+  });
+
+  it("returns 404 for unknown component", async () => {
+    await insertPackageWithComponent({ runId: "run_x", storageUri: "data/wiki/x.md" });
+    const app = await buildApp({ db, dataDir: dir, jwtSecret: "test-secret" });
+    const token = await tokenFor(app);
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/packages/pkg_t/components/nope/content",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(404);
+    await app.close();
   });
 });

@@ -19,6 +19,20 @@ export function registerPackageRoutes(app: FastifyInstance, ctx: RouteContext) {
     }
   );
 
+  app.get<{ Params: { packageId: string; componentId: string } }>(
+    "/api/packages/:packageId/components/:componentId/content",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      try {
+        return await ctx.queryService.getComponentFile(request.params.packageId, request.params.componentId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to read component file.";
+        const code = /legacy/i.test(message) ? 400 : 404;
+        return reply.code(code).send({ error: message });
+      }
+    },
+  );
+
   app.get<{ Querystring: { packageId?: string; componentId?: string } }>(
     "/api/evidence",
     { preHandler: app.authenticate },
