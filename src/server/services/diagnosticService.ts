@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -65,6 +66,13 @@ export class DiagnosticLogger {
   private readonly retentionDays: number;
   private readonly logToFile: boolean;
   private readonly logToDb: boolean;
+  private readonly emitter = new EventEmitter();
+
+  subscribe(listener: (record: DiagnosticLogRecord) => void): () => void {
+    this.emitter.setMaxListeners(0);
+    this.emitter.on("log", listener);
+    return () => this.emitter.off("log", listener);
+  }
 
   constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, options: DiagnosticLoggerOptions = {}) {
     this.adapter = db.adapter;
@@ -126,7 +134,10 @@ export class DiagnosticLogger {
     };
 
     if (this.logToFile) this.appendJsonl(record);
-    if (!this.logToDb) return;
+    if (!this.logToDb) {
+      this.emitter.emit("log", mapLog(record));
+      return;
+    }
     try {
       await this.adapter.query(
         `INSERT INTO diagnostic_logs
@@ -143,6 +154,7 @@ export class DiagnosticLogger {
     } catch (error) {
       if (!this.logToFile) this.appendJsonl({ ...record, db_write_error: error instanceof Error ? error.message : String(error) });
     }
+    this.emitter.emit("log", mapLog(record));
   }
 
   async listLogs(query: DiagnosticLogQuery): Promise<DiagnosticLogRecord[]> {
