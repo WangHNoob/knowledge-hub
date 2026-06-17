@@ -1,11 +1,15 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runExtractStage } from "../src/server/services/kbBuilder/extractStage";
 import { loadWikiSpecs } from "../src/server/services/kbBuilder/specs";
 
 describe("runExtractStage", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("generates wiki page and meta from structured parsed markdown", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
     const specDir = join(dataDir, "processed", "wiki_specs");
@@ -124,6 +128,96 @@ describe("runExtractStage", () => {
       const uiMeta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "ui-battle.json"), "utf8"));
       expect(systemMeta.title).toBe("Battle Rules");
       expect(uiMeta.title).toBe("Battle UI");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts fenced JSON returned by an extraction model", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system"],
+        relation_types: ["references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## 概览");
+      writeFileSync(join(dataDir, "processed", "parsed", "battle.md"), "# Battle\n\nBattle rules.");
+      vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
+        choices: [{
+          message: {
+            content: [
+              "```json",
+              "{",
+              "  \"type\": \"system\",",
+              "  \"title\": \"Battle System\",",
+              "  \"source\": \"gamedocs/battle.md\",",
+              "  \"facts\": {\"config_table\": \"Skill\"},",
+              "  \"entities\": [{\"name\": \"Battle System\", \"type\": \"system\"}],",
+              "  \"relationships\": [],",
+              "  \"body\": \"## 概览\\nBattle rules.\"",
+              "}",
+              "```"
+            ].join("\n")
+          }
+        }]
+      }), { status: 200 }));
+
+      const specs = loadWikiSpecs(specDir);
+      const result = await runExtractStage({
+        dataDir,
+        specs,
+        model: "gpt-test",
+        modelConfig: { provider: "openai-compatible", baseUrl: "https://llm.local/v1", model: "gpt-test", apiKey: "secret" },
+        force: false,
+        only: null
+      });
+
+      expect(result.outputPaths.sort()).toEqual(["wiki/_meta/battle.json", "wiki/systems/battle.md"]);
+      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "battle.json"), "utf8"));
+      expect(meta.title).toBe("Battle System");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back with a warning when an extraction model returns markdown instead of JSON", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { concept: { dir: "concepts", template: "concept.md" } },
+        entity_types: ["concept"],
+        relation_types: ["references"]
+      }));
+      writeFileSync(join(specDir, "concept.md"), "## 概览");
+      writeFileSync(join(dataDir, "processed", "parsed", "pvp活动模板.md"), "# PVP活动模板\n\n活动规则说明。");
+      vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
+        choices: [{ message: { content: "# PVP活动模板\n\n活动规则说明。" } }]
+      }), { status: 200 }));
+
+      const specs = loadWikiSpecs(specDir);
+      const result = await runExtractStage({
+        dataDir,
+        specs,
+        model: "gpt-test",
+        modelConfig: { provider: "openai-compatible", baseUrl: "https://llm.local/v1", model: "gpt-test", apiKey: "secret" },
+        force: false,
+        only: null
+      });
+
+      expect(result.outputPaths.sort()).toEqual(["wiki/_meta/pvp.json", "wiki/concepts/pvp.md"]);
+      expect(result.warnings.some((warning) =>
+        warning.includes("pvp活动模板.md") && warning.includes("invalid JSON") && warning.includes("deterministic fallback"),
+      )).toBe(true);
+      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "pvp.json"), "utf8"));
+      expect(meta.title).toBe("PVP活动模板");
+      expect(meta.type).toBe("concept");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

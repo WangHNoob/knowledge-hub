@@ -62,7 +62,7 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
-    const extracted = await extractPage(markdown, rel, options);
+    const extracted = await extractPage(markdown, rel, options, warnings);
     const pageType = options.specs.manifest.pageTypes[extracted.type];
     if (!pageType) {
       warnings.push(`${rel}: unknown page type "${extracted.type}", skipped`);
@@ -89,30 +89,60 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   return { stage: "extract", status: "completed", outputPaths, warnings };
 }
 
-async function extractPage(markdown: string, rel: string, options: ExtractOptions): Promise<ExtractedPage> {
+async function extractPage(markdown: string, rel: string, options: ExtractOptions, warnings: string[]): Promise<ExtractedPage> {
   const structured = parseStructuredFrontmatter(markdown);
   if (structured) return structured;
 
   const guidance = buildSpecGuidance(options.specs);
 
   if (options.modelConfig?.provider === "openai-compatible" && options.modelConfig.apiKey) {
-    return extractWithOpenAI(markdown, rel, options.modelConfig, guidance);
+    return withModelJsonFallback(
+      () => extractWithOpenAI(markdown, rel, options.modelConfig as Extract<PipelineModelConfig, { provider: "openai-compatible" }>, guidance),
+      markdown,
+      rel,
+      warnings,
+    );
   }
 
   if (options.modelConfig?.provider === "anthropic" && options.modelConfig.apiKey) {
-    return extractWithAnthropic(markdown, rel, options.modelConfig, guidance);
+    return withModelJsonFallback(
+      () => extractWithAnthropic(markdown, rel, options.modelConfig as Extract<PipelineModelConfig, { provider: "anthropic" }>, guidance),
+      markdown,
+      rel,
+      warnings,
+    );
   }
 
   if (options.model !== "deterministic" && process.env.OPENAI_API_KEY) {
-    return extractWithOpenAI(markdown, rel, {
-      provider: "openai-compatible",
-      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
-      model: options.model,
-      apiKey: process.env.OPENAI_API_KEY,
-    }, guidance);
+    return withModelJsonFallback(
+      () => extractWithOpenAI(markdown, rel, {
+        provider: "openai-compatible",
+        baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+        model: options.model,
+        apiKey: process.env.OPENAI_API_KEY,
+      }, guidance),
+      markdown,
+      rel,
+      warnings,
+    );
   }
 
   return deterministicFallback(markdown, rel);
+}
+
+async function withModelJsonFallback(
+  extract: () => Promise<ExtractedPage>,
+  markdown: string,
+  rel: string,
+  warnings: string[],
+): Promise<ExtractedPage> {
+  try {
+    return await extract();
+  } catch (error) {
+    if (!(error instanceof ModelJsonParseError)) throw error;
+    warnings.push(`${rel}: model returned invalid JSON; used deterministic fallback (${error.detail})`);
+    return deterministicFallback(markdown, rel);
+  }
 }
 
 // Steer the model to emit a page `type` from the active legislation profile's
@@ -273,7 +303,7 @@ async function extractWithOpenAI(markdown: string, rel: string, config: Extract<
     throw new Error(`OpenAI extraction returned no content for ${rel}`);
   }
 
-  return normalizeExtractedJson(JSON.parse(content), markdown, rel);
+  return normalizeExtractedJson(parseModelJson(content, rel), markdown, rel);
 }
 
 async function extractWithAnthropic(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "anthropic" }>, guidance: string): Promise<ExtractedPage> {
@@ -304,7 +334,50 @@ async function extractWithAnthropic(markdown: string, rel: string, config: Extra
     throw new Error(`Anthropic extraction returned no content for ${rel}`);
   }
 
-  return normalizeExtractedJson(JSON.parse(content), markdown, rel);
+  return normalizeExtractedJson(parseModelJson(content, rel), markdown, rel);
+}
+
+class ModelJsonParseError extends Error {
+  readonly detail: string;
+
+  constructor(rel: string, detail: string) {
+    super(`Model extraction returned invalid JSON for ${rel}: ${detail}`);
+    this.name = "ModelJsonParseError";
+    this.detail = detail;
+  }
+}
+
+function parseModelJson(content: string, rel: string): unknown {
+  const candidates = [
+    content,
+    stripMarkdownFence(content),
+    extractFirstJsonObject(content),
+  ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
+
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new ModelJsonParseError(rel, detail);
+}
+
+function stripMarkdownFence(content: string): string {
+  const trimmed = content.trim();
+  const match = /^```(?:json|JSON)?\s*([\s\S]*?)\s*```$/u.exec(trimmed);
+  return match ? match[1].trim() : trimmed;
+}
+
+function extractFirstJsonObject(content: string): string | null {
+  const start = content.indexOf("{");
+  const end = content.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  return content.slice(start, end + 1).trim();
 }
 
 function normalizeExtractedJson(value: unknown, markdown: string, rel: string): ExtractedPage {
