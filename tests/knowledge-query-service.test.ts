@@ -207,7 +207,7 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
     );
   }
 
-  const releaseService = createReleaseService(db);
+  const releaseService = createReleaseService(db, dataDir);
   const draft = await releaseService.createDraft({ version: "query.1", packageIds: [packageId], requestedBy: "admin" });
   const published = await releaseService.publish(draft.releaseId, "admin");
   return { db, dataDir, releaseId: published.releaseId, pageComponentId, cleanup: handle.cleanup };

@@ -1,3 +1,7 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { createReleaseService } from "../src/server/services/releaseService";
@@ -7,7 +11,7 @@ describe("ReleaseService", () => {
   it("blocks publishing when selected packages have open blocking tasks", async () => {
     const fixture = await setupReleaseFixture({ blockingTask: true });
     try {
-      const service = createReleaseService(fixture.db);
+      const service = createReleaseService(fixture.db, fixture.dataDir);
       const draft = await service.createDraft({
         version: "2026.06.15.001",
         packageIds: ["pkg_demo"],
@@ -24,7 +28,7 @@ describe("ReleaseService", () => {
   it("publishes an immutable manifest and rolls the current channel pointer", async () => {
     const first = await setupReleaseFixture({ packageId: "pkg_first" });
     await setupReleaseFixture({ handle: first.handle, packageId: "pkg_second" });
-    const service = createReleaseService(first.db);
+    const service = createReleaseService(first.db, first.dataDir);
 
     try {
       const rel1 = await service.createDraft({ version: "2026.06.15.001", packageIds: ["pkg_first"], requestedBy: "admin" });
@@ -33,6 +37,14 @@ describe("ReleaseService", () => {
       expect(pub1.manifestHash).toMatch(/^sha256:/u);
       expect(pub1.manifest.packageIds).toEqual(["pkg_first"]);
       expect(pub1.manifest.componentIds).toEqual(["cmp_pkg_first_page"]);
+      expect(pub1.manifest.okf).toMatchObject({
+        bundleUri: expect.stringContaining(`${pub1.releaseId}/okf_bundle`),
+        exporterVersion: 1,
+        summary: { blocking: 0 }
+      });
+      expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"))).toBe(true);
+      expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"), "utf8")).toContain('type: "system_rule"');
+      expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_report.json"))).toBe(true);
       expect(pub1.publishedAt).toBeTruthy();
 
       const rel2 = await service.createDraft({ version: "2026.06.15.002", packageIds: ["pkg_second"], requestedBy: "admin" });
@@ -55,11 +67,17 @@ async function setupReleaseFixture(options: {
   handle?: TestDbHandle;
   packageId?: string;
   blockingTask?: boolean;
-} = {}): Promise<{ handle: TestDbHandle; db: TestDbHandle["db"]; cleanup: () => Promise<void> }> {
+} = {}): Promise<{ handle: TestDbHandle; db: TestDbHandle["db"]; dataDir: string; cleanup: () => Promise<void> }> {
   const handle = options.handle ?? await createTestDb();
   const db = handle.db;
+  const dataDir = options.handle ? (options.handle as TestDbHandle & { __okfDataDir?: string }).__okfDataDir ?? mkdtempSync(join(tmpdir(), "kh-release-okf-")) : mkdtempSync(join(tmpdir(), "kh-release-okf-"));
+  (handle as TestDbHandle & { __okfDataDir?: string }).__okfDataDir = dataDir;
   const packageId = options.packageId ?? "pkg_demo";
   const componentId = `cmp_${packageId}_page`;
+  const runId = `run_fixture_${packageId}`;
+  const artifactPath = join(dataDir, "kb-build-runs", runId, "data", "wiki", "systems", "demo.md");
+  mkdirSync(dirname(artifactPath), { recursive: true });
+  writeFileSync(artifactPath, "# Demo Page\n\nDemo release content.\n", "utf8");
 
   await db.adapter.query(
     `INSERT INTO asset_packages
@@ -71,7 +89,7 @@ async function setupReleaseFixture(options: {
       "kb_builder_pipeline",
       "draft",
       "fixture",
-      "run_fixture",
+      runId,
       JSON.stringify(["srcv_fixture"]),
       JSON.stringify(["wiki"]),
       JSON.stringify({ overallScore: 0.92, blockingCount: options.blockingTask ? 1 : 0, warningCount: 0 }),
@@ -91,7 +109,7 @@ async function setupReleaseFixture(options: {
       "Demo Page",
       "draft",
       "wiki/systems/demo.md",
-      "kb-build-runs/run_fixture/data/wiki/systems/demo.md",
+      "data/wiki/systems/demo.md",
       JSON.stringify(["gamedocs/demo.md"]),
       JSON.stringify({ confidence: 0.92 }),
     ],
@@ -106,5 +124,13 @@ async function setupReleaseFixture(options: {
     );
   }
 
-  return { handle, db, cleanup: handle.cleanup };
+  return {
+    handle,
+    db,
+    dataDir,
+    cleanup: async () => {
+      rmSync(dataDir, { recursive: true, force: true });
+      await handle.cleanup();
+    }
+  };
 }

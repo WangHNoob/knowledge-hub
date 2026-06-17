@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -513,8 +513,8 @@ describe("knowledge hub api", () => {
 
   it("creates, publishes, reads current, and rolls back immutable releases through the api", async () => {
     const { app, token } = await getToken();
-    const first = await insertPackageFixture(db, "api_first");
-    const second = await insertPackageFixture(db, "api_second");
+    const first = await insertPackageFixture(db, dir, "api_first");
+    const second = await insertPackageFixture(db, dir, "api_second");
 
     const draftOne = await app.inject({
       method: "POST",
@@ -533,6 +533,8 @@ describe("knowledge hub api", () => {
     expect(publishedOne.statusCode, JSON.stringify(publishedOne.json())).toBe(200);
     expect(publishedOne.json().release.manifestHash).toMatch(/^sha256:/u);
     expect(publishedOne.json().release.manifest.componentIds).toContain(first.componentId);
+    expect(publishedOne.json().release.manifest.okf.summary.blocking).toBe(0);
+    expect(publishedOne.json().release.manifest.okf.bundleUri).toContain(publishedOne.json().release.releaseId);
 
     const draftTwo = await app.inject({
       method: "POST",
@@ -567,7 +569,7 @@ describe("knowledge hub api", () => {
 
   it("writes diagnostic logs for mcp queries alongside audit records", async () => {
     const { app, token } = await getToken();
-    const fixture = await insertPackageFixture(db, "mcp_diag");
+    const fixture = await insertPackageFixture(db, dir, "mcp_diag");
     const draft = await app.inject({
       method: "POST",
       url: "/api/releases",
@@ -604,7 +606,7 @@ describe("knowledge hub api", () => {
 
   it("rejects publishing when selected packages have open blocking tasks", async () => {
     const { app, token } = await getToken();
-    const fixture = await insertPackageFixture(db, "api_blocked");
+    const fixture = await insertPackageFixture(db, dir, "api_blocked");
     await db.adapter.query(
       `INSERT INTO review_tasks
         (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
@@ -771,7 +773,7 @@ describe("knowledge hub api", () => {
 
   it("deletes an unpublished asset package and cascades its components", async () => {
     const { app, token } = await getToken();
-    const fixture = await insertPackageFixture(db, "delete");
+    const fixture = await insertPackageFixture(db, dir, "delete");
 
     const deleted = await app.inject({
       method: "DELETE",
@@ -790,7 +792,7 @@ describe("knowledge hub api", () => {
 
   it("rejects deleting an asset package referenced by a release", async () => {
     const { app, token } = await getToken();
-    const fixture = await insertPackageFixture(db, "released_delete");
+    const fixture = await insertPackageFixture(db, dir, "released_delete");
     await db.adapter.query(
       `INSERT INTO releases
         (release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
@@ -838,9 +840,13 @@ async function waitForBuildRun(app: FastifyInstance, token: string, runId: strin
   throw new Error(`Build run ${runId} did not finish.`);
 }
 
-async function insertPackageFixture(db: DatabaseHandle, suffix: string) {
+async function insertPackageFixture(db: DatabaseHandle, dataDir: string, suffix: string) {
   const packageId = `pkg_${suffix}_${randomUUID().slice(0, 6)}`;
   const componentId = `cmp_${suffix}_${randomUUID().slice(0, 6)}`;
+  const runId = "run_api_fixture";
+  const artifactPath = join(dataDir, "kb-build-runs", runId, "data", "wiki", `${suffix}.md`);
+  mkdirSync(dirname(artifactPath), { recursive: true });
+  writeFileSync(artifactPath, `# Page ${suffix}\n\nAPI fixture content.\n`, "utf8");
   await db.adapter.query(
     `INSERT INTO asset_packages
       (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
@@ -851,7 +857,7 @@ async function insertPackageFixture(db: DatabaseHandle, suffix: string) {
       "kb_builder_pipeline",
       "draft",
       "api fixture",
-      "run_api_fixture",
+      runId,
       JSON.stringify([`srcv_${suffix}`]),
       JSON.stringify([]),
       JSON.stringify({ overallScore: 0.91, blockingCount: 0, warningCount: 0 }),
@@ -871,7 +877,7 @@ async function insertPackageFixture(db: DatabaseHandle, suffix: string) {
       `Page ${suffix}`,
       "draft",
       `wiki/${suffix}.md`,
-      `kb-build-runs/run_api_fixture/data/wiki/${suffix}.md`,
+      `data/wiki/${suffix}.md`,
       JSON.stringify([`gamedocs/${suffix}.md`]),
       JSON.stringify({ confidence: 0.91 })
     ]

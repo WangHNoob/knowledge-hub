@@ -1371,6 +1371,27 @@ code {
   word-break: break-all;
 }
 
+.okf-summary {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.okf-paths {
+  display: grid;
+  gap: 8px;
+}
+
+.okf-paths code {
+  width: fit-content;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .history-row {
   display: flex;
   justify-content: space-between;

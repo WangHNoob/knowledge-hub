@@ -6,6 +6,7 @@ import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from
 import { mapComponent, mapPackage, mapRelease } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
+import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
 
 export interface CreateReleaseDraftInput {
   version: string;
@@ -13,14 +14,16 @@ export interface CreateReleaseDraftInput {
   requestedBy: string;
 }
 
-export function createReleaseService(db: DatabaseHandle, diagnostics?: DiagnosticLogger) {
-  return new ReleaseService(db, diagnostics);
+export function createReleaseService(db: DatabaseHandle, dataDirOrDiagnostics?: string | DiagnosticLogger, diagnostics?: DiagnosticLogger) {
+  return typeof dataDirOrDiagnostics === "string"
+    ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics)
+    : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics);
 }
 
 export class ReleaseService {
   private readonly adapter;
 
-  constructor(private readonly db: DatabaseHandle, private readonly diagnostics?: DiagnosticLogger) {
+  constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
     this.adapter = db.adapter;
   }
 
@@ -100,6 +103,13 @@ export class ReleaseService {
       const activeRuleProfile = await createLegislationService(this.db).getActiveProfile();
       const qualityGate = summarizePackages(packages, components, activeRuleProfile.hash);
       const publishedAt = new Date().toISOString();
+      const okfExport = await createOkfExportService(this.db, this.dataDir).exportRelease({
+        release,
+        packages,
+        components,
+        publishedAt,
+        activeRuleProfileHash: activeRuleProfile.hash,
+      });
       const manifest = buildManifest({
         release,
         packages,
@@ -108,6 +118,7 @@ export class ReleaseService {
         publishedAt,
         publishedBy,
         activeRuleProfileHash: activeRuleProfile.hash,
+        okf: okfExport.manifest,
       });
       const manifestHash = hashManifest(manifest);
 
@@ -247,6 +258,7 @@ function buildManifest(input: {
   publishedAt: string;
   publishedBy: string;
   activeRuleProfileHash: string;
+  okf: OkfExportManifest;
 }) {
   const componentIds = input.components.map((component) => component.componentId).sort();
   const sourceVersionIds = uniqueSorted(input.packages.flatMap((pkg) => pkg.sourceVersionIds));
@@ -279,6 +291,7 @@ function buildManifest(input: {
       sourceRefs: component.sourceRefs,
       quality: component.quality,
     })),
+    okf: input.okf,
     qualityGate: input.qualityGate,
     publishedAt: input.publishedAt,
     publishedBy: input.publishedBy,

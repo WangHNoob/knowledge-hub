@@ -57,7 +57,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     service: createKnowledgeService(options.db),
     bundleService: createSourceBundleService(options.db, dataDir),
     kbBuilderService: createKbBuilderPipelineService(options.db, dataDir, diagnostics),
-    releaseService: createReleaseService(options.db, diagnostics),
+    releaseService: createReleaseService(options.db, dataDir, diagnostics),
     queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
     legislationService: createLegislationService(options.db),
     attributionAuditService: createAttributionAuditService(options.db)

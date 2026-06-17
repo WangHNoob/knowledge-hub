@@ -156,11 +156,14 @@ export function Release() {
             {current.data && <Badge label={current.data.version} tone="ok" />}
           </div>
           {current.data && (
-            <div className="release-current">
-              <strong>{current.data.manifestHash || "manifest pending"}</strong>
-              <span>{current.data.publishedAt}</span>
-              <span>{current.data.packageIds.length} 个资产包</span>
-            </div>
+            <>
+              <div className="release-current">
+                <strong>{current.data.manifestHash || "manifest pending"}</strong>
+                <span>{current.data.publishedAt}</span>
+                <span>{current.data.packageIds.length} 个资产包</span>
+              </div>
+              <OkfSummary release={current.data} />
+            </>
           )}
           <h3>发布历史</h3>
           <div className="release-history">
@@ -170,6 +173,7 @@ export function Release() {
                   <strong>{release.version}</strong>
                   <span>{release.releaseId}</span>
                   <small>{release.manifestHash}</small>
+                  {okfManifest(release) && <small>OKF · {okfManifest(release)?.bundleUri}</small>}
                 </div>
                 <div className="detail-actions">
                   <Badge label={release.status} tone={release.status === "published" ? "ok" : undefined} />
@@ -189,4 +193,61 @@ export function Release() {
       </div>
     </Page>
   );
+}
+
+function OkfSummary({ release }: { release: ReleaseRecord }) {
+  const okf = okfManifest(release);
+  if (!okf) return <p className="subtle">当前发布尚未记录 OKF 导出信息。</p>;
+  return (
+    <div className="okf-summary">
+      <div className="metrics compact">
+        <Metric label="OKF Blocking" value={okf.summary.blocking} hint="必须为 0 才能发布" tone={okf.summary.blocking ? "hot" : "ok"} />
+        <Metric label="OKF Warning" value={okf.summary.warning} hint="非阻断合规提示" tone={okf.summary.warning ? "warn" : "ok"} />
+        <Metric label="引用" value={`${okf.citationSummary.present}/${okf.citationSummary.required}`} hint="Citations 覆盖" />
+        <Metric label="链接" value={okf.linkSummary.resolved} hint={`${okf.linkSummary.unresolved} unresolved`} tone={okf.linkSummary.unresolved ? "warn" : "ok"} />
+      </div>
+      <div className="okf-paths">
+        <code>{okf.bundleUri}</code>
+        <code>{okf.reportUri}</code>
+      </div>
+    </div>
+  );
+}
+
+function okfManifest(release: ReleaseRecord): OkfManifest | null {
+  const value = release.manifest.okf;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const okf = value as Record<string, unknown>;
+  const summary = objectValue(okf.summary);
+  const linkSummary = objectValue(okf.linkSummary);
+  const citationSummary = objectValue(okf.citationSummary);
+  return {
+    bundleUri: String(okf.bundleUri ?? ""),
+    reportUri: String(okf.reportUri ?? ""),
+    summary: {
+      blocking: Number(summary.blocking ?? 0),
+      warning: Number(summary.warning ?? 0),
+      info: Number(summary.info ?? 0),
+    },
+    linkSummary: {
+      resolved: Number(linkSummary.resolved ?? 0),
+      unresolved: Number(linkSummary.unresolved ?? 0),
+    },
+    citationSummary: {
+      required: Number(citationSummary.required ?? 0),
+      present: Number(citationSummary.present ?? 0),
+    },
+  };
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+interface OkfManifest {
+  bundleUri: string;
+  reportUri: string;
+  summary: { blocking: number; warning: number; info: number };
+  linkSummary: { resolved: number; unresolved: number };
+  citationSummary: { required: number; present: number };
 }
