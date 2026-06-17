@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { scanWorkspace } from "../src/server/services/okf/conformanceService";
+import { renderReportMarkdown } from "../src/server/services/okf/reportRender";
+import type { ConformanceReport } from "../src/server/services/okf/types";
 
 let dir: string;
 
@@ -73,5 +75,29 @@ describe("scanWorkspace", () => {
     await scanWorkspace(dir, { now: "2026-06-17T00:00:00Z" });
     expect(readFileSync(f, "utf8")).toBe(content);
     expect(statSync(f).mtimeMs).toBe(before);
+  });
+});
+
+describe("renderReportMarkdown", () => {
+  it("renders summary and groups issues by file", () => {
+    const report: ConformanceReport = {
+      okfVersion: "0.1",
+      exporterVersion: 1,
+      scannedAt: "2026-06-17T00:00:00Z",
+      conceptCount: 2,
+      referenceCount: 0,
+      issues: [
+        { okfPath: "/systems/a.md", issueType: "missing_type", layer: "okf_conformance", blocking: true, message: "no type" },
+        { okfPath: "/systems/a.md", issueType: "obsidian_link", layer: "kh_publish_quality", blocking: false, message: "[[X]]" },
+      ],
+      summary: { blocking: 1, warning: 1, info: 0 },
+      linkSummary: { resolved: 0, ambiguous: 0, unresolved: 1 },
+      citationSummary: { required: 0, present: 0 },
+    };
+    const md = renderReportMarkdown(report);
+    expect(md).toContain("# OKF Conformance Report");
+    expect(md).toContain("blocking: 1");
+    expect(md).toContain("/systems/a.md");
+    expect(md).toContain("missing_type");
   });
 });
