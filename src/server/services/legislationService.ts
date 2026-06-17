@@ -3,6 +3,8 @@ import { nanoid } from "nanoid";
 
 import type { DatabaseHandle, KnowledgeRuleConfig, KnowledgeRuleProfile } from "../types";
 
+type KnowledgeRuleConfigInput = Omit<KnowledgeRuleConfig, "documentTypes"> & Partial<Pick<KnowledgeRuleConfig, "documentTypes">>;
+
 export function createLegislationService(db: DatabaseHandle): LegislationService {
   return new LegislationService(db);
 }
@@ -25,7 +27,7 @@ export class LegislationService {
     return Promise.all(rows.map((row) => this.mapAndPersistHash(row)));
   }
 
-  async createProfile(input: { name: string; config: KnowledgeRuleConfig; createdBy: string; activate?: boolean }): Promise<KnowledgeRuleProfile> {
+  async createProfile(input: { name: string; config: KnowledgeRuleConfigInput; createdBy: string; activate?: boolean }): Promise<KnowledgeRuleProfile> {
     const profileId = `krp_${new Date().toISOString().replace(/[-:.TZ]/g, "")}_${nanoid(6)}`;
     const config = normalizeRuleConfig(input.config);
     const hash = hashRuleConfig(config);
@@ -85,26 +87,15 @@ export class LegislationService {
   }
 }
 
-export function hashRuleConfig(config: KnowledgeRuleConfig): string {
+export function hashRuleConfig(config: KnowledgeRuleConfigInput): string {
   return `sha256:${createHash("sha256").update(stableStringify(normalizeRuleConfig(config))).digest("hex")}`;
 }
 
-export function normalizeRuleConfig(input: KnowledgeRuleConfig): KnowledgeRuleConfig {
+export function normalizeRuleConfig(input: KnowledgeRuleConfigInput): KnowledgeRuleConfig {
+  const pageTypes = normalizePageTypes(input.pageTypes ?? {});
   return {
-    pageTypes: Object.fromEntries(
-      Object.entries(input.pageTypes ?? {})
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([id, value]) => [id, {
-          id: value.id || id,
-          label: value.label || id,
-          dir: value.dir || `${id}s`,
-          template: value.template || `${id}.md`,
-          requiredSections: [...(value.requiredSections ?? [])].map(String),
-          requiredFacts: [...(value.requiredFacts ?? [])].map(String),
-          evidenceRequired: Boolean(value.evidenceRequired),
-          publishable: value.publishable !== false,
-        }]),
-    ),
+    documentTypes: normalizeDocumentTypes(input.documentTypes ?? {}, pageTypes),
+    pageTypes,
     entityTypes: [...(input.entityTypes ?? [])]
       .map((item) => ({ id: item.id, label: item.label || item.id, publishable: item.publishable !== false }))
       .sort((a, b) => a.id.localeCompare(b.id)),
@@ -123,6 +114,67 @@ export function normalizeRuleConfig(input: KnowledgeRuleConfig): KnowledgeRuleCo
     },
     qualityRules: Object.fromEntries(Object.entries(input.qualityRules ?? {}).sort(([a], [b]) => a.localeCompare(b))),
   };
+}
+
+function normalizePageTypes(input: KnowledgeRuleConfigInput["pageTypes"]): KnowledgeRuleConfig["pageTypes"] {
+  return Object.fromEntries(
+    Object.entries(input ?? {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, value]) => [id, {
+        id: value.id || id,
+        label: value.label || id,
+        dir: value.dir || `${id}s`,
+        template: value.template || `${id}.md`,
+        requiredSections: [...(value.requiredSections ?? [])].map(String),
+        requiredFacts: [...(value.requiredFacts ?? [])].map(String),
+        evidenceRequired: value.evidenceRequired !== false,
+        publishable: value.publishable !== false,
+      }]),
+  );
+}
+
+function normalizeDocumentTypes(
+  input: KnowledgeRuleConfigInput["documentTypes"],
+  pageTypes: KnowledgeRuleConfig["pageTypes"],
+): KnowledgeRuleConfig["documentTypes"] {
+  const entries = Object.entries(input ?? {});
+  if (entries.length === 0) {
+    return Object.fromEntries(Object.entries(pageTypes).map(([id, pageType]) => [id, {
+      id,
+      label: pageType.label,
+      description: `${pageType.label}类文档`,
+      defaultPageTypeId: id,
+      wikiSpecTemplate: {
+        requiredSections: [...pageType.requiredSections],
+        requiredFacts: [...pageType.requiredFacts],
+        evidenceRequired: pageType.evidenceRequired !== false,
+        guidance: "",
+      },
+      publishable: pageType.publishable !== false,
+    }]));
+  }
+  return Object.fromEntries(
+    entries
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, value]) => {
+        const normalizedId = value.id || id;
+        const pageTypeId = value.defaultPageTypeId || normalizedId;
+        const pageType = pageTypes[pageTypeId] ?? pageTypes[normalizedId];
+        return [id, {
+          id: normalizedId,
+          label: value.label || pageType?.label || normalizedId,
+          description: value.description || "",
+          defaultPageTypeId: pageTypeId,
+          wikiSpecTemplate: {
+            requiredSections: [...(value.wikiSpecTemplate?.requiredSections ?? pageType?.requiredSections ?? [])].map(String),
+            requiredFacts: [...(value.wikiSpecTemplate?.requiredFacts ?? pageType?.requiredFacts ?? [])].map(String),
+            evidenceRequired: value.wikiSpecTemplate?.evidenceRequired ?? pageType?.evidenceRequired !== false,
+            guidance: value.wikiSpecTemplate?.guidance || "",
+          },
+          publishable: value.publishable !== false,
+        }];
+      }),
+  );
 }
 
 function mapProfile(row: Record<string, unknown>): KnowledgeRuleProfile {

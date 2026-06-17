@@ -539,6 +539,17 @@ nav {
   box-shadow: var(--shadow-soft);
 }
 
+.secondary-action.danger {
+  color: var(--rust);
+  border-color: rgba(180, 90, 54, 0.28);
+}
+
+.secondary-action.danger:hover:not(:disabled) {
+  color: var(--rust);
+  border-color: rgba(180, 90, 54, 0.48);
+  background: rgba(180, 90, 54, 0.08);
+}
+
 .secondary-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -1430,6 +1441,38 @@ code {
   font-size: 17px;
 }
 
+.rule-card-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.rule-hint {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid rgba(143, 168, 79, 0.22);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  background: rgba(143, 168, 79, 0.08);
+}
+
+.rule-hint strong {
+  color: var(--olive);
+  white-space: nowrap;
+}
+
+.rule-hint span {
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.document-rule-card .rule-card-head {
+  align-items: flex-start;
+}
+
 .rule-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
@@ -1444,6 +1487,24 @@ code {
   color: var(--ink-muted);
   font-size: 11px;
   font-weight: 500;
+}
+
+.field-label textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 86px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  background: var(--surface);
+  color: var(--ink);
+  outline: none;
+  font: inherit;
+}
+
+.field-label textarea:focus {
+  border-color: var(--olive);
+  box-shadow: 0 0 0 3px rgba(143, 168, 79, 0.12);
 }
 
 .rule-switches {

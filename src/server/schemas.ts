@@ -85,7 +85,22 @@ export const pageTypeSpecSchema = z.object({
   publishable: z.boolean().optional()
 });
 
+export const documentTypeSpecSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().default(""),
+  defaultPageTypeId: z.string().min(1),
+  wikiSpecTemplate: z.object({
+    requiredSections: z.array(z.string()).default([]),
+    requiredFacts: z.array(z.string()).default([]),
+    evidenceRequired: z.boolean().default(true),
+    guidance: z.string().default("")
+  }),
+  publishable: z.boolean().optional()
+});
+
 export const knowledgeRuleConfigSchema = z.object({
+  documentTypes: z.record(z.string(), documentTypeSpecSchema).default({}),
   pageTypes: z.record(z.string(), pageTypeSpecSchema),
   entityTypes: z.array(z.object({
     id: z.string().min(1),

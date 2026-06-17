@@ -27,6 +27,15 @@ export function createKnowledgeService(db: DatabaseHandle) {
   return new KnowledgeService(db);
 }
 
+export class PackageDeleteConflictError extends Error {
+  constructor(
+    public readonly packageId: string,
+    public readonly releaseIds: string[],
+  ) {
+    super(`Package ${packageId} is already referenced by release ${releaseIds.join(", ")}.`);
+  }
+}
+
 export class KnowledgeService {
   private readonly adapter;
   constructor(private readonly db: DatabaseHandle) {
@@ -115,6 +124,22 @@ export class KnowledgeService {
       evidenceRecords: await this.listEvidenceRecords({ packageId }),
       evidenceCoverage: await this.getEvidenceCoverage({ packageId })
     };
+  }
+
+  async deletePackage(packageId: string): Promise<boolean> {
+    const { rows } = await this.adapter.query("SELECT package_id FROM asset_packages WHERE package_id = $1", [packageId]);
+    if (rows.length === 0) return false;
+
+    const releases = await this.listReleases();
+    const referencingReleaseIds = releases
+      .filter((release) => release.packageIds.includes(packageId))
+      .map((release) => release.releaseId);
+    if (referencingReleaseIds.length > 0) {
+      throw new PackageDeleteConflictError(packageId, referencingReleaseIds);
+    }
+
+    await this.adapter.query("DELETE FROM asset_packages WHERE package_id = $1", [packageId]);
+    return true;
   }
 
   async listComponents(filter: { packageId?: string; group?: AssetGroup } = {}): Promise<AssetComponent[]> {

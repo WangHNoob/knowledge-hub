@@ -103,6 +103,26 @@ describe("knowledge hub api", () => {
     expect(activated.json().profile.active).toBe(true);
   });
 
+  it("seeds a planner-friendly default knowledge rule profile with document wiki templates", async () => {
+    const { app, token } = await getToken();
+
+    const current = await app.inject({
+      method: "GET",
+      url: "/api/legislation/profile",
+      headers: { authorization: `Bearer ${token}` }
+    });
+
+    expect(current.statusCode).toBe(200);
+    const config = current.json().profile.config;
+    expect(config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("核心规则");
+    expect(config.documentTypes.activity_gameplay.wikiSpecTemplate.requiredFacts).toContain("reward");
+    expect(config.documentTypes.table_schema.defaultPageTypeId).toBe("table");
+    expect(config.pageTypes.field.requiredFacts).toContain("field_meaning");
+    expect(config.entityTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["system", "activity", "config_table", "field", "item", "numeric_item"]));
+    expect(config.relationTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["depends_on", "affects", "contains", "references", "produces", "consumes", "prerequisite_of", "mutually_exclusive_with"]));
+    expect(config.qualityRules.source_trace_missing.severity).toBe("blocking");
+  });
+
   it("creates and lists agent output attribution audits through the api", async () => {
     const { app, token } = await getToken();
 
@@ -747,6 +767,59 @@ describe("knowledge hub api", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("deletes an unpublished asset package and cascades its components", async () => {
+    const { app, token } = await getToken();
+    const fixture = await insertPackageFixture(db, "delete");
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/packages/${fixture.packageId}`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toEqual({ deleted: true });
+
+    const remainingPackages = await db.adapter.query("SELECT package_id FROM asset_packages WHERE package_id = $1", [fixture.packageId]);
+    const remainingComponents = await db.adapter.query("SELECT component_id FROM asset_components WHERE component_id = $1", [fixture.componentId]);
+    expect(remainingPackages.rows).toEqual([]);
+    expect(remainingComponents.rows).toEqual([]);
+  });
+
+  it("rejects deleting an asset package referenced by a release", async () => {
+    const { app, token } = await getToken();
+    const fixture = await insertPackageFixture(db, "released_delete");
+    await db.adapter.query(
+      `INSERT INTO releases
+        (release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        `rel_${randomUUID().slice(0, 6)}`,
+        `v-${randomUUID().slice(0, 6)}`,
+        "published",
+        JSON.stringify([fixture.packageId]),
+        "hash",
+        JSON.stringify({}),
+        "admin",
+        new Date().toISOString(),
+        "admin",
+        new Date().toISOString(),
+        JSON.stringify({})
+      ]
+    );
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/api/packages/${fixture.packageId}`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+
+    expect(deleted.statusCode).toBe(409);
+    expect(deleted.json().error).toContain("already referenced by release");
+    const remaining = await db.adapter.query("SELECT package_id FROM asset_packages WHERE package_id = $1", [fixture.packageId]);
+    expect(remaining.rows).toHaveLength(1);
   });
 });
 

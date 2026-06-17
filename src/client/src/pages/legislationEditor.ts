@@ -1,10 +1,20 @@
-import type { EntityTypeSpec, KnowledgeRuleConfig, PageTypeSpec, RelationTypeSpec } from "../api/types";
+import type { DocumentTypeSpec, EntityTypeSpec, KnowledgeRuleConfig, PageTypeSpec, RelationTypeSpec } from "../api/types";
 
 type PageTagField = "requiredSections" | "requiredFacts";
+type DocumentTagField = "requiredSections" | "requiredFacts";
 type TableRuleField = "autoConfirmFieldIdSuffixes" | "candidateFieldIdSuffixes";
 
 export function createRuleDraft(config: KnowledgeRuleConfig): KnowledgeRuleConfig {
   return {
+    documentTypes: Object.fromEntries(Object.entries(config.documentTypes ?? {}).map(([key, value]) => [key, {
+      ...value,
+      wikiSpecTemplate: {
+        requiredSections: [...(value.wikiSpecTemplate?.requiredSections ?? [])],
+        requiredFacts: [...(value.wikiSpecTemplate?.requiredFacts ?? [])],
+        evidenceRequired: value.wikiSpecTemplate?.evidenceRequired !== false,
+        guidance: value.wikiSpecTemplate?.guidance ?? ""
+      }
+    }])),
     pageTypes: Object.fromEntries(Object.entries(config.pageTypes ?? {}).map(([key, value]) => [key, {
       ...value,
       requiredSections: [...(value.requiredSections ?? [])],
@@ -52,6 +62,27 @@ export function renamePageType(config: KnowledgeRuleConfig, previousId: string, 
   return draft;
 }
 
+export function addDocumentType(config: KnowledgeRuleConfig): KnowledgeRuleConfig {
+  const draft = createRuleDraft(config);
+  const id = nextId("document_type", Object.keys(draft.documentTypes));
+  const doc = normalizeDocumentType({
+    id,
+    label: "新文档类型",
+    description: "说明这类资料进入知识库后应该回答什么问题。",
+    defaultPageTypeId: id,
+    wikiSpecTemplate: {
+      requiredSections: ["概览", "关键规则", "证据"],
+      requiredFacts: ["source"],
+      evidenceRequired: true,
+      guidance: "适用于需要主策划确认口径的新资料类型。"
+    },
+    publishable: true
+  });
+  draft.documentTypes[id] = doc;
+  syncPageTypeFromDocument(draft, doc);
+  return draft;
+}
+
 export function addPageType(config: KnowledgeRuleConfig): KnowledgeRuleConfig {
   const draft = createRuleDraft(config);
   const id = nextId("page_type", Object.keys(draft.pageTypes));
@@ -91,6 +122,39 @@ export function addRelationType(config: KnowledgeRuleConfig): KnowledgeRuleConfi
 export function updateTableRuleTags(config: KnowledgeRuleConfig, field: TableRuleField, value: string): KnowledgeRuleConfig {
   const draft = createRuleDraft(config);
   draft.tableRules = { ...draft.tableRules, [field]: parseTagText(value) };
+  return draft;
+}
+
+export function updateDocumentType(config: KnowledgeRuleConfig, documentTypeId: string, patch: Partial<DocumentTypeSpec>): KnowledgeRuleConfig {
+  const draft = createRuleDraft(config);
+  const spec = draft.documentTypes[documentTypeId];
+  if (!spec) return draft;
+  if (patch.id && patch.id !== documentTypeId) return renameDocumentType(draft, documentTypeId, patch.id);
+  const next = normalizeDocumentType({ ...spec, ...patch, id: documentTypeId });
+  draft.documentTypes[documentTypeId] = next;
+  syncPageTypeFromDocument(draft, next);
+  return draft;
+}
+
+export function setDocumentTypeTags(config: KnowledgeRuleConfig, documentTypeId: string, field: DocumentTagField, value: string): KnowledgeRuleConfig {
+  const draft = createRuleDraft(config);
+  const spec = draft.documentTypes[documentTypeId];
+  if (!spec) return draft;
+  const next = normalizeDocumentType({
+    ...spec,
+    wikiSpecTemplate: {
+      ...spec.wikiSpecTemplate,
+      [field]: parseTagText(value)
+    }
+  });
+  draft.documentTypes[documentTypeId] = next;
+  syncPageTypeFromDocument(draft, next);
+  return draft;
+}
+
+export function removeDocumentType(config: KnowledgeRuleConfig, documentTypeId: string): KnowledgeRuleConfig {
+  const draft = createRuleDraft(config);
+  delete draft.documentTypes[documentTypeId];
   return draft;
 }
 
@@ -150,6 +214,52 @@ export function addQualityRule(config: KnowledgeRuleConfig): KnowledgeRuleConfig
   const id = nextId("quality_rule", Object.keys(draft.qualityRules));
   draft.qualityRules[id] = { severity: "warning", enabled: true, description: "新质量红线" };
   return draft;
+}
+
+function renameDocumentType(config: KnowledgeRuleConfig, previousId: string, nextId: string): KnowledgeRuleConfig {
+  const normalizedId = normalizeId(nextId);
+  if (!normalizedId) return createRuleDraft(config);
+  const draft = createRuleDraft(config);
+  const existing = draft.documentTypes[previousId];
+  if (!existing) return draft;
+  delete draft.documentTypes[previousId];
+  const next = normalizeDocumentType({ ...existing, id: normalizedId });
+  draft.documentTypes[normalizedId] = next;
+  syncPageTypeFromDocument(draft, next);
+  return draft;
+}
+
+function normalizeDocumentType(spec: DocumentTypeSpec): DocumentTypeSpec {
+  const id = normalizeId(spec.id);
+  const defaultPageTypeId = normalizeId(spec.defaultPageTypeId || id);
+  return {
+    id,
+    label: spec.label.trim() || id,
+    description: spec.description.trim(),
+    defaultPageTypeId,
+    wikiSpecTemplate: {
+      requiredSections: [...(spec.wikiSpecTemplate?.requiredSections ?? [])],
+      requiredFacts: [...(spec.wikiSpecTemplate?.requiredFacts ?? [])],
+      evidenceRequired: spec.wikiSpecTemplate?.evidenceRequired !== false,
+      guidance: spec.wikiSpecTemplate?.guidance?.trim() ?? ""
+    },
+    publishable: spec.publishable !== false
+  };
+}
+
+function syncPageTypeFromDocument(draft: KnowledgeRuleConfig, doc: DocumentTypeSpec): void {
+  const pageTypeId = doc.defaultPageTypeId || doc.id;
+  const existing = draft.pageTypes[pageTypeId];
+  draft.pageTypes[pageTypeId] = normalizePageType({
+    id: pageTypeId,
+    label: existing?.label || doc.label.replace(/文档$/, ""),
+    dir: existing?.dir || `${pageTypeId}s`,
+    template: existing?.template || `${doc.id}.md`,
+    requiredSections: [...doc.wikiSpecTemplate.requiredSections],
+    requiredFacts: [...doc.wikiSpecTemplate.requiredFacts],
+    evidenceRequired: doc.wikiSpecTemplate.evidenceRequired,
+    publishable: doc.publishable !== false
+  });
 }
 
 function normalizePageType(spec: PageTypeSpec): PageTypeSpec {

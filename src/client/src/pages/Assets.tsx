@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { Trash2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getComponentContent, getPackage, listPackages, type AssetPackage } from "../api";
+import { deletePackage, getComponentContent, getPackage, listPackages, type AssetPackage } from "../api";
 import { Badge, Metric, Page } from "../components/Atoms";
 import { formatPercent } from "../utils/format";
 
@@ -36,7 +37,9 @@ function formatContent(pathName: string, content: string): string {
 }
 
 export function Assets({ highlightedPackage, onConsumeHighlight }: { highlightedPackage: string | null; onConsumeHighlight: () => void }) {
+  const queryClient = useQueryClient();
   const [selected, setSelected] = useState<string>("");
+  const [deleteError, setDeleteError] = useState("");
   const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 
   useEffect(() => {
@@ -54,12 +57,30 @@ export function Assets({ highlightedPackage, onConsumeHighlight }: { highlighted
   });
 
   const [openFile, setOpenFile] = useState<{ componentId: string } | null>(null);
+  const deleteMutation = useMutation({
+    mutationFn: deletePackage,
+    onSuccess: async () => {
+      setDeleteError("");
+      setOpenFile(null);
+      setSelected("");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    },
+    onError: (error) => setDeleteError(error instanceof Error ? error.message : String(error))
+  });
   const fileContent = useQuery({
     queryKey: ["component-content", effectiveSelected, openFile?.componentId],
     queryFn: () => getComponentContent(effectiveSelected, openFile!.componentId),
     enabled: Boolean(effectiveSelected && openFile),
   });
   const tree = useMemo(() => buildTree(detail.data?.components ?? []), [detail.data]);
+
+  const confirmDelete = (pkg: AssetPackage) => {
+    const confirmed = window.confirm(`确认删除知识资产包「${pkg.name}」？\n\n未发布资产包会连同组件、证据和审核任务一起删除；已被发布版本引用的资产包会被后台拒绝。`);
+    if (confirmed) deleteMutation.mutate(pkg.packageId);
+  };
 
   const renderNode = (node: TreeNode, depth: number): JSX.Element[] =>
     [...node.children.values()]
@@ -103,8 +124,15 @@ export function Assets({ highlightedPackage, onConsumeHighlight }: { highlighted
                   <h2>{detail.data.package.name}</h2>
                   <p>{detail.data.package.description}</p>
                 </div>
-                <Badge label={detail.data.package.status} />
+                <div className="asset-meta">
+                  <Badge label={detail.data.package.status} />
+                  <button className="secondary-action danger" type="button" disabled={deleteMutation.isPending} onClick={() => confirmDelete(detail.data.package)}>
+                    <Trash2 size={15} />
+                    {deleteMutation.isPending ? "删除中..." : "删除资产包"}
+                  </button>
+                </div>
               </div>
+              {deleteError && <p className="error">{deleteError}</p>}
               <div className="evidence-panel">
                 <Metric
                   label="证据覆盖"

@@ -54,6 +54,7 @@ describe("native table and graph stages", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-table-graph-candidates-"));
     try {
       const rules: KnowledgeRuleConfig = {
+        documentTypes: {},
         pageTypes: {},
         entityTypes: [
           { id: "system", label: "System", publishable: true },

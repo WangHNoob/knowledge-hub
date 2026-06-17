@@ -1,5 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
+import { requireRole } from "../middleware/auth";
+import { PackageDeleteConflictError } from "../services/knowledgeService";
 import type { RouteContext } from "./context";
 
 export function registerPackageRoutes(app: FastifyInstance, ctx: RouteContext) {
@@ -29,6 +31,23 @@ export function registerPackageRoutes(app: FastifyInstance, ctx: RouteContext) {
         const message = error instanceof Error ? error.message : "Unable to read component file.";
         const code = /legacy/i.test(message) ? 400 : 404;
         return reply.code(code).send({ error: message });
+      }
+    },
+  );
+
+  app.delete<{ Params: { packageId: string } }>(
+    "/api/packages/:packageId",
+    { preHandler: [app.authenticate, requireRole("admin")] },
+    async (request, reply) => {
+      try {
+        const deleted = await ctx.service.deletePackage(request.params.packageId);
+        if (!deleted) return reply.code(404).send({ error: "Unknown package." });
+        return { deleted: true };
+      } catch (error) {
+        if (error instanceof PackageDeleteConflictError) {
+          return reply.code(409).send({ error: error.message, releaseIds: error.releaseIds });
+        }
+        throw error;
       }
     },
   );

@@ -200,6 +200,22 @@ export interface PageTypeSpec {
   publishable?: boolean;
 }
 
+export interface WikiSpecTemplate {
+  requiredSections: string[];
+  requiredFacts: string[];
+  evidenceRequired: boolean;
+  guidance: string;
+}
+
+export interface DocumentTypeSpec {
+  id: string;
+  label: string;
+  description: string;
+  defaultPageTypeId: string;
+  wikiSpecTemplate: WikiSpecTemplate;
+  publishable?: boolean;
+}
+
 export interface EntityTypeSpec {
   id: string;
   label: string;
@@ -215,6 +231,7 @@ export interface RelationTypeSpec {
 }
 
 export interface KnowledgeRuleConfig {
+  documentTypes: Record<string, DocumentTypeSpec>;
   pageTypes: Record<string, PageTypeSpec>;
   entityTypes: EntityTypeSpec[];
   relationTypes: RelationTypeSpec[];

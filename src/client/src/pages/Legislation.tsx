@@ -6,16 +6,20 @@ import { activateLegislationProfile, createLegislationProfile, getLegislationPro
 import type { KnowledgeRuleConfig, RelationTypeSpec } from "../api/types";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
 import {
+  addDocumentType,
   addEntityType,
   addPageType,
   addQualityRule,
   addRelationType,
   createRuleDraft,
+  removeDocumentType,
   removeEntityType,
   removePageType,
   removeQualityRule,
   removeRelationType,
+  setDocumentTypeTags,
   setPageTypeTags,
+  updateDocumentType,
   updateEntityType,
   updatePageType,
   updateQualityRule,
@@ -23,12 +27,12 @@ import {
   updateTableRuleTags
 } from "./legislationEditor";
 
-type LegislationTab = "pages" | "entities" | "relations" | "tables" | "quality" | "overview" | "json";
+type LegislationTab = "documents" | "entities" | "relations" | "tables" | "quality" | "overview" | "advanced";
 
 export function Legislation() {
   const queryClient = useQueryClient();
   const profiles = useQuery({ queryKey: ["legislation-profile"], queryFn: getLegislationProfile });
-  const [tab, setTab] = useState<LegislationTab>("pages");
+  const [tab, setTab] = useState<LegislationTab>("documents");
   const [name, setName] = useState("策划立法规则");
   const [activate, setActivate] = useState(true);
   const [config, setConfig] = useState<KnowledgeRuleConfig | null>(null);
@@ -83,13 +87,13 @@ export function Legislation() {
   const history = profiles.data?.profiles ?? [];
 
   const tabs: ReadonlyArray<TabItem<LegislationTab>> = [
-    { id: "pages", label: "页面类型", icon: FileText, count: config ? Object.keys(config.pageTypes).length : 0 },
-    { id: "entities", label: "实体类型", icon: Boxes, count: config?.entityTypes.length ?? 0 },
-    { id: "relations", label: "关系类型", icon: Share2, count: config?.relationTypes.length ?? 0 },
+    { id: "documents", label: "文档类型", icon: FileText, count: config ? Object.keys(config.documentTypes).length : 0 },
+    { id: "entities", label: "业务对象", icon: Boxes, count: config?.entityTypes.length ?? 0 },
+    { id: "relations", label: "对象关系", icon: Share2, count: config?.relationTypes.length ?? 0 },
     { id: "tables", label: "表字段", icon: Table },
     { id: "quality", label: "质量红线", icon: ShieldAlert, count: config ? Object.keys(config.qualityRules).length : 0 },
     { id: "overview", label: "概览 / 历史", icon: LayoutDashboard, count: history.length },
-    { id: "json", label: "规则 JSON", icon: Braces }
+    { id: "advanced", label: "高级规则", icon: Braces }
   ];
 
   return (
@@ -127,7 +131,7 @@ export function Legislation() {
           <Loading title="正在加载规则草稿" />
         ) : null}
 
-        {config && tab === "pages" && <PageTypeSection config={config} onChange={setConfig} />}
+        {config && tab === "documents" && <DocumentTypeSection config={config} onChange={setConfig} />}
         {config && tab === "entities" && <EntityTypeSection config={config} onChange={setConfig} />}
         {config && tab === "relations" && <RelationTypeSection config={config} onChange={setConfig} />}
         {config && tab === "tables" && <TableRuleSection config={config} onChange={setConfig} />}
@@ -181,16 +185,19 @@ export function Legislation() {
           </section>
         )}
 
-        {config && tab === "json" && (
-          <section className="release-panel">
-            <div className="detail-head">
-              <div>
-                <h2>规则 JSON 预览 / 导入</h2>
-                <p>这个区域用于开发排查或跨环境复制，不作为策划日常维护入口。</p>
+        {config && tab === "advanced" && (
+          <section className="legislation-workbench">
+            <PageTypeSection config={config} onChange={setConfig} />
+            <section className="release-panel">
+              <div className="detail-head">
+                <div>
+                  <h2>规则 JSON 预览 / 导入</h2>
+                  <p>仅用于开发排查、跨环境复制或批量迁移。策划日常维护建议使用前面的可视化表单。</p>
+                </div>
               </div>
-            </div>
-            <textarea className="code-editor small" value={jsonText} onChange={(event) => setJsonText(event.target.value)} spellCheck={false} />
-            <button className="secondary-action" type="button" onClick={applyJson}>从 JSON 覆盖当前表单</button>
+              <textarea className="code-editor small" value={jsonText} onChange={(event) => setJsonText(event.target.value)} spellCheck={false} />
+              <button className="secondary-action" type="button" onClick={applyJson}>从 JSON 覆盖当前表单</button>
+            </section>
           </section>
         )}
       </div>
@@ -236,20 +243,92 @@ function PageTypeSection({ config, onChange }: EditorSectionProps) {
   );
 }
 
+function DocumentTypeSection({ config, onChange }: EditorSectionProps) {
+  const entries = Object.entries(config.documentTypes);
+  return (
+    <section className="release-panel rule-section">
+      <SectionHead
+        title="文档类型与 Wiki 模板"
+        caption="先定义资料属于哪类文档，再定义这类文档进入 Wiki 时必须写清楚什么。技术目录和模板文件会在高级规则中自动承接。"
+        actionLabel="新增文档类型"
+        onAction={() => onChange(addDocumentType(config))}
+      />
+      <div className="rule-hint">
+        <strong>配置方法</strong>
+        <span>策划只需要维护名称、用途、必填章节、必填事实和证据要求。系统会把这些内容编译成构建 Pipeline 可消费的 Wiki Spec。</span>
+      </div>
+      <div className="rule-card-list">
+        {entries.map(([id, spec]) => (
+          <article className="rule-card document-rule-card" key={id}>
+            <div className="rule-card-head">
+              <div>
+                <strong>{spec.label || id}</strong>
+                <span>{spec.description || "说明这类资料进入知识库后应该如何成文。"}</span>
+              </div>
+              <button className="icon-button danger" type="button" onClick={() => onChange(removeDocumentType(config, id))} aria-label="删除文档类型">
+                <Trash2 size={15} />
+              </button>
+            </div>
+            <div className="rule-grid">
+              <TextField label="文档类型名称" value={spec.label} onChange={(value) => onChange(updateDocumentType(config, id, { label: value }))} />
+              <label className="field-label">
+                生成哪类 Wiki
+                <select value={spec.defaultPageTypeId} onChange={(event) => onChange(updateDocumentType(config, id, { defaultPageTypeId: event.target.value }))}>
+                  {Object.values(config.pageTypes).map((pageType) => (
+                    <option key={pageType.id} value={pageType.id}>{pageType.label}</option>
+                  ))}
+                  {!config.pageTypes[spec.defaultPageTypeId] && <option value={spec.defaultPageTypeId}>{spec.defaultPageTypeId}</option>}
+                </select>
+              </label>
+              <TextAreaField label="用途说明" value={spec.description} onChange={(value) => onChange(updateDocumentType(config, id, { description: value }))} />
+              <TextAreaField
+                label="模板说明"
+                value={spec.wikiSpecTemplate.guidance}
+                onChange={(value) => onChange(updateDocumentType(config, id, { wikiSpecTemplate: { ...spec.wikiSpecTemplate, guidance: value } }))}
+              />
+              <TagField label="必填章节" value={spec.wikiSpecTemplate.requiredSections} onChange={(value) => onChange(setDocumentTypeTags(config, id, "requiredSections", value))} />
+              <TagField label="必填事实" value={spec.wikiSpecTemplate.requiredFacts} onChange={(value) => onChange(setDocumentTypeTags(config, id, "requiredFacts", value))} />
+            </div>
+            <div className="rule-switches">
+              <SwitchField
+                label="关键结论必须有证据"
+                checked={spec.wikiSpecTemplate.evidenceRequired}
+                onChange={(checked) => onChange(updateDocumentType(config, id, { wikiSpecTemplate: { ...spec.wikiSpecTemplate, evidenceRequired: checked } }))}
+              />
+              <SwitchField label="允许进入正式发布" checked={spec.publishable !== false} onChange={(checked) => onChange(updateDocumentType(config, id, { publishable: checked }))} />
+            </div>
+            <details className="advanced-json">
+              <summary>高级标识</summary>
+              <div className="rule-grid two">
+                <TextField label="文档类型 ID" value={spec.id} onChange={(value) => onChange(updateDocumentType(config, id, { id: value }))} />
+                <TextField label="Wiki 类型 ID" value={spec.defaultPageTypeId} onChange={(value) => onChange(updateDocumentType(config, id, { defaultPageTypeId: value }))} />
+              </div>
+            </details>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function EntityTypeSection({ config, onChange }: EditorSectionProps) {
   return (
     <section className="release-panel rule-section">
       <SectionHead
-        title="实体类型"
-        caption="定义图谱里允许出现的业务对象，避免模型把一切都归成 concept。"
-        actionLabel="新增实体"
+        title="业务对象"
+        caption="定义知识图谱里允许出现的对象。对象越清楚，Agent 越不容易把所有内容都归成“概念”。"
+        actionLabel="新增业务对象"
         onAction={() => onChange(addEntityType(config))}
       />
+      <div className="rule-hint">
+        <strong>配置方法</strong>
+        <span>只把团队真正会查询、会关联、会审核的对象放进来，例如系统、活动、配置表、字段、道具、状态、数值项。</span>
+      </div>
       <div className="rule-table">
         <div className="rule-table-row head">
-          <span>标识</span>
-          <span>策划名称</span>
-          <span>可发布</span>
+          <span>对象 ID</span>
+          <span>业务名称</span>
+          <span>允许发布</span>
           <span />
         </div>
         {config.entityTypes.map((entity, index) => (
@@ -271,18 +350,22 @@ function RelationTypeSection({ config, onChange }: EditorSectionProps) {
   return (
     <section className="release-panel rule-section">
       <SectionHead
-        title="关系类型"
-        caption="定义图谱边的业务含义、方向，以及哪些关系允许系统自动生成。"
-        actionLabel="新增关系"
+        title="业务关系"
+        caption="定义对象之间允许建立什么关系，以及哪些关系可以由系统自动采信。方向不清楚的关系会进入候选审核。"
+        actionLabel="新增业务关系"
         onAction={() => onChange(addRelationType(config))}
       />
+      <div className="rule-hint">
+        <strong>配置方法</strong>
+        <span>关系要写成策划能判断的业务口径，例如“活动产出道具”“系统依赖配置表”“字段引用资源”。不确定方向时不要自动采信。</span>
+      </div>
       <div className="rule-table relation-table">
         <div className="rule-table-row head">
-          <span>标识</span>
-          <span>策划名称</span>
+          <span>关系 ID</span>
+          <span>业务名称</span>
           <span>方向</span>
-          <span>自动生成</span>
-          <span>可发布</span>
+          <span>系统采信</span>
+          <span>允许发布</span>
           <span />
         </div>
         {config.relationTypes.map((relation, index) => (
@@ -290,11 +373,11 @@ function RelationTypeSection({ config, onChange }: EditorSectionProps) {
             <input value={relation.id} onChange={(event) => onChange(updateRelationType(config, index, { id: event.target.value }))} />
             <input value={relation.label} onChange={(event) => onChange(updateRelationType(config, index, { label: event.target.value }))} />
             <select value={relation.direction} onChange={(event) => onChange(updateRelationType(config, index, { direction: event.target.value as RelationTypeSpec["direction"] }))}>
-              <option value="source_to_target">从左到右</option>
-              <option value="bidirectional">双向</option>
+              <option value="source_to_target">A 指向 B</option>
+              <option value="bidirectional">A 与 B 双向</option>
             </select>
-            <SwitchField label="自动" checked={relation.autoGenerated} onChange={(checked) => onChange(updateRelationType(config, index, { autoGenerated: checked }))} compact />
-            <SwitchField label="发布" checked={relation.publishable !== false} onChange={(checked) => onChange(updateRelationType(config, index, { publishable: checked }))} compact />
+            <SwitchField label="自动采信" checked={relation.autoGenerated} onChange={(checked) => onChange(updateRelationType(config, index, { autoGenerated: checked }))} compact />
+            <SwitchField label="可发布" checked={relation.publishable !== false} onChange={(checked) => onChange(updateRelationType(config, index, { publishable: checked }))} compact />
             <button className="icon-button danger" type="button" onClick={() => onChange(removeRelationType(config, index))} aria-label="删除关系类型">
               <Trash2 size={15} />
             </button>
@@ -309,6 +392,10 @@ function TableRuleSection({ config, onChange }: EditorSectionProps) {
   return (
     <section className="release-panel rule-section">
       <SectionHead title="表字段推断策略" caption="用字段名后缀区分自动采信和必须人工确认的表关系。" />
+      <div className="rule-hint">
+        <strong>配置方法</strong>
+        <span>例如普通的 Id / Ids 可以自动作为引用关系；RewardId、ItemId、ConditionId 这类业务含义较重的字段，建议先进入候选审核。</span>
+      </div>
       <div className="rule-grid two">
         <TagField
           label="可自动采信的字段后缀"
@@ -331,10 +418,14 @@ function QualityRuleSection({ config, onChange }: EditorSectionProps) {
     <section className="release-panel rule-section">
       <SectionHead
         title="质量红线"
-        caption="定义 blocking / warning / info 规则；构建和发布会读取这些红线。"
+        caption="定义哪些问题必须阻断发布，哪些需要关注，哪些只记录。构建和发布都会读取这些红线。"
         actionLabel="新增红线"
         onAction={() => onChange(addQualityRule(config))}
       />
+      <div className="rule-hint">
+        <strong>配置方法</strong>
+        <span>红线不是越多越好。只把会导致 Agent 答错、无法追溯、关系污染或发布风险的问题设为“阻断发布”。</span>
+      </div>
       {entries.length === 0 ? (
         <p className="muted">当前没有额外质量红线，系统仍会执行内置结构检查。</p>
       ) : (
@@ -350,9 +441,9 @@ function QualityRuleSection({ config, onChange }: EditorSectionProps) {
             <div className="rule-table-row" key={ruleId}>
               <input value={ruleId} onChange={(event) => onChange(renameQualityRule(config, ruleId, event.target.value))} />
               <select value={String(rule.severity ?? "warning")} onChange={(event) => onChange(updateQualityRule(config, ruleId, { severity: event.target.value }))}>
-                <option value="blocking">blocking</option>
-                <option value="warning">warning</option>
-                <option value="info">info</option>
+                <option value="blocking">阻断发布</option>
+                <option value="warning">需要关注</option>
+                <option value="info">仅记录</option>
               </select>
               <input value={String(rule.description ?? "")} onChange={(event) => onChange(updateQualityRule(config, ruleId, { description: event.target.value }))} />
               <SwitchField label="启用" checked={rule.enabled !== false} onChange={(checked) => onChange(updateQualityRule(config, ruleId, { enabled: checked }))} compact />
@@ -399,6 +490,15 @@ function TextField({ label, value, onChange }: { label: string; value: string; o
     <label className="field-label">
       {label}
       <input value={value} onChange={(event) => onChange(event.target.value)} />
+    </label>
+  );
+}
+
+function TextAreaField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className="field-label">
+      {label}
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} />
     </label>
   );
 }

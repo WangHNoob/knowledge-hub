@@ -1,4 +1,4 @@
-import { getJson } from "./http";
+import { deleteJson, getJson } from "./http";
 import type { AssetPackage, ComponentContent, EvidenceCoverage, EvidenceRecord, PackageDetail } from "./types";
 
 export async function listPackages(): Promise<AssetPackage[]> {
@@ -7,6 +7,10 @@ export async function listPackages(): Promise<AssetPackage[]> {
 
 export async function getPackage(packageId: string): Promise<PackageDetail> {
   return getJson(`/api/packages/${encodeURIComponent(packageId)}`);
+}
+
+export async function deletePackage(packageId: string): Promise<boolean> {
+  return (await deleteJson<{ deleted: boolean }>(`/api/packages/${encodeURIComponent(packageId)}`)).deleted;
 }
 
 export async function listEvidence(packageId: string): Promise<{ records: EvidenceRecord[]; coverage: EvidenceCoverage }> {
