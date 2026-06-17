@@ -13,6 +13,7 @@ import {
   type KnowledgeBuildRun
 } from "../api";
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
+import { BuildLogConsole } from "../components/BuildLogConsole";
 import { BuildRunCard } from "../components/BuildRunCard";
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
@@ -363,6 +364,10 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                 />
               ))}
             </div>
+            {(() => {
+              const streamRunId = activeRunId ?? selectedRuns[0]?.runId ?? null;
+              return streamRunId ? <BuildLogConsole key={streamRunId} runId={streamRunId} /> : null;
+            })()}
           </section>
         )}
       </div>

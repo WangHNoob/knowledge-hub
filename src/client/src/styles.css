@@ -2241,3 +2241,13 @@ form button:active:not(:disabled) {
 .asset-viewer { overflow: auto; }
 .viewer-head { display: flex; justify-content: space-between; gap: 8px; padding-bottom: 6px; }
 .viewer-body { white-space: pre-wrap; word-break: break-word; background: #0d1117; color: #d6deeb; padding: 12px; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 12.5px; max-height: 70vh; overflow: auto; }
+.build-console { margin-top: 16px; border-radius: 8px; overflow: hidden; border: 1px solid #1d2430; }
+.build-console-head { display: flex; justify-content: space-between; padding: 6px 12px; background: #11161f; color: #9aa7bd; font-size: 12px; font-family: ui-monospace, monospace; }
+.build-console-head .live { color: #34d399; }
+.build-console-head .ended { color: #6b7280; }
+.build-console-body { background: #0d1117; color: #c8d3e6; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; max-height: 360px; overflow: auto; padding: 8px 12px; }
+.log-line { display: flex; gap: 10px; white-space: pre-wrap; }
+.log-line .log-time { color: #5b667a; }
+.log-line .log-cat { color: #7aa2f7; min-width: 64px; }
+.log-line.lvl-error .log-msg, .log-line.st-failed .log-msg { color: #f87171; }
+.log-line.st-completed .log-msg { color: #34d399; }
