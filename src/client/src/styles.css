@@ -2231,3 +2231,13 @@ form button:active:not(:disabled) {
     padding: 24px;
   }
 }
+
+.asset-browser { display: grid; grid-template-columns: 280px 1fr; gap: 12px; min-height: 360px; }
+.asset-tree { overflow: auto; border-right: 1px solid var(--line, #2a2a2a); padding-right: 8px; }
+.tree-node { display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer; padding: 4px 8px; font-size: 13px; border-radius: 4px; }
+.tree-node:hover { background: rgba(127,127,127,0.12); }
+.tree-node.active { background: rgba(80,140,255,0.18); }
+.tree-node.dir { font-weight: 600; }
+.asset-viewer { overflow: auto; }
+.viewer-head { display: flex; justify-content: space-between; gap: 8px; padding-bottom: 6px; }
+.viewer-body { white-space: pre-wrap; word-break: break-word; background: #0d1117; color: #d6deeb; padding: 12px; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 12.5px; max-height: 70vh; overflow: auto; }
