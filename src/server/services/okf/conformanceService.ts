@@ -34,6 +34,7 @@ async function listMarkdown(root: string): Promise<string[]> {
   async function walk(current: string): Promise<void> {
     const entries = await fs.readdir(current, { withFileTypes: true });
     for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue; // avoid symlink cycles when scanning arbitrary dirs
       const full = path.join(current, entry.name);
       if (entry.isDirectory()) await walk(full);
       else if (entry.isFile() && entry.name.endsWith(".md")) out.push(full);

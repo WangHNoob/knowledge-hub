@@ -68,6 +68,13 @@ describe("scanWorkspace", () => {
     expect(report.issues.some((i) => i.okfPath === "/index.md")).toBe(false);
   });
 
+  it("walks nested directories more than one level deep", async () => {
+    write("a/b/c/deep.md", `---\ntype: system_rule\ntitle: Deep\n---\nx`);
+    const report = await scanWorkspace(dir, { now: "2026-06-17T00:00:00Z" });
+    expect(report.issues.some((i) => i.okfPath === "/a/b/c/deep.md")).toBe(true);
+    expect(report.conceptCount).toBe(1);
+  });
+
   it("does not modify any scanned file", async () => {
     const f = write("systems/f.md", `---\ntype: system_rule\ntitle: F\n---\nx`);
     const before = statSync(f).mtimeMs;
