@@ -54,3 +54,30 @@ describe("formatSseFrame", () => {
     expect(formatSseFrame({ ok: true }, "done")).toBe(`event: done\ndata: {"ok":true}\n\n`);
   });
 });
+
+import { mkdirSync as mkd, writeFileSync as wf } from "node:fs";
+import { runExtractStage } from "../src/server/services/kbBuilder/extractStage";
+import { loadWikiSpecs } from "../src/server/services/kbBuilder/specs";
+
+describe("runExtractStage onProgress", () => {
+  it("invokes onProgress once per parsed document", async () => {
+    const ws = mkdtempSync(path.join(tmpdir(), "kh-extract-"));
+    const specDir = path.join(ws, "processed", "wiki_specs");
+    mkd(specDir, { recursive: true });
+    wf(path.join(specDir, "manifest.json"), JSON.stringify({ page_types: { concept: { dir: "concepts", template: "concept.md" } }, entity_types: [], relation_types: [] }));
+    wf(path.join(specDir, "concept.md"), "## Overview\n");
+    const parsed = path.join(ws, "processed", "parsed");
+    mkd(parsed, { recursive: true });
+    wf(path.join(parsed, "a.md"), "# A\nbody");
+    wf(path.join(parsed, "b.md"), "# B\nbody");
+
+    const specs = loadWikiSpecs(specDir);
+    const messages: string[] = [];
+    await runExtractStage({
+      dataDir: ws, specs, model: "deterministic", force: true, only: null,
+      onProgress: (info) => messages.push(info.message),
+    });
+    expect(messages.length).toBe(2);
+    rmSync(ws, { recursive: true, force: true });
+  });
+});

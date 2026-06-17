@@ -34,6 +34,7 @@ type ExtractOptions = {
   modelConfig?: PipelineModelConfig;
   force: boolean;
   only: string | null;
+  onProgress?: (info: { message: string; index: number; total: number }) => void;
 };
 
 export async function runExtractStage(options: ExtractOptions): Promise<StageResult> {
@@ -52,9 +53,13 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   }
 
   const only = normalizeOnlyFilter(options.only);
-  for (const absolute of walkMarkdownFiles(parsedDir)) {
+  const files = walkMarkdownFiles(parsedDir).filter((absolute) => {
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
-    if (only && !matchesOnlyFilter(rel, only)) continue;
+    return !only || matchesOnlyFilter(rel, only);
+  });
+  for (let index = 0; index < files.length; index += 1) {
+    const absolute = files[index];
+    const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
     const extracted = await extractPage(markdown, rel, options);
@@ -77,6 +82,7 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     writeFileSync(wikiAbs, renderWikiMarkdown(extracted));
     writeFileSync(metaAbs, `${JSON.stringify(toMetaJson(extracted, wikiRel), null, 2)}\n`);
     outputPaths.push(wikiRel, metaRel);
+    options.onProgress?.({ message: `extract ${index + 1}/${files.length}: ${rel} → ${extracted.type}`, index, total: files.length });
   }
 
   outputPaths.sort();

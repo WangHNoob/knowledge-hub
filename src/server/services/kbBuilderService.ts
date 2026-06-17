@@ -160,7 +160,28 @@ export class KbBuilderPipelineService {
       await this.ensureRunActive(runId);
       if (stages.includes("convert")) await this.withStage(runId, options, "convert", async () => runConvertStage({ dataDir: workspace.dataDir, force: options.force, only: options.only }));
       await this.ensureRunActive(runId);
-      if (stages.includes("extract")) await this.withStage(runId, options, "extract", async () => runExtractStage({ dataDir: workspace.dataDir, specs, model: modelName(modelConfig), modelConfig, force: options.force, only: options.only }));
+      if (stages.includes("extract")) await this.withStage(runId, options, "extract", async () => runExtractStage({
+        dataDir: workspace.dataDir,
+        specs,
+        model: modelName(modelConfig),
+        modelConfig,
+        force: options.force,
+        only: options.only,
+        onProgress: (info) => {
+          void this.diagnostics?.write({
+            traceId: options.traceId,
+            category: "kb_build",
+            status: "event",
+            level: "info",
+            message: info.message,
+            actor: options.requestedBy,
+            entityType: "build_run",
+            entityId: runId,
+            runId,
+            context: { stage: "extract", index: info.index, total: info.total },
+          });
+        },
+      }));
       await this.ensureRunActive(runId);
       if (stages.includes("tables")) await this.withStage(runId, options, "tables", async () => runTableStage({ dataDir: workspace.dataDir, force: options.force, rules: ruleProfile.config }));
       await this.ensureRunActive(runId);
