@@ -8,6 +8,7 @@ import pg from "pg";
 
 import { createDatabase } from "../src/server/db";
 import { createDiagnosticLogger } from "../src/server/services/diagnosticService";
+import { formatSseFrame } from "../src/server/services/sse";
 import type { DatabaseHandle } from "../src/server/types";
 import { TEST_DATABASE_URL } from "./helpers/testEnv";
 
@@ -41,5 +42,15 @@ describe("DiagnosticLogger event bus", () => {
     unsub();
     await logger.write({ category: "kb_build", message: "second", runId: "run_1", status: "event" });
     expect(seen).toEqual(["first"]);
+  });
+});
+
+describe("formatSseFrame", () => {
+  it("formats a data frame terminated by a blank line", () => {
+    const frame = formatSseFrame({ a: 1, msg: "x" });
+    expect(frame).toBe(`data: {"a":1,"msg":"x"}\n\n`);
+  });
+  it("supports an event name", () => {
+    expect(formatSseFrame({ ok: true }, "done")).toBe(`event: done\ndata: {"ok":true}\n\n`);
   });
 });
