@@ -58,3 +58,21 @@ function stringValue(value: unknown, fallback: string): string {
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
+
+export function extractMaxTokens(): number {
+  return readPositiveInt("KH_KB_EXTRACT_MAX_TOKENS", 4096);
+}
+
+export function probeMaxTokens(): number {
+  return readPositiveInt("KH_MODEL_PROBE_MAX_TOKENS", 1);
+}
+
+function readPositiveInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name}: expected positive integer, got "${raw}"`);
+  }
+  return parsed;
+}

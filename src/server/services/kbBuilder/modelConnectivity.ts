@@ -1,4 +1,5 @@
 import type { PipelineModelConfig } from "./modelConfig";
+import { probeMaxTokens } from "./modelConfig";
 
 export interface ModelConnectivityResult {
   ok: boolean;
@@ -52,7 +53,7 @@ async function testOpenAIConnectivity(
       },
       body: JSON.stringify({
         model: config.model,
-        max_tokens: 1,
+        max_tokens: probeMaxTokens(),
         messages: [
           { role: "system", content: "Reply with ok." },
           { role: "user", content: "ping" },
@@ -100,7 +101,7 @@ async function testAnthropicConnectivity(
       },
       body: JSON.stringify({
         model: config.model,
-        max_tokens: 1,
+        max_tokens: probeMaxTokens(),
         system: "Reply with ok.",
         messages: [
           { role: "user", content: [{ type: "text", text: "ping" }] },
