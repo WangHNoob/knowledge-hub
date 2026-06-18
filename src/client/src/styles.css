@@ -440,6 +440,22 @@ nav {
   gap: 16px;
 }
 
+/* Event/task cards whose middle column carries wrapping ID chips: let it grow,
+   constrain its width, and top-align the row so the badge/timestamp don't drift. */
+.event,
+.task { align-items: flex-start; }
+.event > div,
+.task > div {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.event > div span,
+.event > div small { word-break: break-word; }
+.event > small { flex-shrink: 0; white-space: nowrap; }
+
 .detail-head {
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
