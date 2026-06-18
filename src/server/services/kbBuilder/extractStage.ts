@@ -3,7 +3,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { z } from "zod";
 import type { PipelineModelConfig } from "./modelConfig";
 import { extractMaxTokens } from "./modelConfig";
-import { createLlmClient, type LlmClient } from "./llmClient";
+import { createLlmClient, type JsonSchemaSpec, type LlmClient } from "./llmClient";
 import type { WikiSpecSet } from "./specs";
 import type { StageResult } from "./types";
 
@@ -101,9 +101,10 @@ async function extractPage(markdown: string, rel: string, client: LlmClient | nu
 
   try {
     const completion = await client.complete({
-      system: `Extract a wiki page from markdown. Return only JSON with type, title, source, facts, entities, relationships, and body.\n${guidance}`,
+      system: `Extract a wiki page from markdown. Return only JSON with type, title, source, facts (an array of {key, value} objects), entities, relationships, and body.\n${guidance}`,
       user: `Source path: processed/parsed/${rel}\n\n${markdown}`,
       maxTokens: extractMaxTokens(),
+      jsonSchema: EXTRACTED_PAGE_SCHEMA,
       jsonMode: true,
     });
     return parseExtractedPage(completion.text, markdown, rel);
@@ -131,17 +132,50 @@ function resolveModelConfig(options: ExtractOptions): PipelineModelConfig {
   return { provider: "deterministic", model: "deterministic" };
 }
 
-// Contract for the model's JSON output. Every field is tolerant: wrong-typed or
-// missing values collapse to undefined/[] (via .catch) instead of failing the
-// whole parse, so a slightly-off response still yields a usable page. Missing
-// scalars are backfilled from deterministicFallback in parseExtractedPage.
+// Canonical contract for an extracted page. Drives (a) the JSON Schema sent to
+// the model for native structured output and (b) what the prompt asks for.
+// `facts` is a key/value array, not an open map, because strict structured
+// output forbids open-ended objects (additionalProperties must be false).
+const GenerationSchema = z.object({
+  type: z.string(),
+  title: z.string(),
+  source: z.string(),
+  facts: z.array(z.object({ key: z.string(), value: z.string() })),
+  entities: z.array(z.object({ name: z.string(), type: z.string() })),
+  relationships: z.array(z.object({ source: z.string(), relation: z.string(), target: z.string() })),
+  body: z.string(),
+});
+
+// JSON Schema for the wire, tightened to the strict-mode subset both providers
+// require: $schema stripped, every object closed (additionalProperties: false)
+// with all of its keys marked required.
+const EXTRACTED_PAGE_SCHEMA: JsonSchemaSpec = {
+  name: "extracted_page",
+  schema: tightenSchema(z.toJSONSchema(GenerationSchema)) as Record<string, unknown>,
+};
+
+// Lenient validation of the *returned* text. Native structured output should
+// already conform, but degraded modes (json_object / plain prompt) may not, so
+// every field tolerates wrong types / omissions via .catch and still yields a
+// usable page. facts accepts both the key/value array (structured) and a bare
+// map (what a model may emit in prompt-only mode).
 const optionalString = z.string().trim().min(1).optional().catch(undefined);
 const ModelPageSchema = z
   .object({
     type: optionalString,
     title: optionalString,
     source: optionalString,
-    facts: z.record(z.string(), z.coerce.string()).optional().catch(undefined),
+    facts: z
+      .union([
+        z.array(
+          z
+            .object({ key: optionalString, value: z.coerce.string().optional() })
+            .catch({ key: undefined, value: undefined }),
+        ),
+        z.record(z.string(), z.coerce.string()),
+      ])
+      .optional()
+      .catch(undefined),
     entities: z
       .array(z.object({ name: optionalString, type: optionalString }).catch({ name: undefined, type: undefined }))
       .optional()
@@ -158,6 +192,25 @@ const ModelPageSchema = z
   })
   .catch({});
 
+// Force a generated JSON Schema into the strict-mode subset both OpenAI
+// (strict: true) and Anthropic (output_config) accept.
+function tightenSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(tightenSchema);
+  if (node && typeof node === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === "$schema") continue;
+      out[key] = tightenSchema(value);
+    }
+    if (out.type === "object" && out.properties && typeof out.properties === "object") {
+      out.additionalProperties = false;
+      out.required = Object.keys(out.properties as Record<string, unknown>);
+    }
+    return out;
+  }
+  return node;
+}
+
 function parseExtractedPage(text: string, markdown: string, rel: string): ExtractedPage {
   const data = ModelPageSchema.parse(parseModelJson(text, rel));
   const fallback = deterministicFallback(markdown, rel);
@@ -165,7 +218,7 @@ function parseExtractedPage(text: string, markdown: string, rel: string): Extrac
     type: data.type ?? fallback.type,
     title: data.title ?? fallback.title,
     source: data.source ?? fallback.source,
-    facts: data.facts ?? {},
+    facts: factsToRecord(data.facts),
     entities: (data.entities ?? []).map((entity) => ({
       name: entity.name ?? fallback.title,
       type: entity.type ?? "concept",
@@ -177,6 +230,22 @@ function parseExtractedPage(text: string, markdown: string, rel: string): Extrac
     })),
     body: data.body ?? fallback.body,
   };
+}
+
+// Normalize facts to a map whether the model returned a {key,value} array
+// (structured output) or a bare object (prompt-only mode).
+function factsToRecord(
+  facts: Array<{ key?: string; value?: string }> | Record<string, string> | undefined,
+): Record<string, string> {
+  if (!facts) return {};
+  if (Array.isArray(facts)) {
+    const out: Record<string, string> = {};
+    for (const entry of facts) {
+      if (entry?.key) out[entry.key] = entry.value ?? "";
+    }
+    return out;
+  }
+  return facts;
 }
 
 // Steer the model to emit a page `type` from the active legislation profile's
@@ -192,7 +261,7 @@ function buildSpecGuidance(specs: WikiSpecSet): string {
     if (!spec) continue;
     const parts: string[] = [];
     if (spec.requiredSections.length) parts.push(`required sections (use as "## " headings in body): ${spec.requiredSections.join(", ")}`);
-    if (spec.requiredFacts.length) parts.push(`required facts keys: ${spec.requiredFacts.join(", ")}`);
+    if (spec.requiredFacts.length) parts.push(`required facts (include each as a {key, value} entry): ${spec.requiredFacts.join(", ")}`);
     if (parts.length) lines.push(`- ${id}: ${parts.join("; ")}`);
   }
   if (specs.entityTypes.size) lines.push(`Each entity "type" should be one of: ${[...specs.entityTypes].join(", ")}.`);

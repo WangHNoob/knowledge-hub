@@ -2,18 +2,31 @@ import type { PipelineModelConfig } from "./modelConfig";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+/** A JSON Schema (derived from a Zod schema) plus the name the provider requires. */
+export interface JsonSchemaSpec {
+  name: string;
+  schema: Record<string, unknown>;
+}
+
 /**
  * Provider-agnostic completion request. Callers describe *what* they want, not
- * how a given provider's wire format spells it. `jsonMode` is a best-effort
- * hint: providers that support it constrain output to a JSON object; providers
- * that don't (or models that reject the param) silently fall back to prompt-only
- * steering, so switching models never breaks the pipeline.
+ * how a given provider's wire format spells it.
+ *
+ * Output-shape preference is best-effort and degrades gracefully so switching
+ * models never breaks the pipeline:
+ *   - `jsonSchema` → native structured output (OpenAI `response_format:
+ *     json_schema` / Anthropic `output_config.format`); the strongest guarantee.
+ *   - `jsonMode`   → JSON object mode (OpenAI `response_format: json_object`).
+ * A provider/model that rejects the stronger mode is downgraded one step and
+ * retried, and the capability is remembered for the rest of the run. Callers
+ * should still validate the returned text against their schema.
  */
 export interface LlmCompletionRequest {
   system: string;
   user: string;
   maxTokens?: number;
   jsonMode?: boolean;
+  jsonSchema?: JsonSchemaSpec;
 }
 
 export interface LlmCompletionResult {
@@ -51,14 +64,17 @@ export function createLlmClient(config: PipelineModelConfig, fetchImpl: FetchLik
   return new OpenAiCompatibleClient(config, fetchImpl);
 }
 
+// OpenAI structured-output capability, strongest first. Negotiated downward
+// when a gateway rejects a level, and remembered for the rest of the run.
+//   2 = response_format: json_schema   1 = response_format: json_object   0 = none
+type JsonLevel = 0 | 1 | 2;
+
 class OpenAiCompatibleClient implements LlmClient {
   readonly provider = "openai-compatible" as const;
   readonly model: string;
   private readonly baseUrl: string;
   private readonly apiKey?: string;
-  // Remembered per client instance: once a model rejects response_format we stop
-  // sending it for the rest of this run instead of paying a failed request each call.
-  private jsonModeSupported = true;
+  private maxJsonLevel: JsonLevel = 2;
 
   constructor(config: Extract<PipelineModelConfig, { provider: "openai-compatible" }>, private readonly fetchImpl: FetchLike) {
     this.model = config.model;
@@ -67,29 +83,35 @@ class OpenAiCompatibleClient implements LlmClient {
   }
 
   async complete(request: LlmCompletionRequest): Promise<LlmCompletionResult> {
-    const wantJsonMode = Boolean(request.jsonMode) && this.jsonModeSupported;
-    const response = await this.post(request, wantJsonMode);
+    let level = this.desiredLevel(request);
+    while (true) {
+      const response = await this.post(request, level);
+      if (response.ok) return { text: await readChatContent(response, this.model) };
 
-    if (response.ok) return { text: await readChatContent(response, this.model) };
-
-    const body = await safeText(response);
-    // Many "OpenAI-compatible" gateways don't implement response_format/json_object
-    // and reject it with a 400. Drop the param, remember it, and retry once.
-    if (wantJsonMode && response.status === 400 && mentionsResponseFormat(body)) {
-      this.jsonModeSupported = false;
-      const retry = await this.post(request, false);
-      if (retry.ok) return { text: await readChatContent(retry, this.model) };
-      throw httpError(this.model, retry.status, retry.statusText, await safeText(retry));
+      const body = await safeText(response);
+      // Many "OpenAI-compatible" gateways don't implement response_format (json_schema
+      // or json_object) and reject it with a 400. Step down one level, remember it,
+      // and retry — schema → object → plain — instead of failing the run.
+      if (level > 0 && response.status === 400 && mentionsStructuredOutput(body)) {
+        level = (level - 1) as JsonLevel;
+        this.maxJsonLevel = level;
+        continue;
+      }
+      throw httpError(this.model, response.status, response.statusText, body);
     }
-    throw httpError(this.model, response.status, response.statusText, body);
   }
 
   async ping(request: LlmCompletionRequest): Promise<void> {
-    const response = await this.post(request, false);
+    const response = await this.post(request, 0);
     if (!response.ok) throw httpError(this.model, response.status, response.statusText, await safeText(response));
   }
 
-  private post(request: LlmCompletionRequest, useJsonMode: boolean): Promise<Response> {
+  private desiredLevel(request: LlmCompletionRequest): JsonLevel {
+    const wanted: JsonLevel = request.jsonSchema ? 2 : request.jsonMode ? 1 : 0;
+    return Math.min(wanted, this.maxJsonLevel) as JsonLevel;
+  }
+
+  private post(request: LlmCompletionRequest, level: JsonLevel): Promise<Response> {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: [
@@ -98,7 +120,14 @@ class OpenAiCompatibleClient implements LlmClient {
       ],
     };
     if (request.maxTokens != null) body.max_tokens = request.maxTokens;
-    if (useJsonMode) body.response_format = { type: "json_object" };
+    if (level === 2 && request.jsonSchema) {
+      body.response_format = {
+        type: "json_schema",
+        json_schema: { name: request.jsonSchema.name, strict: true, schema: request.jsonSchema.schema },
+      };
+    } else if (level >= 1) {
+      body.response_format = { type: "json_object" };
+    }
     return this.fetchImpl(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -115,6 +144,7 @@ class AnthropicClient implements LlmClient {
   readonly model: string;
   private readonly endpoint: string;
   private readonly apiKey?: string;
+  private structuredSupported = true;
 
   constructor(config: Extract<PipelineModelConfig, { provider: "anthropic" }>, private readonly fetchImpl: FetchLike) {
     this.model = config.model;
@@ -123,27 +153,39 @@ class AnthropicClient implements LlmClient {
   }
 
   async complete(request: LlmCompletionRequest): Promise<LlmCompletionResult> {
-    const response = await this.post(request);
-    if (!response.ok) {
-      throw httpError(this.model, response.status, response.statusText, await safeText(response), this.endpoint);
-    }
+    const useSchema = Boolean(request.jsonSchema) && this.structuredSupported;
+    const response = await this.post(request, useSchema);
+    if (response.ok) return { text: await readMessageContent(response, this.model) };
 
-    const json = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
-    const content = json.content?.find((item) => item.type === "text" && item.text)?.text;
-    if (!content) throw new LlmError(`${this.model} returned no content`);
-    return { text: content };
+    const body = await safeText(response);
+    // Older models / proxies may not support output_config structured outputs.
+    // Drop it, remember, and retry on prompt-only steering.
+    if (useSchema && response.status === 400 && mentionsStructuredOutput(body)) {
+      this.structuredSupported = false;
+      const retry = await this.post(request, false);
+      if (retry.ok) return { text: await readMessageContent(retry, this.model) };
+      throw httpError(this.model, retry.status, retry.statusText, await safeText(retry), this.endpoint);
+    }
+    throw httpError(this.model, response.status, response.statusText, body, this.endpoint);
   }
 
   async ping(request: LlmCompletionRequest): Promise<void> {
-    const response = await this.post(request);
+    const response = await this.post(request, false);
     if (!response.ok) {
       throw httpError(this.model, response.status, response.statusText, await safeText(response), this.endpoint);
     }
   }
 
-  private post(request: LlmCompletionRequest): Promise<Response> {
-    // Anthropic has no response_format param; JSON output is steered by the
-    // prompt, so jsonMode needs no special handling here. max_tokens is required.
+  private post(request: LlmCompletionRequest, useSchema: boolean): Promise<Response> {
+    const body: Record<string, unknown> = {
+      model: this.model,
+      max_tokens: request.maxTokens ?? 4096,
+      system: request.system,
+      messages: [{ role: "user", content: [{ type: "text", text: request.user }] }],
+    };
+    if (useSchema && request.jsonSchema) {
+      body.output_config = { format: { type: "json_schema", schema: request.jsonSchema.schema } };
+    }
     return this.fetchImpl(this.endpoint, {
       method: "POST",
       headers: {
@@ -151,12 +193,7 @@ class AnthropicClient implements LlmClient {
         "x-api-key": this.apiKey ?? "",
         "anthropic-version": "2023-06-01",
       },
-      body: JSON.stringify({
-        model: this.model,
-        max_tokens: request.maxTokens ?? 4096,
-        system: request.system,
-        messages: [{ role: "user", content: [{ type: "text", text: request.user }] }],
-      }),
+      body: JSON.stringify(body),
     });
   }
 }
@@ -187,14 +224,21 @@ async function readChatContent(response: Response, model: string): Promise<strin
   return content;
 }
 
+async function readMessageContent(response: Response, model: string): Promise<string> {
+  const json = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
+  const content = json.content?.find((item) => item.type === "text" && item.text)?.text;
+  if (!content) throw new LlmError(`${model} returned no content`);
+  return content;
+}
+
 function httpError(model: string, status: number, statusText: string, body: string, endpoint?: string): LlmError {
   const where = endpoint ? `（请求地址：${endpoint}）` : "";
   const detail = body ? ` — ${body.length > 800 ? `${body.slice(0, 800)}…` : body}` : "";
   return new LlmError(`${model} request failed: ${status} ${statusText}${where}${detail}`, { status, body });
 }
 
-function mentionsResponseFormat(body: string): boolean {
-  return /response_format|json_object/i.test(body);
+function mentionsStructuredOutput(body: string): boolean {
+  return /response_format|json_object|json_schema|output_config|structured\s*output/i.test(body);
 }
 
 async function safeText(response: Response): Promise<string> {
