@@ -779,6 +779,71 @@ code {
   margin: 0;
 }
 
+.actionable-task > div,
+.actionable-event > div {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.feedback-brief {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.feedback-brief div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  min-width: 0;
+}
+
+.feedback-brief span {
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.feedback-brief strong {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.raw-feedback {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.raw-feedback summary {
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+.raw-feedback p {
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.task-primary-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.split-actions {
+  display: grid;
+  align-items: stretch;
+}
+
 .asset-item,
 .source-row,
 .task,
@@ -2521,6 +2586,7 @@ button.id-chip.clickable:hover {
 .review-toolbar { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
 .review-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .task-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.task-actions.split-actions { display: grid; align-items: stretch; }
 .task-actions .task-note { flex: 1; min-width: 160px; }
 .task-actions .primary-action,
 .task-actions .secondary-action { padding: 6px 14px; }

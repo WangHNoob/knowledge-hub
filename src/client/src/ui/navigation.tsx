@@ -22,6 +22,8 @@ export interface NavParams {
   versionId?: string;
   releaseId?: string;
   severity?: string;
+  toolName?: string;
+  query?: string;
 }
 
 export interface NavContextValue {

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listReviewTasks, transitionReviewTasks, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { formatTime } from "../utils/format";
+import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
 import { IdChip, useNav } from "../ui/navigation";
 
 const SEVERITY_OPTIONS = [
@@ -35,6 +36,13 @@ function taskCategory(task: ReviewTask): string {
   if (/spec|frontmatter|字段|facts/.test(text)) return "结构";
   if (/graph|relation|关系|图谱/.test(text)) return "图谱";
   return "质量";
+}
+
+function resolutionLabel(insight: FeedbackInsight): string {
+  if (insight.problem === "evidence") return "标记已补证据";
+  if (insight.problem === "miss" || insight.problem === "repeated") return "标记已补资产";
+  if (insight.problem === "quality") return "标记已修复质量";
+  return "标记已处理";
 }
 
 export function Review() {
@@ -127,49 +135,106 @@ export function Review() {
 
       <div className="task-list">
         {tasks.map((task) => (
-          <article className="task" key={task.taskId}>
-            <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />
-            <div>
-              <div className="task-title-row">
-                <h3>{task.title}</h3>
-                <Badge label={taskCategory(task)} />
-              </div>
-              <p>{task.description}</p>
-              <strong>{task.suggestedAction}</strong>
-              <div className="asset-link">
-                <Badge label={STATUS_LABEL[task.status] ?? task.status} tone={task.status === "open" ? "warn" : "ok"} />
-                <IdChip label={task.packageId} title="在知识资产中查看该资产包" onClick={() => navigate("assets", { packageId: task.packageId })} />
-                {task.componentId && (
-                  <IdChip label={task.componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { packageId: task.packageId, componentId: task.componentId })} />
-                )}
-              </div>
-              {task.status !== "open" && task.resolvedBy && (
-                <small className="resolution-meta">
-                  由 {task.resolvedBy} 于 {formatTime(task.resolvedAt ?? "")} {STATUS_LABEL[task.status]}
-                  {task.resolutionNote ? `：${task.resolutionNote}` : ""}
-                </small>
-              )}
-              {task.status === "open" ? (
-                <div className="task-actions">
-                  <input
-                    className="task-note"
-                    placeholder="处理备注（可选）"
-                    value={notes[task.taskId] ?? ""}
-                    onChange={(event) => setNotes((prev) => ({ ...prev, [task.taskId]: event.target.value }))}
-                  />
-                  <button className="primary-action" type="button" disabled={transition.isPending} onClick={() => act(task, "resolved")}>解决</button>
-                  <button className="secondary-action" type="button" disabled={transition.isPending} onClick={() => act(task, "dismissed")}>忽略</button>
-                </div>
-              ) : (
-                <div className="task-actions">
-                  <button className="secondary-action" type="button" disabled={transition.isPending} onClick={() => act(task, "open")}>重新打开</button>
-                </div>
-              )}
-            </div>
-          </article>
+          <ReviewTaskCard
+            key={task.taskId}
+            task={task}
+            note={notes[task.taskId] ?? ""}
+            isPending={transition.isPending}
+            onNote={(note) => setNotes((prev) => ({ ...prev, [task.taskId]: note }))}
+            onTransition={(next) => act(task, next)}
+            onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
+            onNavigateAsset={(componentId) => navigate("assets", { packageId: task.packageId, componentId })}
+            onRetest={(insight) => navigate("agent", { toolName: insight.toolName, query: insight.queryText })}
+          />
         ))}
         {tasks.length === 0 && <p className="subtle">没有符合条件的审核任务。</p>}
       </div>
     </Page>
+  );
+}
+
+function ReviewTaskCard({
+  task,
+  note,
+  isPending,
+  onNote,
+  onTransition,
+  onNavigatePackage,
+  onNavigateAsset,
+  onRetest,
+}: {
+  task: ReviewTask;
+  note: string;
+  isPending: boolean;
+  onNote: (note: string) => void;
+  onTransition: (next: "open" | "resolved" | "dismissed") => void;
+  onNavigatePackage: () => void;
+  onNavigateAsset: (componentId: string) => void;
+  onRetest: (insight: FeedbackInsight) => void;
+}) {
+  const insight = insightFromTask(task);
+  const componentIds = insight.componentIds.length ? insight.componentIds : task.componentId ? [task.componentId] : [];
+  return (
+    <article className="task actionable-task">
+      <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />
+      <div>
+        <div className="task-title-row">
+          <h3>{insight.headline}</h3>
+          <Badge label={taskCategory(task)} />
+          <Badge label={STATUS_LABEL[task.status] ?? task.status} tone={task.status === "open" ? "warn" : "ok"} />
+        </div>
+        <div className="feedback-brief">
+          <div>
+            <span>触发查询</span>
+            <strong>{insight.toolName}:{insight.queryText}</strong>
+          </div>
+          <div>
+            <span>影响</span>
+            <strong>{insight.impact}</strong>
+          </div>
+          <div>
+            <span>下一步</span>
+            <strong>{insight.nextStep}</strong>
+          </div>
+        </div>
+        <details className="raw-feedback">
+          <summary>查看原始反馈</summary>
+          <p>{task.description}</p>
+          <strong>{task.suggestedAction}</strong>
+        </details>
+        <div className="asset-link">
+          <IdChip label={task.packageId} title="在知识资产中查看该资产包" onClick={onNavigatePackage} />
+          {componentIds.map((componentId) => (
+            <IdChip key={componentId} label={componentId} title="定位这个命中组件" onClick={() => onNavigateAsset(componentId)} />
+          ))}
+        </div>
+        {task.status !== "open" && task.resolvedBy && (
+          <small className="resolution-meta">
+            由 {task.resolvedBy} 于 {formatTime(task.resolvedAt ?? "")} {STATUS_LABEL[task.status]}
+            {task.resolutionNote ? `：${task.resolutionNote}` : ""}
+          </small>
+        )}
+        {task.status === "open" ? (
+          <div className="task-actions split-actions">
+            <div className="task-primary-actions">
+              {componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(componentIds[0])}>查看命中资产</button>}
+              <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>
+              <button className="primary-action" type="button" disabled={isPending} onClick={() => onTransition("resolved")}>{resolutionLabel(insight)}</button>
+              <button className="secondary-action" type="button" disabled={isPending} onClick={() => onTransition("dismissed")}>不影响本版</button>
+            </div>
+            <input
+              className="task-note"
+              placeholder="处理备注：补了哪个来源、为什么先放行..."
+              value={note}
+              onChange={(event) => onNote(event.target.value)}
+            />
+          </div>
+        ) : (
+          <div className="task-actions">
+            <button className="secondary-action" type="button" disabled={isPending} onClick={() => onTransition("open")}>重新打开</button>
+          </div>
+        )}
+      </div>
+    </article>
   );
 }

@@ -1,9 +1,10 @@
 import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type KnowledgeEnvelope } from "../api";
+import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
+import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
 import { IdChip, useNav } from "../ui/navigation";
 
 const MCP_TOOLS = [
@@ -30,7 +31,7 @@ const MCP_TOOLS = [
 type AgentTab = "connect" | "simulate" | "audit" | "feedback" | "attribution";
 
 export function AgentFeedback() {
-  const { navigate } = useNav();
+  const { navigate, params } = useNav();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<AgentTab>("simulate");
   const [toolName, setToolName] = useState("kb_search");
@@ -50,6 +51,18 @@ export function AgentFeedback() {
       ]);
     }
   });
+  useEffect(() => {
+    if (!params.toolName && !params.query) return;
+    if (params.toolName) setToolName(params.toolName);
+    if (params.query) setPayload(JSON.stringify({ query: params.query }, null, 2));
+    setTab("simulate");
+  }, [params.toolName, params.query]);
+
+  const retest = (insight: FeedbackInsight) => {
+    setToolName(insight.toolName || "kb_search");
+    setPayload(JSON.stringify({ query: insight.queryText }, null, 2));
+    setTab("simulate");
+  };
   if (events.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
   if (events.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? audit.error ?? outputAudits.error} />;
   const eventRows = events.data ?? [];
@@ -200,22 +213,13 @@ export function AgentFeedback() {
             <h2>反馈回流</h2>
             <div className="event-list">
               {(events.data ?? []).map((event) => (
-                <article className="event" key={event.eventId}>
-                  <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
-                  <div>
-                    <strong>{event.query}</strong>
-                    <span>{event.hitComponentIds.length ? "命中组件：" : "未命中任何资产"}</span>
-                    {event.hitComponentIds.length > 0 && (
-                      <div className="asset-link">
-                        {event.hitComponentIds.map((componentId) => (
-                          <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
-                        ))}
-                      </div>
-                    )}
-                    {event.suggestedAction && <small>{event.suggestedAction}</small>}
-                  </div>
-                  <small>{event.taskId || event.createdAt}</small>
-                </article>
+                <AgentFeedbackCard
+                  key={event.eventId}
+                  event={event}
+                  onRetest={retest}
+                  onNavigateReview={() => navigate("review")}
+                  onNavigateAsset={(componentId) => navigate("assets", { componentId })}
+                />
               ))}
               {(events.data ?? []).length === 0 && <p className="subtle">暂无反馈记录。</p>}
             </div>
@@ -265,4 +269,56 @@ function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: strin
     items.push({ title: "可用结果", body: "当前命中没有质量 flags，可以作为一次飞轮闭环通过样例。" });
   }
   return items;
+}
+
+function AgentFeedbackCard({
+  event,
+  onRetest,
+  onNavigateReview,
+  onNavigateAsset,
+}: {
+  event: AgentEvent;
+  onRetest: (insight: FeedbackInsight) => void;
+  onNavigateReview: () => void;
+  onNavigateAsset: (componentId: string) => void;
+}) {
+  const insight = insightFromEvent(event);
+  return (
+    <article className="event actionable-event">
+      <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
+      <div>
+        <div className="task-title-row">
+          <strong>{insight.headline}</strong>
+          <Badge label={event.status === "miss" ? "未命中" : "已命中"} tone={event.status === "miss" ? "hot" : "ok"} />
+        </div>
+        <div className="feedback-brief">
+          <div>
+            <span>影响</span>
+            <strong>{insight.impact}</strong>
+          </div>
+          <div>
+            <span>下一步</span>
+            <strong>{insight.nextStep}</strong>
+          </div>
+          <div>
+            <span>审核任务</span>
+            <strong>{event.taskId || "未生成任务"}</strong>
+          </div>
+        </div>
+        {insight.componentIds.length > 0 && (
+          <div className="asset-link">
+            {insight.componentIds.map((componentId) => (
+              <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => onNavigateAsset(componentId)} />
+            ))}
+          </div>
+        )}
+        <div className="task-primary-actions">
+          <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>
+          <button className="secondary-action" type="button" onClick={onNavigateReview}>去审核中心处理</button>
+          {insight.componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(insight.componentIds[0])}>查看首个命中资产</button>}
+        </div>
+      </div>
+      <small>{event.createdAt}</small>
+    </article>
+  );
 }
