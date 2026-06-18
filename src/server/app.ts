@@ -27,6 +27,7 @@ import { registerReviewRoutes } from "./routes/review";
 import { registerSearchRoutes } from "./routes/search";
 import { registerSourceRoutes } from "./routes/sources";
 import { registerStorageRoutes } from "./routes/storage";
+import { registerTableAliasRoutes } from "./routes/tableAliases";
 import type { RouteContext } from "./routes/context";
 import type { DatabaseHandle, UserRecord } from "./types";
 
@@ -93,6 +94,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerLegacyRoutes(app, ctx);
   registerStorageRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
+  registerTableAliasRoutes(app, ctx);
 
   app.addHook("onClose", async () => { await options.db.close(); });
   return app;

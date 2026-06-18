@@ -170,6 +170,13 @@ export const reviewTransitionSchema = z.object({
   note: z.string().max(1024).optional()
 });
 
+export const tableAliasUpdateSchema = z.object({
+  entries: z.array(z.object({
+    canonical: z.string().min(1),
+    aliases: z.array(z.string()).default([])
+  })).min(1)
+});
+
 export const diagnosticLogQuerySchema = z.object({
   level: z.string().optional(),
   category: z.string().optional(),

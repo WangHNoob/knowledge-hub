@@ -489,3 +489,11 @@ export interface SearchResult {
   query: string;
   hits: SearchHit[];
 }
+
+export interface TableAliasEntry {
+  canonical: string;
+  aliases: string[];
+  source: "manual" | "llm";
+  updatedBy: string;
+  updatedAt: string;
+}

@@ -21,6 +21,7 @@ export { deletePackage, getComponentContent, getComponentOwner, getPackage, list
 export type { PackageFilter } from "./packages";
 export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
 export { searchAll } from "./search";
+export { listTableAliases, saveTableAliases } from "./tableAliases";
 export { listReviewTasks, transitionReviewTasks } from "./review";
 export { getQualityProfile, updateQualityProfile } from "./quality";
 export {

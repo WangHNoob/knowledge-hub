@@ -12,7 +12,8 @@ export type View =
   | "agent"
   | "diagnostics"
   | "maintenance"
-  | "storage";
+  | "storage"
+  | "aliases";
 
 export interface NavParams {
   packageId?: string;

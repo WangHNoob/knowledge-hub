@@ -190,6 +190,14 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       resolution_note TEXT NOT NULL DEFAULT ''
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}table_aliases (
+      canonical TEXT PRIMARY KEY,
+      aliases JSONB NOT NULL DEFAULT '[]',
+      source TEXT NOT NULL DEFAULT 'manual',
+      updated_by TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}releases (
       release_id TEXT PRIMARY KEY,
       version TEXT NOT NULL,

@@ -372,6 +372,16 @@ export interface QualityFinding {
 
 // --- Storage maintenance (disk GC) ---
 
+export type TableAliasSource = "manual" | "llm";
+
+export interface TableAliasEntry {
+  canonical: string;
+  aliases: string[];
+  source: TableAliasSource;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export type StorageCategory = "blobs" | "kb_build_runs" | "web_imports" | "releases" | "logs";
 
 export type StorageEntryStatus = "live" | "reclaimable";

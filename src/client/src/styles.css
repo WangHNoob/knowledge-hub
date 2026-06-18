@@ -2458,3 +2458,12 @@ button.id-chip.clickable:hover {
 .task-actions .primary-action,
 .task-actions .secondary-action { padding: 6px 14px; }
 .resolution-meta { color: var(--ink-faint); }
+
+/* --- Table aliases (translation table) --- */
+.alias-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.alias-table th, .alias-table td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.alias-table th { font-size: 12px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.5px; }
+.alias-table td code { font-family: var(--font-mono); font-size: 12px; color: var(--ink); }
+.alias-table tr.dirty { background: rgba(201, 162, 39, 0.08); }
+.alias-input { width: 100%; }
+.inline-check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 13px; white-space: nowrap; }

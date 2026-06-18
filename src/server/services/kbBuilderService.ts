@@ -17,6 +17,7 @@ import type {
 import { createSourceBundleService } from "./sourceBundleService";
 import { createKnowledgeService } from "./knowledgeService";
 import { createLegislationService } from "./legislationService";
+import { createTableAliasService } from "./tableAliasService";
 import { materializeSourceVersion } from "./kbBuilder/materialize";
 import { loadWikiSpecs } from "./kbBuilder/specs";
 import { runConvertStage } from "./kbBuilder/convertStage";
@@ -26,6 +27,8 @@ import { runGraphStage } from "./kbBuilder/graphStage";
 import { runVizStage } from "./kbBuilder/vizStage";
 import { evaluateQualityGate } from "./kbBuilder/qualityGate";
 import { collectPipelineArtifacts } from "./kbBuilder/collector";
+import { generateAliasDrafts, scanGamedataTableNames, writeAliasFile } from "./kbBuilder/aliasPrep";
+import { createLlmClient } from "./kbBuilder/llmClient";
 import type { BuildPipelineOptions, CollectedArtifact, QualityGateResult } from "./kbBuilder/types";
 import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelConfig } from "./kbBuilder/modelConfig";
 import type { DiagnosticLogger } from "./diagnosticService";
@@ -158,6 +161,10 @@ export class KbBuilderPipelineService {
         return loadWikiSpecs(specDir);
       });
 
+      await this.ensureRunActive(runId);
+      if (stages.includes("extract") || stages.includes("tables")) {
+        await this.withStage(runId, options, "aliases", async () => this.prepareTableAliases(workspace.dataDir, modelConfig, options, runId));
+      }
       await this.ensureRunActive(runId);
       if (stages.includes("convert")) await this.withStage(runId, options, "convert", async () => runConvertStage({ dataDir: workspace.dataDir, force: options.force, only: options.only }));
       await this.ensureRunActive(runId);
@@ -348,6 +355,65 @@ export class KbBuilderPipelineService {
   private async ensureRunActive(runId: string): Promise<void> {
     const run = await this.requireRun(runId);
     if (run.status !== "running") throw new Error(run.error || `Build run ${runId} is no longer running.`);
+  }
+
+  /**
+   * Syncs the persistent table-alias store with the tables in this build, optionally
+   * seeding LLM-drafted Chinese aliases for tables that have none yet, then writes the
+   * full alias map into the run workspace so the extract/table stages resolve names.
+   */
+  private async prepareTableAliases(
+    dataDir: string,
+    modelConfig: PipelineModelConfig,
+    options: BuildPipelineOptions,
+    runId: string
+  ): Promise<{ tables: number; drafted: number }> {
+    const aliasService = createTableAliasService(this.db);
+    const names = scanGamedataTableNames(dataDir);
+    await aliasService.ensureTables(names);
+
+    let drafted = 0;
+    const client = createLlmClient(modelConfig);
+    if (client) {
+      const missing = (await aliasService.listMissing()).filter((name) => names.includes(name));
+      if (missing.length > 0) {
+        const drafts = await generateAliasDrafts(client, missing, {
+          onProgress: (done, total) => {
+            void this.diagnostics?.write({
+              traceId: options.traceId,
+              category: "kb_build",
+              status: "event",
+              level: "info",
+              message: `生成表别名初稿 ${done}/${total}`,
+              actor: options.requestedBy,
+              entityType: "build_run",
+              entityId: runId,
+              runId,
+              context: { stage: "aliases", done, total }
+            });
+          },
+          onWarn: (message) => {
+            void this.diagnostics?.write({
+              traceId: options.traceId,
+              category: "kb_build",
+              status: "event",
+              level: "warn",
+              message,
+              actor: options.requestedBy,
+              entityType: "build_run",
+              entityId: runId,
+              runId,
+              context: { stage: "aliases" }
+            });
+          }
+        });
+        if (drafts.length > 0) await aliasService.upsertMany(drafts, "llm", "llm");
+        drafted = drafts.length;
+      }
+    }
+
+    writeAliasFile(dataDir, await aliasService.exportRows());
+    return { tables: names.length, drafted };
   }
 
   private async insertPackageAndArtifacts(

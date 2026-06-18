@@ -7,6 +7,7 @@ import {
   Database,
   GitBranch,
   HardDrive,
+  Languages,
   LogOut,
   PackagePlus,
   ScrollText,
@@ -30,6 +31,7 @@ import { Release } from "../pages/Release";
 import { Review } from "../pages/Review";
 import { Sources } from "../pages/Sources";
 import { Storage } from "../pages/Storage";
+import { TableAliases } from "../pages/TableAliases";
 import { NavProvider, useNav, type NavParams, type View } from "./navigation";
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
@@ -38,6 +40,7 @@ const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "legislation", label: "策划立法", icon: ScrollText },
   { id: "builder", label: "知识构建", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
+  { id: "aliases", label: "翻译表", icon: Languages },
   { id: "review", label: "审核中心", icon: CheckCircle2 },
   { id: "release", label: "发布", icon: GitBranch },
   { id: "agent", label: "Agent 反馈", icon: SearchCheck },
@@ -111,6 +114,7 @@ export function App() {
           {view === "builder" && <KnowledgeBuilder onShowPackage={(packageId) => navigate("assets", { packageId })} />}
           {view === "legislation" && <Legislation />}
           {view === "assets" && <Assets />}
+          {view === "aliases" && <TableAliases />}
           {view === "review" && <Review />}
           {view === "release" && <Release />}
           {view === "agent" && <AgentFeedback />}
