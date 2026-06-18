@@ -34,7 +34,10 @@ describe("native table and graph stages", () => {
       await runVizStage({ dataDir });
 
       expect(existsSync(join(dataDir, "wiki", "_tables", "schemas.json"))).toBe(true);
+      expect(existsSync(join(dataDir, "wiki", "_tables", "table_aliases.json"))).toBe(true);
       expect(existsSync(join(dataDir, "table_schemas", "Combat__Skill.json"))).toBe(true);
+      const aliases = JSON.parse(readFileSync(join(dataDir, "wiki", "_tables", "table_aliases.json"), "utf8"));
+      expect(aliases).toContainEqual({ table: "Combat/Skill", aliases: [] });
       const schema = JSON.parse(readFileSync(join(dataDir, "table_schemas", "Combat__Skill.json"), "utf8"));
       expect(schema.fields).toEqual(["Id", "Name", "BuffId"]);
 
@@ -83,6 +86,10 @@ describe("native table and graph stages", () => {
       const buff = xlsx.utils.book_new();
       xlsx.utils.book_append_sheet(buff, xlsx.utils.json_to_sheet([{ Id: 10 }]), "Buff");
       xlsx.writeFile(buff, join(dataDir, "gamedata", "Combat", "Buff.xlsx"));
+      mkdirSync(join(dataDir, "wiki", "_tables"), { recursive: true });
+      writeFileSync(join(dataDir, "wiki", "_tables", "table_aliases.json"), JSON.stringify([
+        { table: "Combat/Skill", aliases: ["技能表"] }
+      ]));
 
       writeFileSync(join(dataDir, "wiki", "systems", "battle.md"), "# Battle System\n");
       writeFileSync(join(dataDir, "wiki", "_meta", "battle.json"), JSON.stringify({
@@ -99,6 +106,8 @@ describe("native table and graph stages", () => {
       await runTableStage({ dataDir, force: false, rules });
       await runGraphStage({ dataDir, rules });
 
+      const aliases = JSON.parse(readFileSync(join(dataDir, "wiki", "_tables", "table_aliases.json"), "utf8"));
+      expect(aliases).toContainEqual({ table: "Combat/Skill", aliases: ["技能表"] });
       const relationCandidates = JSON.parse(readFileSync(join(dataDir, "wiki", "_tables", "table_relation_candidates.json"), "utf8"));
       expect(relationCandidates[0]).toMatchObject({ source: "Combat/Skill", target: "Combat/Buff", field: "BuffId" });
 

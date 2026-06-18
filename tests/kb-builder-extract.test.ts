@@ -205,13 +205,118 @@ describe("runExtractStage", () => {
         only: null
       });
 
-      expect(result.outputPaths.sort()).toEqual(["wiki/_meta/pvp.json", "wiki/concepts/pvp.md"]);
+      expect(result.outputPaths.sort()).toEqual(["wiki/_meta/pvp活动模板.json", "wiki/concepts/pvp活动模板.md"]);
       expect(result.warnings.some((warning) =>
         warning.includes("pvp活动模板.md") && warning.includes("invalid JSON") && warning.includes("deterministic fallback"),
       )).toBe(true);
-      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "pvp.json"), "utf8"));
+      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "pvp活动模板.json"), "utf8"));
       expect(meta.title).toBe("PVP活动模板");
       expect(meta.type).toBe("concept");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses readable non-ASCII titles for generic and numeric parsed filenames", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed", "systems"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system"],
+        relation_types: ["references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## 概览");
+      writeFileSync(join(dataDir, "processed", "parsed", "page.md"), [
+        "---",
+        "type: system",
+        "title: 白星系统",
+        "source: gamedocs/page.md",
+        "---",
+        "## 概览",
+        "白星系统说明。"
+      ].join("\n"));
+      writeFileSync(join(dataDir, "processed", "parsed", "11.md"), [
+        "---",
+        "type: system",
+        "title: 七彩宝石11级",
+        "source: gamedocs/11.md",
+        "---",
+        "## 概览",
+        "七彩宝石说明。"
+      ].join("\n"));
+      writeFileSync(join(dataDir, "processed", "parsed", "systems", "page.md"), [
+        "---",
+        "type: system",
+        "title: 白星系统",
+        "source: gamedocs/systems/page.md",
+        "---",
+        "## 概览",
+        "另一个白星系统说明。"
+      ].join("\n"));
+
+      const specs = loadWikiSpecs(specDir);
+      const result = await runExtractStage({ dataDir, specs, model: "deterministic", force: false, only: null });
+
+      expect(result.outputPaths).toEqual(expect.arrayContaining([
+        "wiki/_meta/七彩宝石11级.json",
+        "wiki/_meta/白星系统.json",
+        "wiki/_meta/白星系统-2.json",
+        "wiki/systems/七彩宝石11级.md",
+        "wiki/systems/白星系统.md",
+        "wiki/systems/白星系统-2.md"
+      ]));
+      expect(result.outputPaths).toHaveLength(6);
+      expect(existsSync(join(dataDir, "wiki", "systems", "page.md"))).toBe(false);
+      expect(existsSync(join(dataDir, "wiki", "systems", "11.md"))).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes translated config table aliases to canonical table names", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(dataDir, "table_aliases.json"), JSON.stringify([
+        { table: "HomeLandDress", aliases: ["家园装扮表", "家园装扮"] }
+      ]));
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system", "config_table", "concept"],
+        relation_types: ["configured_in", "references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview\n## Data Dependencies\n| key | required |\n| --- | --- |\n| config_table | yes |");
+      writeFileSync(join(dataDir, "processed", "parsed", "homeland.md"), [
+        "---",
+        "type: system",
+        "title: 家园装扮",
+        "source: gamedocs/homeland.md",
+        "facts:",
+        "  config_table: 家园装扮表",
+        "entities:",
+        "  - name: 家园装扮表",
+        "    type: concept",
+        "relationships:",
+        "  - source: 家园装扮",
+        "    relation: configured_in",
+        "    target: 家园装扮表",
+        "---",
+        "## Overview",
+        "家园装扮说明。"
+      ].join("\n"));
+
+      const specs = loadWikiSpecs(specDir);
+      await runExtractStage({ dataDir, specs, model: "deterministic", force: false, only: null });
+
+      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "homeland.json"), "utf8"));
+      expect(meta.facts.config_table).toBe("HomeLandDress");
+      expect(meta.entities).toContainEqual({ name: "HomeLandDress", type: "config_table" });
+      expect(meta.relationships).toContainEqual({ source: "家园装扮", relation: "configured_in", target: "HomeLandDress" });
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
@@ -5,6 +6,7 @@ import type { PipelineModelConfig } from "./modelConfig";
 import { extractMaxTokens } from "./modelConfig";
 import { createLlmClient, type JsonSchemaSpec, type LlmClient } from "./llmClient";
 import type { WikiSpecSet } from "./specs";
+import { loadTableAliases, type TableAliasIndex } from "./tableAliases";
 import type { StageResult } from "./types";
 
 interface ExtractedPage {
@@ -62,19 +64,22 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   // model supports response_format) is remembered across every file.
   const client = createLlmClient(resolveModelConfig(options));
   const guidance = buildSpecGuidance(options.specs);
+  const usedSlugs = new Map<string, number>();
+  const tableAliases = loadTableAliases(options.dataDir);
   for (let index = 0; index < files.length; index += 1) {
     const absolute = files[index];
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
     const extracted = await extractPage(markdown, rel, client, guidance, warnings);
+    normalizeTableRefs(extracted, tableAliases);
     const pageType = options.specs.manifest.pageTypes[extracted.type];
     if (!pageType) {
       warnings.push(`${rel}: unknown page type "${extracted.type}", skipped`);
       continue;
     }
 
-    const slug = slugFromPath(rel);
+    const slug = allocateSlug(slugForPage(rel, extracted.title), pageType.dir, usedSlugs);
     const wikiRel = `wiki/${pageType.dir}/${slug}.md`;
     const metaRel = `wiki/_meta/${slug}.json`;
     const wikiAbs = resolve(options.dataDir, wikiRel);
@@ -447,6 +452,55 @@ function toMetaJson(page: ExtractedPage, wikiPath: string): Record<string, unkno
   };
 }
 
+function normalizeTableRefs(page: ExtractedPage, tableAliases: TableAliasIndex): void {
+  const canonicalTables = new Set<string>();
+  const configTable = page.facts.config_table;
+  if (configTable) {
+    for (const table of tableAliases.resolveMany(configTable)) canonicalTables.add(table);
+    if (canonicalTables.size > 0) page.facts.config_table = [...canonicalTables].join(", ");
+  }
+
+  page.entities = page.entities.map((entity) => {
+    const canonical = tableAliases.resolve(entity.name);
+    if (!canonical) return entity;
+    canonicalTables.add(canonical);
+    return { ...entity, name: canonical, type: isTableEntityType(entity.type) ? entity.type : "config_table" };
+  });
+
+  page.relationships = page.relationships.map((relationship) => {
+    const source = tableAliases.resolve(relationship.source) ?? relationship.source;
+    const target = tableAliases.resolve(relationship.target) ?? relationship.target;
+    if (source !== relationship.source) canonicalTables.add(source);
+    if (target !== relationship.target) canonicalTables.add(target);
+    return { ...relationship, source, target };
+  });
+
+  for (const table of canonicalTables) {
+    addUniqueEntity(page.entities, { name: table, type: "config_table" });
+    addUniqueRelationship(page.relationships, { source: page.title, relation: "configured_in", target: table });
+  }
+}
+
+function isTableEntityType(type: string): boolean {
+  return ["table", "config_table"].includes(type);
+}
+
+function addUniqueEntity(entities: Entity[], entity: Entity): void {
+  if (entities.some((existing) => existing.name === entity.name && existing.type === entity.type)) return;
+  entities.push(entity);
+}
+
+function addUniqueRelationship(relationships: Relationship[], relationship: Relationship): void {
+  if (relationships.some((existing) =>
+    existing.source === relationship.source &&
+    existing.relation === relationship.relation &&
+    existing.target === relationship.target
+  )) {
+    return;
+  }
+  relationships.push(relationship);
+}
+
 function normalizeOnlyFilter(only: string | null): string | null {
   if (!only) return null;
   return only.replace(/\\/g, "/").replace(/^\/+/, "");
@@ -456,17 +510,41 @@ function matchesOnlyFilter(rel: string, only: string): boolean {
   return rel === only || `processed/parsed/${rel}` === only || basename(rel) === only || rel.endsWith(`/${only}`);
 }
 
-function slugFromPath(path: string): string {
-  return slug(path.replace(/\.[^/.]+$/u, "").replace(/[\\/]+/g, "-"));
+function slugForPage(path: string, title: string): string {
+  const basenameSlug = slug(basename(path, extname(path)));
+  const pathSlug = slug(path.replace(/\.[^/.]+$/u, "").replace(/[\\/]+/g, "-"));
+  const titleSlug = slug(title);
+  if ((genericSlug(pathSlug) || genericSlug(basenameSlug)) && !genericSlug(titleSlug)) return titleSlug;
+  return pathSlug;
 }
 
 function slug(value: string): string {
   const normalized = value
+    .normalize("NFKC")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/<[^>]*>/gu, " ")
+    .replace(/&[a-z0-9#]+;/giu, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "");
-  return normalized || "page";
+  if (!normalized) return `page-${shortHash(value)}`;
+  if (/^\d+$/u.test(normalized)) return `page-${normalized}`;
+  return normalized;
+}
+
+function genericSlug(value: string): boolean {
+  return value === "page" || /^page-\d*$/u.test(value);
+}
+
+function allocateSlug(slugBase: string, group: string, usedSlugs: Map<string, number>): string {
+  const key = `${group}/${slugBase}`;
+  const count = usedSlugs.get(key) ?? 0;
+  usedSlugs.set(key, count + 1);
+  return count === 0 ? slugBase : `${slugBase}-${count + 1}`;
+}
+
+function shortHash(value: string): string {
+  return createHash("sha1").update(value).digest("hex").slice(0, 8);
 }
 
 function firstHeading(markdown: string): string | null {

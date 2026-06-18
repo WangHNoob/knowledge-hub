@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative } from "node:path";
 import xlsx from "xlsx";
 import type { KnowledgeRuleConfig } from "../../types";
+import { renderTableAliasTemplate } from "./tableAliases";
 import type { StageResult } from "./types";
 
 interface TableSchema {
@@ -122,13 +123,22 @@ function writeTableOutputs(
   fkEdges: ForeignKeyEdge[],
   relationCandidates: TableRelationCandidate[] = [],
 ): string[] {
-  const outputPaths = ["wiki/_tables/schemas.json", "wiki/_tables/groups.json", "wiki/_tables/table_fk_registry.json", "wiki/_tables/table_relation_candidates.json"];
+  const outputPaths = [
+    "wiki/_tables/schemas.json",
+    "wiki/_tables/groups.json",
+    "wiki/_tables/table_aliases.json",
+    "wiki/_tables/table_fk_registry.json",
+    "wiki/_tables/table_relation_candidates.json",
+  ];
   mkdirSync(join(dataDir, "wiki", "_tables"), { recursive: true });
   mkdirSync(join(dataDir, "table_schemas"), { recursive: true });
   mkdirSync(join(dataDir, "wiki", "tables"), { recursive: true });
 
+  const aliasPath = join(dataDir, "wiki", "_tables", "table_aliases.json");
+  const existingAliases = existsSync(aliasPath) ? JSON.parse(readFileSync(aliasPath, "utf8")) : {};
   writeFileSync(join(dataDir, "wiki", "_tables", "schemas.json"), `${JSON.stringify(sortObject(schemas), null, 2)}\n`);
   writeFileSync(join(dataDir, "wiki", "_tables", "groups.json"), `${JSON.stringify(sortObject(groups), null, 2)}\n`);
+  writeFileSync(aliasPath, renderTableAliasTemplate(Object.keys(schemas), existingAliases));
   writeFileSync(join(dataDir, "wiki", "_tables", "table_fk_registry.json"), `${JSON.stringify(fkEdges, null, 2)}\n`);
   writeFileSync(join(dataDir, "wiki", "_tables", "table_relation_candidates.json"), `${JSON.stringify(relationCandidates, null, 2)}\n`);
 
