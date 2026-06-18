@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { Save, Upload } from "lucide-react";
+import { Save, Trash2, Upload } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { importTableAliases, listTableAliases, saveTableAliases, type TableAliasEntry } from "../api";
+import { importTableAliases, listTableAliases, pruneTableAliases, saveTableAliases, type TableAliasEntry } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { formatTime } from "../utils/format";
 
@@ -55,6 +55,14 @@ export function TableAliases() {
     importMutation.mutate(parsed);
   };
 
+  const prune = useMutation({
+    mutationFn: () => pruneTableAliases(),
+    onSuccess: async (result) => {
+      setSavedNote(`已清理 ${result.removed} 条无翻译条目。`);
+      await queryClient.invalidateQueries({ queryKey: ["table-aliases"] });
+    }
+  });
+
   const draftValue = (entry: TableAliasEntry) => edits[entry.canonical] ?? entry.aliases.join("、");
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -106,6 +114,17 @@ export function TableAliases() {
             <Upload size={15} />
             导入 cn_en_map
           </button>
+          {entries.length - translated > 0 && (
+            <button
+              className="secondary-action danger"
+              type="button"
+              disabled={prune.isPending}
+              onClick={() => { if (window.confirm(`删除 ${entries.length - translated} 条没有翻译的表条目？已翻译的不受影响。`)) prune.mutate(); }}
+            >
+              <Trash2 size={15} />
+              {prune.isPending ? "清理中..." : `清理无翻译（${entries.length - translated}）`}
+            </button>
+          )}
           <button className="primary-action" type="button" disabled={changedCount === 0 || save.isPending} onClick={onSave}>
             <Save size={15} />
             {save.isPending ? "保存中..." : `保存修改（${changedCount}）`}

@@ -14,3 +14,7 @@ export async function saveTableAliases(
 export async function importTableAliases(map: unknown): Promise<{ imported: number; entries: TableAliasEntry[] }> {
   return postJson<{ imported: number; entries: TableAliasEntry[] }>("/api/table-aliases/import", { map });
 }
+
+export async function pruneTableAliases(): Promise<{ removed: number; entries: TableAliasEntry[] }> {
+  return postJson<{ removed: number; entries: TableAliasEntry[] }>("/api/table-aliases/prune", {});
+}

@@ -102,6 +102,21 @@ describe("table alias service + routes", () => {
     expect((await createTableAliasService(db).list()).find((e) => e.canonical === "Bag")?.aliases).toEqual(["背包"]);
   });
 
+  it("prunes rows with no alias", async () => {
+    const service = createTableAliasService(db);
+    await service.ensureTables(["EmptyA", "EmptyB"]);
+    await service.upsertMany([{ canonical: "Filled", aliases: ["有"] }], "admin", "manual");
+    const before = await service.list();
+    expect(before.length).toBeGreaterThanOrEqual(3);
+
+    const res = await app.inject({ method: "POST", url: "/api/table-aliases/prune", headers: auth, payload: {} });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().removed).toBeGreaterThanOrEqual(2);
+    const after = await service.list();
+    expect(after.every((e) => e.aliases.length > 0)).toBe(true);
+    expect(after.find((e) => e.canonical === "Filled")).toBeTruthy();
+  });
+
   it("scans gamedata table names and writes the injected alias file", () => {
     const work = mkdtempSync(join(tmpdir(), "kh-alias-work-"));
     try {

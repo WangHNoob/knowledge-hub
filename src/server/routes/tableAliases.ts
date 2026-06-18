@@ -38,4 +38,15 @@ export function registerTableAliasRoutes(app: FastifyInstance, ctx: RouteContext
       return { imported: result.imported, entries };
     }
   );
+
+  // Remove rows with no alias (e.g. tables auto-enumerated by older builds).
+  app.post(
+    "/api/table-aliases/prune",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async () => {
+      const result = await service.pruneEmpty();
+      const entries = await service.list();
+      return { removed: result.removed, entries };
+    }
+  );
 }

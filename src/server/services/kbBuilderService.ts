@@ -369,12 +369,18 @@ export class KbBuilderPipelineService {
     runId: string
   ): Promise<{ tables: number; drafted: number }> {
     const aliasService = createTableAliasService(this.db);
-    const names = scanGamedataTableNames(dataDir);
-    await aliasService.ensureTables(names);
 
     let drafted = 0;
+    let tables = 0;
+    // Only enumerate every gamedata table (and optionally LLM-draft them) when explicitly
+    // asked. Normal builds just inject the curated aliases (e.g. an imported cn_en_map) so
+    // the translation table stays small instead of ballooning to thousands of empty rows.
     const client = options.generateAliases ? createLlmClient(modelConfig) : null;
-    if (client) {
+    if (options.generateAliases) {
+      const names = scanGamedataTableNames(dataDir);
+      tables = names.length;
+      await aliasService.ensureTables(names);
+      if (client) {
       const missing = (await aliasService.listMissing()).filter((name) => names.includes(name));
       if (missing.length > 0) {
         const drafts = await generateAliasDrafts(client, missing, {
@@ -410,10 +416,11 @@ export class KbBuilderPipelineService {
         if (drafts.length > 0) await aliasService.upsertMany(drafts, "llm", "llm");
         drafted = drafts.length;
       }
+      }
     }
 
     writeAliasFile(dataDir, await aliasService.exportRows());
-    return { tables: names.length, drafted };
+    return { tables, drafted };
   }
 
   private async insertPackageAndArtifacts(

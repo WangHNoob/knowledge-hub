@@ -62,6 +62,14 @@ export class TableAliasService {
     return rows.map((row) => String(row.canonical));
   }
 
+  /** Removes rows with no alias — used to clear the noise from auto-enumerating every table. */
+  async pruneEmpty(): Promise<{ removed: number }> {
+    const { rowCount } = await this.adapter.query(
+      "DELETE FROM table_aliases WHERE jsonb_array_length(aliases) = 0"
+    );
+    return { removed: rowCount ?? 0 };
+  }
+
   /** Renders the alias map as the array-of-rows shape the pipeline writes to disk. */
   async exportRows(): Promise<Array<{ table: string; aliases: string[] }>> {
     return (await this.list()).map((entry) => ({ table: entry.canonical, aliases: entry.aliases }));
