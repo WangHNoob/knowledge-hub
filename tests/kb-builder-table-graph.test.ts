@@ -43,7 +43,10 @@ describe("native table and graph stages", () => {
       expect(graph.nodes.some((node: any) => node.id === "field:Combat/Skill.BuffId")).toBe(true);
       expect(graph.edges.some((edge: any) => edge.relation === "has_field")).toBe(true);
       expect(graph.edges.some((edge: any) => edge.source === "Battle System" && edge.relation === "configured_in" && edge.target === "Skill")).toBe(true);
-      expect(readFileSync(join(dataDir, "wiki", "index.md"), "utf8")).toContain("Battle System");
+      const index = readFileSync(join(dataDir, "wiki", "index.md"), "utf8");
+      expect(index).toContain("Battle System");
+      expect(index).toContain("Lightweight navigation index");
+      expect(index).not.toContain("BuffId");
       expect(readFileSync(join(dataDir, "wiki", "graph.html"), "utf8")).toContain("Knowledge Graph");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });

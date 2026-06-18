@@ -137,21 +137,39 @@ function dedupeEdges(edges: GraphEdge[]): GraphEdge[] {
 function renderIndex(graph: { nodes: GraphNode[]; edges: GraphEdge[] }): string {
   const byType = new Map<string, GraphNode[]>();
   for (const node of graph.nodes) {
+    if (!indexableNode(node)) continue;
     byType.set(node.type, [...(byType.get(node.type) ?? []), node]);
   }
 
-  const lines = ["# Knowledge Index", ""];
+  const lines = [
+    "# Knowledge Index",
+    "",
+    "> Lightweight navigation index. Table fields stay in `wiki/_tables/schemas.json` and `table_schemas/*.json` to avoid polluting Agent retrieval.",
+    "",
+  ];
   for (const [type, nodes] of [...byType.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     lines.push(`## ${type}`, "");
-    for (const node of nodes.sort((a, b) => a.label.localeCompare(b.label))) {
+    for (const node of nodes.sort((a, b) => a.label.localeCompare(b.label)).slice(0, 120)) {
       lines.push(`- ${node.wiki_page ? `[${node.label}](${node.wiki_page.replace(/^wiki\//, "")})` : node.label}`);
     }
+    if (nodes.length > 120) lines.push(`- ... ${nodes.length - 120} more omitted; see graph.json for full node list.`);
     lines.push("");
   }
   lines.push("## Relationships", "");
-  for (const edge of graph.edges) {
+  const relationships = graph.edges.filter((edge) => edge.edge_kind === "semantic" || edge.edge_kind === "fk");
+  for (const edge of relationships.slice(0, 200)) {
     lines.push(`- ${edge.source} -${edge.relation}-> ${edge.target}`);
   }
+  if (relationships.length > 200) lines.push(`- ... ${relationships.length - 200} more omitted; see graph.json for full relationship list.`);
   lines.push("");
   return lines.join("\n");
+}
+
+function indexableNode(node: GraphNode): boolean {
+  if (node.type === "field") return false;
+  if (!node.label.trim()) return false;
+  if (/^[\d\s.,;:_/\-+*<>{}()[\]'"，。、；：]+$/u.test(node.label)) return false;
+  if (node.label.length > 80) return false;
+  if (/<\/?[a-z][\s\S]*>/iu.test(node.label)) return false;
+  return true;
 }
