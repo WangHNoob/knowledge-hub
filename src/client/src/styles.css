@@ -454,7 +454,12 @@ nav {
 }
 .event > div span,
 .event > div small { word-break: break-word; }
-.event > small { flex-shrink: 0; white-space: nowrap; }
+.event > small,
+.task > small { flex-shrink: 0; white-space: nowrap; }
+/* Keep the leading badge from being squeezed by a wide middle column. */
+.event > .badge,
+.task > .badge { flex-shrink: 0; }
+.event > div > .asset-link { margin-top: 2px; }
 
 .detail-head {
   padding-bottom: 14px;
@@ -2365,7 +2370,13 @@ form button:active:not(:disabled) {
   border-radius: var(--radius-sm);
   padding: 2px 8px;
   color: var(--ink-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
+button.id-chip { display: inline-block; }
 button.id-chip.clickable {
   cursor: pointer;
   color: var(--olive-dim);
@@ -2377,7 +2388,7 @@ button.id-chip.clickable:hover {
   color: var(--olive-dim);
 }
 .asset-links { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
-.asset-link { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 13px; }
+.asset-link { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 13px; min-width: 0; max-width: 100%; }
 
 /* --- List filters (Assets) --- */
 .list-filters { display: flex; gap: 8px; margin-bottom: 12px; }
