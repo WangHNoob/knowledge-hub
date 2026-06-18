@@ -68,7 +68,7 @@ function buildInsight(input: {
       impact: input.componentIds.length
         ? `影响 ${input.componentIds.length} 个命中组件，Agent 能答但引用链不完整。`
         : "Agent 能答但引用链不完整。",
-      nextStep: "打开命中组件查看 source refs / evidence；补证据或重新构建后再复测。",
+      nextStep: "打开命中组件查看「来源引用」和「证据记录」；补证据或重新构建后再复测。",
     };
   }
   if (input.problem === "quality") {

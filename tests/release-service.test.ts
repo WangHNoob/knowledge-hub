@@ -62,12 +62,31 @@ describe("ReleaseService", () => {
       await first.cleanup();
     }
   }, 15000);
+
+  it("backfills publish evidence from source refs before OKF export", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_backfill", withEvidence: false });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+
+    try {
+      const draft = await service.createDraft({ version: "2026.06.15.backfill", packageIds: ["pkg_backfill"], requestedBy: "admin" });
+      const published = await service.publish(draft.releaseId, "admin");
+      expect(published.manifest.okf).toMatchObject({
+        citationSummary: { required: 1, present: 1 }
+      });
+      const { rows } = await fixture.db.adapter.query("SELECT * FROM evidence_records WHERE package_id = $1", ["pkg_backfill"]);
+      expect(rows.length).toBeGreaterThan(0);
+      expect(String(rows[0].quote)).toContain("gamedocs/demo.md");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
 });
 
 async function setupReleaseFixture(options: {
   handle?: TestDbHandle;
   packageId?: string;
   blockingTask?: boolean;
+  withEvidence?: boolean;
 } = {}): Promise<{ handle: TestDbHandle; db: TestDbHandle["db"]; dataDir: string; cleanup: () => Promise<void> }> {
   const handle = options.handle ?? await createTestDb();
   const db = handle.db;
@@ -115,21 +134,23 @@ async function setupReleaseFixture(options: {
       JSON.stringify({ confidence: 0.92 }),
     ],
   );
-  await db.adapter.query(
-    `INSERT INTO evidence_records
-      (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [
-      `ev_${packageId}_page`,
-      packageId,
-      componentId,
-      "srcv_fixture",
-      "Demo source supports the demo page.",
-      "release fixture citation",
-      0.9,
-      new Date().toISOString(),
-    ],
-  );
+  if (options.withEvidence ?? true) {
+    await db.adapter.query(
+      `INSERT INTO evidence_records
+        (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [
+        `ev_${packageId}_page`,
+        packageId,
+        componentId,
+        "srcv_fixture",
+        "Demo source supports the demo page.",
+        "release fixture citation",
+        0.9,
+        new Date().toISOString(),
+      ],
+    );
+  }
 
   if (options.blockingTask) {
     await db.adapter.query(

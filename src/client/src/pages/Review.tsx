@@ -124,7 +124,7 @@ export function Review() {
         <div className="flow-cards">
           <button type="button" className="flow-card" onClick={() => navigate("assets", params.packageId ? { packageId: params.packageId } : {})}>
             <strong>1. 定位资产</strong>
-            <span>从任务里的 package / component 直接跳到资产详情，先看来源、质量与 evidence。</span>
+            <span>从任务里的资产包 / 组件直接跳到资产详情，先看来源、质量与证据记录。</span>
           </button>
           <button type="button" className="flow-card" onClick={() => navigate("agent")}>
             <strong>2. 复测 Agent</strong>

@@ -60,11 +60,12 @@ describe("scanWorkspace", () => {
   });
 
   it("skips reserved files (index.md, log.md)", async () => {
-    write("index.md", `# Index`);
+    write("index.md", `# Index\n\n- [E](/systems/e.md)`);
     write("log.md", `# Log`);
     write("systems/e.md", `---\ntype: system_rule\ntitle: E\n---\nx`);
     const report = await scanWorkspace(dir, { now: "2026-06-17T00:00:00Z" });
     expect(report.conceptCount).toBe(1);
+    expect(report.linkSummary.resolved).toBe(1);
     expect(report.issues.some((i) => i.okfPath === "/index.md")).toBe(false);
   });
 

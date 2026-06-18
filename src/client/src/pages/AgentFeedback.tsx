@@ -109,7 +109,7 @@ export function AgentFeedback() {
           </button>
           <button type="button" className="flow-card" onClick={() => navigate("review")}>
             <strong>3. 处理任务</strong>
-            <span>回到审核中心解决 evidence、质量或缺资产问题，再重新发布验证。</span>
+            <span>回到审核中心处理证据、质量或缺资产问题，再重新发布验证。</span>
           </button>
         </div>
       </section>
@@ -260,7 +260,7 @@ function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: strin
     items.push({ title: "已命中资产", body: "trace 中的组件就是 Agent 实际消费的知识入口，可直接跳到资产详情复核来源。" });
   }
   if (envelope.qualityFlags.some((flag) => flag.startsWith("evidence_missing:"))) {
-    items.push({ title: "证据缺失", body: "优先补 evidence records 或重新构建；发布 OKF 的 citations 会随之改善。" });
+    items.push({ title: "证据缺失", body: "优先补证据记录或重新构建；发布 OKF 的引用覆盖会随之改善。" });
   }
   if (envelope.qualityFlags.some((flag) => flag.startsWith("low_quality:"))) {
     items.push({ title: "低质量命中", body: "命中内容可信度偏低，会回流为 warning 任务；适合先人工确认再决定发布后修。" });

@@ -211,7 +211,7 @@ export class KnowledgeQueryService {
     items.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
     return {
       result: { query, items: items.slice(0, 10) },
-      componentIds: items.slice(0, 10).map((item) => item.componentId),
+      componentIds: items.slice(0, 10).filter((item) => item.kind !== "topic_index").map((item) => item.componentId),
     };
   }
 

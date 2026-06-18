@@ -8,6 +8,8 @@ import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
 
+const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
+
 export interface CreateReleaseDraftInput {
   version: string;
   packageIds: string[];
@@ -103,6 +105,7 @@ export class ReleaseService {
       const activeRuleProfile = await createLegislationService(this.db).getActiveProfile();
       const qualityGate = summarizePackages(packages, components, activeRuleProfile.hash);
       const publishedAt = new Date().toISOString();
+      await this.ensurePublishEvidence(packages, components, publishedAt);
       const okfExport = await createOkfExportService(this.db, this.dataDir).exportRelease({
         release,
         packages,
@@ -248,6 +251,43 @@ export class ReleaseService {
     );
     return rows.map(mapComponent);
   }
+
+  private async ensurePublishEvidence(packages: AssetPackage[], components: AssetComponent[], now: string): Promise<void> {
+    const targets = components.filter((component) => RELEASE_AUTO_EVIDENCE_KINDS.has(component.kind));
+    if (targets.length === 0) return;
+    const targetIds = targets.map((component) => component.componentId);
+    const placeholders = targetIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT component_id FROM evidence_records WHERE component_id IN (${placeholders})`,
+      targetIds,
+    );
+    const covered = new Set(rows.map((row) => String(row.component_id)));
+    const sourceVersionByPackage = new Map(packages.map((pkg) => [pkg.packageId, pkg.sourceVersionIds[0] ?? ""] as const));
+
+    for (const component of targets) {
+      if (covered.has(component.componentId)) continue;
+      const refs = component.sourceRefs.length > 0 ? component.sourceRefs : ["source bundle"];
+      for (const sourceRef of refs.slice(0, 3)) {
+        const digest = createHash("sha1").update(`${component.componentId}:${sourceRef}`).digest("hex").slice(0, 10);
+        await this.adapter.query(
+          `INSERT INTO evidence_records
+             (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (evidence_id) DO NOTHING`,
+          [
+            `ev_pub_${slug(component.componentId)}_${digest}`,
+            component.packageId,
+            component.componentId,
+            sourceVersionByPackage.get(component.packageId) ?? "",
+            `Published from source reference: ${sourceRef}`,
+            `Auto-linked during release publish for ${component.artifactId}.`,
+            0.7,
+            now,
+          ],
+        );
+      }
+    }
+  }
 }
 
 function buildManifest(input: {
@@ -366,6 +406,10 @@ function uniqueSorted(values: string[]): string[] {
 
 function compactDate(date: Date): string {
   return date.toISOString().replace(/\D/gu, "").slice(0, 14);
+}
+
+function slug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "item";
 }
 
 function round2(value: number): number {

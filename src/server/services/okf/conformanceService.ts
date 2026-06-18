@@ -62,10 +62,17 @@ export async function scanWorkspace(dir: string, opts: { now: string }): Promise
 
   for (const file of files) {
     const okfPath = `/${toPosix(path.relative(dir, file))}`;
-    if (RESERVED.has(path.basename(file))) continue; // reserved files are not concepts
-    conceptCount += 1;
-
     const raw = await fs.readFile(file, "utf8");
+    if (RESERVED.has(path.basename(file))) {
+      const reservedLinks = scanMarkdown(raw);
+      for (const target of reservedLinks.bundleLinks) {
+        if (present.has(target)) resolved += 1;
+        else unresolved += 1;
+      }
+      continue; // reserved files are navigational docs, not concepts.
+    }
+
+    conceptCount += 1;
     const fm = scanFrontmatter(raw);
 
     if (!fm.hasFrontmatter) {
