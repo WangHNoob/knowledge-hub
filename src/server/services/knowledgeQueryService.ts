@@ -259,15 +259,30 @@ export class KnowledgeQueryService {
 
   private async kbGetPageTables(release: ReleaseRecord, page: string): Promise<ToolResult> {
     const pageResult = await this.kbGetPage(release, page);
+    const title = String((pageResult.result as Record<string, unknown>).title ?? page);
     const schemas = await this.tableSchemas(release);
     const markdown = String((pageResult.result as Record<string, unknown>).markdown ?? "");
+    const graphTables = await this.pageConfiguredTables(release, title);
     const tables = schemas
-      .filter(({ schema }) => markdown.includes(schema.table_name))
+      .filter(({ schema }) => markdown.includes(schema.table_name) || graphTables.has(schema.table_name) || graphTables.has(`table:${schema.table_name}`))
       .map(({ schema, component }) => ({ table: schema.table_name, componentId: component.componentId, fields: schema.fields }));
     return {
       result: { page, tables },
       componentIds: uniqueSorted([...pageResult.componentIds, ...tables.map((table) => table.componentId)]),
     };
+  }
+
+  private async pageConfiguredTables(release: ReleaseRecord, pageTitle: string): Promise<Set<string>> {
+    try {
+      const graph = await this.graph(release);
+      const pageNode = graph.nodes.find((node) => same(node.label, pageTitle) || same(node.id, pageTitle));
+      const sourceIds = new Set([pageTitle, pageNode?.id].filter((value): value is string => Boolean(value)));
+      return new Set(graph.edges
+        .filter((edge) => sourceIds.has(edge.source) && edge.relation === "configured_in")
+        .flatMap((edge) => [edge.target, edge.target.replace(/^table:/u, "")]));
+    } catch {
+      return new Set();
+    }
   }
 
   private async kbGetEntity(release: ReleaseRecord, entityId: string): Promise<ToolResult> {

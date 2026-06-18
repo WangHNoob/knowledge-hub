@@ -307,7 +307,10 @@ describe("runExtractStage", () => {
         "    target: 家园装扮表",
         "---",
         "## Overview",
-        "家园装扮说明。"
+        "家园装扮说明。",
+        "",
+        "## Data Dependencies",
+        "使用家园装扮表。"
       ].join("\n"));
 
       const specs = loadWikiSpecs(specDir);
@@ -317,6 +320,8 @@ describe("runExtractStage", () => {
       expect(meta.facts.config_table).toBe("HomeLandDress");
       expect(meta.entities).toContainEqual({ name: "HomeLandDress", type: "config_table" });
       expect(meta.relationships).toContainEqual({ source: "家园装扮", relation: "configured_in", target: "HomeLandDress" });
+      const wiki = readFileSync(join(dataDir, "wiki", "systems", "homeland.md"), "utf8");
+      expect(wiki).toContain("家园装扮表（HomeLandDress）");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

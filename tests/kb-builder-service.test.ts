@@ -6,6 +6,7 @@ import xlsx from "xlsx";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
 import { createKbBuilderPipelineService } from "../src/server/services/kbBuilderService";
+import { createTableAliasService } from "../src/server/services/tableAliasService";
 import { createTestDb } from "./helpers/testDb";
 
 describe("KbBuilderPipelineService", () => {
@@ -44,6 +45,8 @@ describe("KbBuilderPipelineService", () => {
       xlsx.writeFile(workbook, join(sourceRoot, "gamedata", "Combat", "Skill.xlsx"));
 
       const sourceService = createSourceBundleService(db, dataDir);
+      const aliasService = createTableAliasService(db);
+      await aliasService.upsertMany([{ canonical: "Combat/Skill", aliases: ["技能表"] }], "admin", "manual");
       const imported = await sourceService.importDirectoryAsVersion({
         rootPath: sourceRoot,
         bundleId: "default",
@@ -62,6 +65,7 @@ describe("KbBuilderPipelineService", () => {
         qualityProfileId: "default"
       });
       const detail = await createKnowledgeService(db).getPackageDetail(result.package.packageId);
+      const aliases = await aliasService.list();
 
       expect(result.package.kind).toBe("kb_builder_pipeline");
       expect(result.package.sourceVersionIds).toEqual([imported.version.versionId]);
@@ -78,6 +82,8 @@ describe("KbBuilderPipelineService", () => {
         "graph_view",
         "quality_report"
       ]));
+      expect(aliases).toHaveLength(1);
+      expect(aliases[0]).toMatchObject({ canonical: "Combat/Skill", aliases: ["技能表"] });
     } finally {
       await cleanup();
       rmSync(dataDir, { recursive: true, force: true });

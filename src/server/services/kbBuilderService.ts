@@ -358,9 +358,10 @@ export class KbBuilderPipelineService {
   }
 
   /**
-   * Syncs the persistent table-alias store with the tables in this build, optionally
-   * seeding LLM-drafted Chinese aliases for tables that have none yet, then writes the
-   * full alias map into the run workspace so the extract/table stages resolve names.
+   * Exports the curated persistent table-alias store into the run workspace so the
+   * extract/table stages resolve names. Normal builds are read-only for the alias
+   * store; they only write the per-run table_aliases.json snapshot. The optional
+   * generateAliases mode is an explicit maintenance action that may seed LLM drafts.
    */
   private async prepareTableAliases(
     dataDir: string,
@@ -372,9 +373,9 @@ export class KbBuilderPipelineService {
 
     let drafted = 0;
     let tables = 0;
-    // Only enumerate every gamedata table (and optionally LLM-draft them) when explicitly
-    // asked. Normal builds just inject the curated aliases (e.g. an imported cn_en_map) so
-    // the translation table stays small instead of ballooning to thousands of empty rows.
+    // Only enumerate every gamedata table and write alias drafts when explicitly asked.
+    // Normal builds only inject the curated aliases (e.g. an imported cn_en_map) so the
+    // translation table stays stable instead of ballooning to thousands of empty rows.
     const client = options.generateAliases ? createLlmClient(modelConfig) : null;
     if (options.generateAliases) {
       const names = scanGamedataTableNames(dataDir);

@@ -22,8 +22,11 @@ export function evaluateQualityGate(options: {
       const markdown = readFileSync(join(dir, file), "utf8");
       const meta = readJson(join(options.dataDir, "wiki", "_meta", file.replace(/\.md$/u, ".json")), {});
       const frontmatter = parseFrontmatter(markdown);
+      const generatedTablePage = isGeneratedTableRegistryPage(frontmatter);
       const spec = options.specs.specs[type] ?? { requiredSections: [], requiredFacts: [] };
-      const quality = evaluateWikiPage(markdown, meta, spec.requiredSections, spec.requiredFacts);
+      const requiredSections = generatedTablePage ? [] : spec.requiredSections;
+      const requiredFacts = generatedTablePage ? [] : spec.requiredFacts;
+      const quality = evaluateWikiPage(markdown, meta, requiredSections, requiredFacts);
       pageScores.push(quality.wikiSpecScore);
       componentQuality[rel] = {
         confidence: quality.wikiSpecScore,
@@ -61,17 +64,19 @@ export function evaluateQualityGate(options: {
       }
 
       const sourceRule = rule(options.profile, "frontmatterSource");
-      if (ruleEnabled(sourceRule)) {
-        const source = frontmatter.source;
+      if (ruleEnabled(sourceRule) && !generatedTablePage) {
+        const frontmatterSource = frontmatter.source;
         const metaSource = stringValue((meta as Record<string, unknown>).source);
-        if (!source || !options.sourceLogicalPaths.has(source) || (metaSource && metaSource !== source)) {
+        const source = metaSource || frontmatterSource;
+        const sourceMismatch = Boolean(frontmatterSource && metaSource && metaSource !== frontmatterSource);
+        if (!source || !options.sourceLogicalPaths.has(source) || sourceMismatch) {
           findings.push(finding(
             "frontmatterSource",
             severity(sourceRule, "blocking"),
             rel,
             `Source trace invalid: ${rel}`,
-            `frontmatter source=${source ?? ""}; meta source=${metaSource ?? ""}.`,
-            "修正 wiki frontmatter/source meta，或重新从正确资料版本构建。",
+            `frontmatter source=${frontmatterSource ?? ""}; meta source=${metaSource ?? ""}.`,
+            "修正 wiki source meta，或重新从正确资料版本构建。",
             1,
           ));
         }
@@ -207,6 +212,10 @@ function parseFrontmatter(markdown: string): Record<string, string> {
       .filter((value): value is RegExpExecArray => Boolean(value))
       .map((value) => [value[1].trim(), value[2].trim()]),
   );
+}
+
+function isGeneratedTableRegistryPage(frontmatter: Record<string, string>): boolean {
+  return frontmatter.type === "table" && Boolean(frontmatter.table_schema);
 }
 
 function factsFromMeta(meta: unknown): Record<string, unknown> {

@@ -5,6 +5,7 @@ export interface TableAliasIndex {
   readonly canonicalNames: Set<string>;
   resolve(value: string): string | null;
   resolveMany(value: string): string[];
+  replacements(): Array<{ alias: string; canonical: string }>;
 }
 
 type AliasFile =
@@ -13,6 +14,7 @@ type AliasFile =
 
 export function loadTableAliases(dataDir: string, canonicalTables: string[] = []): TableAliasIndex {
   const aliasToCanonical = new Map<string, string>();
+  const originalAliases: Array<{ alias: string; canonical: string }> = [];
   const canonicalNames = new Set(canonicalTables.filter(Boolean));
   const files = [
     join(dataDir, "table_aliases.json"),
@@ -22,11 +24,11 @@ export function loadTableAliases(dataDir: string, canonicalTables: string[] = []
 
   for (const file of files) {
     if (!existsSync(file)) continue;
-    addAliasFile(aliasToCanonical, canonicalNames, JSON.parse(readFileSync(file, "utf8")) as AliasFile);
+    addAliasFile(aliasToCanonical, originalAliases, canonicalNames, JSON.parse(readFileSync(file, "utf8")) as AliasFile);
   }
 
   for (const table of canonicalNames) {
-    addAlias(aliasToCanonical, canonicalNames, table, table);
+    addAlias(aliasToCanonical, originalAliases, canonicalNames, table, table);
   }
 
   return {
@@ -46,6 +48,11 @@ export function loadTableAliases(dataDir: string, canonicalTables: string[] = []
       }
       return out;
     },
+    replacements() {
+      return originalAliases
+        .filter(({ alias, canonical }) => alias !== canonical)
+        .sort((a, b) => b.alias.length - a.alias.length || a.alias.localeCompare(b.alias));
+    },
   };
 }
 
@@ -59,33 +66,38 @@ export function renderTableAliasTemplate(tables: string[], existing: unknown = {
   return `${JSON.stringify(rows, null, 2)}\n`;
 }
 
-function addAliasFile(aliasToCanonical: Map<string, string>, canonicalNames: Set<string>, input: AliasFile): void {
+function addAliasFile(
+  aliasToCanonical: Map<string, string>,
+  originalAliases: Array<{ alias: string; canonical: string }>,
+  canonicalNames: Set<string>,
+  input: AliasFile,
+): void {
   if (Array.isArray(input)) {
     for (const row of input) {
       const canonical = stringValue(row.canonical) ?? stringValue(row.canonicalName) ?? stringValue(row.table);
       if (!canonical) continue;
-      addAlias(aliasToCanonical, canonicalNames, canonical, canonical);
-      for (const alias of stringArray(row.aliases)) addAlias(aliasToCanonical, canonicalNames, alias, canonical);
+      addAlias(aliasToCanonical, originalAliases, canonicalNames, canonical, canonical);
+      for (const alias of stringArray(row.aliases)) addAlias(aliasToCanonical, originalAliases, canonicalNames, alias, canonical);
     }
     return;
   }
 
   for (const [key, value] of Object.entries(input)) {
     if (typeof value === "string") {
-      addAlias(aliasToCanonical, canonicalNames, key, value);
+      addAlias(aliasToCanonical, originalAliases, canonicalNames, key, value);
       continue;
     }
     if (Array.isArray(value)) {
-      addAlias(aliasToCanonical, canonicalNames, key, key);
-      for (const alias of stringArray(value)) addAlias(aliasToCanonical, canonicalNames, alias, key);
+      addAlias(aliasToCanonical, originalAliases, canonicalNames, key, key);
+      for (const alias of stringArray(value)) addAlias(aliasToCanonical, originalAliases, canonicalNames, alias, key);
       continue;
     }
     if (value && typeof value === "object") {
       const record = value as Record<string, unknown>;
       const canonical = stringValue(record.canonical) ?? stringValue(record.canonicalName) ?? stringValue(record.table) ?? key;
-      addAlias(aliasToCanonical, canonicalNames, canonical, canonical);
-      addAlias(aliasToCanonical, canonicalNames, key, canonical);
-      for (const alias of stringArray(record.aliases)) addAlias(aliasToCanonical, canonicalNames, alias, canonical);
+      addAlias(aliasToCanonical, originalAliases, canonicalNames, canonical, canonical);
+      addAlias(aliasToCanonical, originalAliases, canonicalNames, key, canonical);
+      for (const alias of stringArray(record.aliases)) addAlias(aliasToCanonical, originalAliases, canonicalNames, alias, canonical);
     }
   }
 }
@@ -106,12 +118,21 @@ function collectExistingAliases(out: Map<string, string[]>, input: unknown): voi
   }
 }
 
-function addAlias(aliasToCanonical: Map<string, string>, canonicalNames: Set<string>, alias: string, canonical: string): void {
+function addAlias(
+  aliasToCanonical: Map<string, string>,
+  originalAliases: Array<{ alias: string; canonical: string }>,
+  canonicalNames: Set<string>,
+  alias: string,
+  canonical: string,
+): void {
   const cleanAlias = alias.trim();
   const cleanCanonical = canonical.trim();
   if (!cleanAlias || !cleanCanonical) return;
   canonicalNames.add(cleanCanonical);
   aliasToCanonical.set(aliasKey(cleanAlias), cleanCanonical);
+  if (!originalAliases.some((item) => item.alias === cleanAlias && item.canonical === cleanCanonical)) {
+    originalAliases.push({ alias: cleanAlias, canonical: cleanCanonical });
+  }
 }
 
 function aliasKey(value: string): string {

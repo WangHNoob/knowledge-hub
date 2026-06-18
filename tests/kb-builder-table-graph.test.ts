@@ -118,4 +118,28 @@ describe("native table and graph stages", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("copies the curated top-level table aliases without expanding empty rows", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-table-alias-copy-"));
+    try {
+      mkdirSync(join(dataDir, "gamedata", "Combat"), { recursive: true });
+      writeFileSync(join(dataDir, "table_aliases.json"), JSON.stringify([
+        { table: "Combat/Skill", aliases: ["技能表"] }
+      ], null, 2));
+
+      const skill = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(skill, xlsx.utils.json_to_sheet([{ Id: 1 }]), "Skill");
+      xlsx.writeFile(skill, join(dataDir, "gamedata", "Combat", "Skill.xlsx"));
+      const buff = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(buff, xlsx.utils.json_to_sheet([{ Id: 10 }]), "Buff");
+      xlsx.writeFile(buff, join(dataDir, "gamedata", "Combat", "Buff.xlsx"));
+
+      await runTableStage({ dataDir, force: false });
+
+      const aliases = JSON.parse(readFileSync(join(dataDir, "wiki", "_tables", "table_aliases.json"), "utf8"));
+      expect(aliases).toEqual([{ table: "Combat/Skill", aliases: ["技能表"] }]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });

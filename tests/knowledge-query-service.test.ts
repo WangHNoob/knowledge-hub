@@ -40,6 +40,9 @@ describe("KnowledgeQueryService", () => {
       const section = await service.runTool("kb_get_section", { page: "Battle System", section: "Data Dependencies" }, { sessionId: "test", agentRole: "planner" });
       expect(section.result.markdown).toContain("Combat/Skill");
 
+      const pageTables = await service.runTool("kb_get_page_tables", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(pageTables.result.tables[0].table).toBe("Combat/Skill");
+
       const entity = await service.runTool("kb_get_entity", { entityId: "Battle System" }, { sessionId: "test", agentRole: "planner" });
       expect(entity.result.node.type).toBe("system");
 
@@ -61,6 +64,19 @@ describe("KnowledgeQueryService", () => {
       const { rows: auditRows } = await fixture.db.adapter.query("SELECT * FROM mcp_audit ORDER BY created_at");
       expect(auditRows.length).toBeGreaterThanOrEqual(9);
       expect(auditRows.at(-1)?.status).toBe("hit");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("resolves page tables from graph relations when markdown dependencies are translated", async () => {
+    const fixture = await setupPublishedKnowledgeFixture({ dependencyText: "Uses 技能表." });
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const pageTables = await service.runTool("kb_get_page_tables", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(pageTables.result.tables[0].table).toBe("Combat/Skill");
+      expect(pageTables.trace.componentIds).toContain(fixture.pageComponentId);
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
@@ -90,7 +106,7 @@ describe("KnowledgeQueryService", () => {
   }, 15000);
 });
 
-async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; cleanup: () => Promise<void> }> {
+async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; cleanup: () => Promise<void> }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kh-query-"));
   const handle = await createTestDb();
   const db = handle.db;
@@ -118,7 +134,7 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
     "Stamina controls skill usage.",
     "",
     "## Data Dependencies",
-    "Uses Combat/Skill.",
+    options.dependencyText ?? "Uses Combat/Skill.",
     ""
   ].join("\n"));
   writeFileSync(join(buildData, "wiki", "graph.json"), JSON.stringify({

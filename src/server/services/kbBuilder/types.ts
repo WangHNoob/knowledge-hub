@@ -19,7 +19,7 @@ export interface BuildPipelineOptions {
   only: string | null;
   qualityProfileId: string;
   traceId?: string;
-  /** When true, draft Chinese table aliases with the LLM for tables that have none. Off by default (slow on large table sets). */
+  /** Explicit maintenance mode: may write LLM-drafted aliases into the persistent translation table. Off by default. */
   generateAliases?: boolean;
 }
 

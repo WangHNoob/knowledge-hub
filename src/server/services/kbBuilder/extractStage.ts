@@ -479,6 +479,7 @@ function normalizeTableRefs(page: ExtractedPage, tableAliases: TableAliasIndex):
     addUniqueEntity(page.entities, { name: table, type: "config_table" });
     addUniqueRelationship(page.relationships, { source: page.title, relation: "configured_in", target: table });
   }
+  page.body = annotateTableAliasesInDependencySections(page.body, tableAliases);
 }
 
 function isTableEntityType(type: string): boolean {
@@ -499,6 +500,36 @@ function addUniqueRelationship(relationships: Relationship[], relationship: Rela
     return;
   }
   relationships.push(relationship);
+}
+
+function annotateTableAliasesInDependencySections(body: string, tableAliases: TableAliasIndex): string {
+  const replacements = tableAliases.replacements();
+  if (replacements.length === 0) return body;
+  const lines = body.split(/\r?\n/u);
+  let inDependencySection = false;
+  return lines.map((line) => {
+    const heading = /^(#{1,6})\s+(.+?)\s*$/u.exec(line);
+    if (heading) {
+      inDependencySection = dependencyHeading(heading[2]);
+      return line;
+    }
+    if (!inDependencySection) return line;
+    let next = line;
+    for (const { alias, canonical } of replacements) {
+      if (!next.includes(alias) || next.includes(canonical)) continue;
+      next = next.replace(new RegExp(`${escapeRegExp(alias)}(?!\\s*[（(]${escapeRegExp(canonical)}[）)])`, "gu"), `${alias}（${canonical}）`);
+    }
+    return next;
+  }).join("\n");
+}
+
+function dependencyHeading(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "data dependencies" || ["配置表依赖", "关联配置表", "数据依赖", "表依赖"].includes(normalized);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function normalizeOnlyFilter(only: string | null): string | null {

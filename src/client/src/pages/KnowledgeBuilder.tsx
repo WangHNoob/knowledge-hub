@@ -290,9 +290,9 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                     placeholder="只处理某个路径，可留空"
                   />
                 </div>
-                <label className="inline-check" title="对没有别名的表逐批调用 LLM 翻译表名，表很多时较慢；通常用「翻译表」页导入 cn_en_map 即可。">
+                <label className="inline-check" title="维护动作：允许本次构建向翻译表写入 LLM 生成的草稿。普通构建保持关闭，只读取你维护的翻译表。">
                   <input type="checkbox" checked={generateAliases} onChange={(event) => setGenerateAliases(event.target.checked)} />
-                  构建时用 LLM 生成表名翻译（慢，默认关）
+                  允许构建写入翻译表草稿（实验，默认关）
                 </label>
               </div>
               <div className="advanced-section">

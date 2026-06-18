@@ -138,12 +138,11 @@ function writeTableOutputs(
   // Prefer the persisted aliases injected by the alias-prep step (top-level
   // table_aliases.json); fall back to any prior _tables copy.
   const injectedAliasPath = join(dataDir, "table_aliases.json");
-  const existingAliases = existsSync(injectedAliasPath)
-    ? JSON.parse(readFileSync(injectedAliasPath, "utf8"))
-    : existsSync(aliasPath) ? JSON.parse(readFileSync(aliasPath, "utf8")) : {};
+  const injectedAliases = existsSync(injectedAliasPath) ? readFileSync(injectedAliasPath, "utf8") : null;
+  const existingAliases = injectedAliases === null && existsSync(aliasPath) ? JSON.parse(readFileSync(aliasPath, "utf8")) : {};
   writeFileSync(join(dataDir, "wiki", "_tables", "schemas.json"), `${JSON.stringify(sortObject(schemas), null, 2)}\n`);
   writeFileSync(join(dataDir, "wiki", "_tables", "groups.json"), `${JSON.stringify(sortObject(groups), null, 2)}\n`);
-  writeFileSync(aliasPath, renderTableAliasTemplate(Object.keys(schemas), existingAliases));
+  writeFileSync(aliasPath, injectedAliases ?? renderTableAliasTemplate(Object.keys(schemas), existingAliases));
   writeFileSync(join(dataDir, "wiki", "_tables", "table_fk_registry.json"), `${JSON.stringify(fkEdges, null, 2)}\n`);
   writeFileSync(join(dataDir, "wiki", "_tables", "table_relation_candidates.json"), `${JSON.stringify(relationCandidates, null, 2)}\n`);
 
