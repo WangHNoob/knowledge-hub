@@ -443,7 +443,12 @@ nav {
 /* Event/task cards whose middle column carries wrapping ID chips: let it grow,
    constrain its width, and top-align the row so the badge/timestamp don't drift. */
 .event,
-.task { align-items: flex-start; }
+.task { align-items: flex-start; min-width: 0; }
+/* The list is a grid; without an explicit track the column sizes to content
+   (max-content), so a long ID chip forces the card wider than the panel. Pin
+   the track to the container width so inner chips ellipsis instead of overflow. */
+.event-list,
+.task-list { grid-template-columns: minmax(0, 1fr); }
 .event > div,
 .task > div {
   flex: 1;
