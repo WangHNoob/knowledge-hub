@@ -373,7 +373,7 @@ export class KbBuilderPipelineService {
     await aliasService.ensureTables(names);
 
     let drafted = 0;
-    const client = createLlmClient(modelConfig);
+    const client = options.generateAliases ? createLlmClient(modelConfig) : null;
     if (client) {
       const missing = (await aliasService.listMissing()).filter((name) => names.includes(name));
       if (missing.length > 0) {

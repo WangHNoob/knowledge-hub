@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { Save } from "lucide-react";
+import { Save, Upload } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { listTableAliases, saveTableAliases, type TableAliasEntry } from "../api";
+import { importTableAliases, listTableAliases, saveTableAliases, type TableAliasEntry } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { formatTime } from "../utils/format";
 
@@ -19,6 +19,9 @@ export function TableAliases() {
   const [onlyMissing, setOnlyMissing] = useState(false);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [savedNote, setSavedNote] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importError, setImportError] = useState("");
 
   const save = useMutation({
     mutationFn: (entries: Array<{ canonical: string; aliases: string[] }>) => saveTableAliases(entries),
@@ -28,6 +31,29 @@ export function TableAliases() {
       await queryClient.invalidateQueries({ queryKey: ["table-aliases"] });
     }
   });
+
+  const importMutation = useMutation({
+    mutationFn: (map: unknown) => importTableAliases(map),
+    onSuccess: async (result) => {
+      setImportError("");
+      setShowImport(false);
+      setImportText("");
+      setSavedNote(`已导入 ${result.imported} 条翻译。`);
+      await queryClient.invalidateQueries({ queryKey: ["table-aliases"] });
+    },
+    onError: (error) => setImportError(error instanceof Error ? error.message : String(error))
+  });
+
+  const runImport = () => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(importText);
+    } catch {
+      setImportError("不是合法的 JSON，请检查内容。");
+      return;
+    }
+    importMutation.mutate(parsed);
+  };
 
   const draftValue = (entry: TableAliasEntry) => edits[entry.canonical] ?? entry.aliases.join("、");
   const filtered = useMemo(() => {
@@ -76,12 +102,36 @@ export function TableAliases() {
             <input type="checkbox" checked={onlyMissing} onChange={(event) => setOnlyMissing(event.target.checked)} />
             仅看待翻译
           </label>
+          <button className="secondary-action" type="button" onClick={() => setShowImport((v) => !v)}>
+            <Upload size={15} />
+            导入 cn_en_map
+          </button>
           <button className="primary-action" type="button" disabled={changedCount === 0 || save.isPending} onClick={onSave}>
             <Save size={15} />
             {save.isPending ? "保存中..." : `保存修改（${changedCount}）`}
           </button>
         </div>
       </div>
+
+      {showImport && (
+        <section className="alias-import">
+          <p className="subtle">粘贴 cn_en_map.json 内容：扁平映射 <code>{'{ "EnglishTable": "中文名" }'}</code> 或数组 <code>{'[{ "table", "aliases" }]'}</code>。导入会与现有别名合并。</p>
+          <textarea
+            className="code-editor"
+            value={importText}
+            placeholder={'{\n  "Achievement": "成就",\n  "Activity": "活动"\n}'}
+            onChange={(event) => setImportText(event.target.value)}
+            spellCheck={false}
+          />
+          {importError && <p className="error">{importError}</p>}
+          <div className="detail-actions">
+            <button className="primary-action" type="button" disabled={!importText.trim() || importMutation.isPending} onClick={runImport}>
+              <Upload size={15} />
+              {importMutation.isPending ? "导入中..." : "导入"}
+            </button>
+          </div>
+        </section>
+      )}
 
       {save.error && <p className="error">{save.error instanceof Error ? save.error.message : String(save.error)}</p>}
       {savedNote && changedCount === 0 && <p className="notice">{savedNote}</p>}

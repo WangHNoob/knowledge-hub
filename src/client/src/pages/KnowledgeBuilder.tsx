@@ -35,6 +35,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
   const [rememberApiKey, setRememberApiKey] = useState(Boolean(prefs.apiKey));
   const [force, setForce] = useState(false);
   const [only, setOnly] = useState("");
+  const [generateAliases, setGenerateAliases] = useState(false);
   const [error, setError] = useState("");
   const [modelTestMessage, setModelTestMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -97,7 +98,8 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
         modelConfig,
         force,
         only: only.trim() || null,
-        qualityProfileId: "default"
+        qualityProfileId: "default",
+        generateAliases
       });
     },
     onSuccess: async (result) => {
@@ -288,6 +290,10 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                     placeholder="只处理某个路径，可留空"
                   />
                 </div>
+                <label className="inline-check" title="对没有别名的表逐批调用 LLM 翻译表名，表很多时较慢；通常用「翻译表」页导入 cn_en_map 即可。">
+                  <input type="checkbox" checked={generateAliases} onChange={(event) => setGenerateAliases(event.target.checked)} />
+                  构建时用 LLM 生成表名翻译（慢，默认关）
+                </label>
               </div>
               <div className="advanced-section">
                 <h3>大模型设置</h3>

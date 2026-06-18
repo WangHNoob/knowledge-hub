@@ -2467,3 +2467,6 @@ button.id-chip.clickable:hover {
 .alias-table tr.dirty { background: rgba(201, 162, 39, 0.08); }
 .alias-input { width: 100%; }
 .inline-check { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 13px; white-space: nowrap; }
+
+.alias-import { margin: 12px 0; padding: 16px; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-md); }
+.alias-import textarea { width: 100%; min-height: 160px; margin-top: 8px; }

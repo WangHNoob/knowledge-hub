@@ -19,6 +19,8 @@ export interface BuildPipelineOptions {
   only: string | null;
   qualityProfileId: string;
   traceId?: string;
+  /** When true, draft Chinese table aliases with the LLM for tables that have none. Off by default (slow on large table sets). */
+  generateAliases?: boolean;
 }
 
 export interface StageResult {

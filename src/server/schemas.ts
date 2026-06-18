@@ -46,7 +46,8 @@ export const buildRequestSchema = z.object({
   modelConfig: modelConfigSchema.optional(),
   force: z.boolean().default(false),
   only: z.string().min(1).nullable().default(null),
-  qualityProfileId: z.string().min(1).default("default")
+  qualityProfileId: z.string().min(1).default("default"),
+  generateAliases: z.boolean().default(false)
 });
 
 export const qualityProfileUpdateSchema = z.object({

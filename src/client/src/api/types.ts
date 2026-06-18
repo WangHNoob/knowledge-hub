@@ -262,6 +262,7 @@ export interface BuildRequest {
   force: boolean;
   only: string | null;
   qualityProfileId: string;
+  generateAliases?: boolean;
 }
 
 export type BuildModelConfig =

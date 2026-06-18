@@ -66,6 +66,54 @@ export class TableAliasService {
   async exportRows(): Promise<Array<{ table: string; aliases: string[] }>> {
     return (await this.list()).map((entry) => ({ table: entry.canonical, aliases: entry.aliases }));
   }
+
+  /**
+   * Imports a cn_en_map-style payload. Accepts either the flat `{ "EnglishTable": "中文名" }`
+   * map (one Chinese name per table) or the array form `[{ table, aliases }]`. Each imported
+   * row is merged into existing aliases (no dupes). Returns how many tables were touched.
+   */
+  async importMap(payload: unknown, actor: string): Promise<{ imported: number }> {
+    const incoming = parseImportPayload(payload);
+    if (incoming.length === 0) return { imported: 0 };
+    const existing = new Map((await this.list()).map((entry) => [entry.canonical, entry.aliases]));
+    const merged = incoming.map((row) => ({
+      canonical: row.canonical,
+      aliases: dedupe([...(existing.get(row.canonical) ?? []), ...row.aliases])
+    }));
+    await this.upsertMany(merged, actor, "manual");
+    return { imported: merged.length };
+  }
+}
+
+function parseImportPayload(payload: unknown): Array<{ canonical: string; aliases: string[] }> {
+  // Array form: [{ table|canonical, aliases|name }]
+  if (Array.isArray(payload)) {
+    return payload
+      .map((raw) => {
+        const record = raw as Record<string, unknown>;
+        const canonical = str(record.canonical) ?? str(record.table);
+        if (!canonical) return null;
+        const aliases = Array.isArray(record.aliases)
+          ? record.aliases.filter((a): a is string => typeof a === "string")
+          : str(record.name) ? [str(record.name)!] : [];
+        return { canonical, aliases };
+      })
+      .filter((row): row is { canonical: string; aliases: string[] } => row !== null);
+  }
+  // Flat cn_en_map: { "EnglishTable": "中文名" }
+  if (payload && typeof payload === "object") {
+    return Object.entries(payload as Record<string, unknown>)
+      .map(([canonical, value]) => ({
+        canonical: canonical.trim(),
+        aliases: typeof value === "string" && value.trim() ? [value.trim()] : []
+      }))
+      .filter((row) => row.canonical);
+  }
+  return [];
+}
+
+function str(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function mapAlias(row: Record<string, unknown>): TableAliasEntry {

@@ -23,4 +23,19 @@ export function registerTableAliasRoutes(app: FastifyInstance, ctx: RouteContext
       return { entries };
     }
   );
+
+  // Import a cn_en_map.json payload (flat { "EnglishTable": "中文名" } or [{ table, aliases }]).
+  app.post<{ Body: { map?: unknown } }>(
+    "/api/table-aliases/import",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const map = request.body?.map;
+      if (map === undefined || map === null || typeof map !== "object") {
+        return reply.code(400).send({ error: "请提供 cn_en_map JSON（对象或数组）。" });
+      }
+      const result = await service.importMap(map, request.user.username);
+      const entries = await service.list();
+      return { imported: result.imported, entries };
+    }
+  );
 }

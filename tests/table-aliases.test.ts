@@ -73,6 +73,35 @@ describe("table alias service + routes", () => {
     expect(denied.statusCode).toBe(403);
   });
 
+  it("imports a flat cn_en_map and merges with existing aliases", async () => {
+    const service = createTableAliasService(db);
+    await service.upsertMany([{ canonical: "Scene/Scene", aliases: ["场景"] }], "admin", "manual");
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/table-aliases/import",
+      headers: auth,
+      payload: { map: { "Scene/Scene": "场景表", Achievement: "成就", Activity: "活动" } }
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().imported).toBe(3);
+
+    const list = await service.list();
+    expect(list.find((e) => e.canonical === "Scene/Scene")?.aliases).toEqual(["场景", "场景表"]); // merged
+    expect(list.find((e) => e.canonical === "Achievement")?.aliases).toEqual(["成就"]);
+  });
+
+  it("imports the array form too", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/table-aliases/import",
+      headers: auth,
+      payload: { map: [{ table: "Bag", aliases: ["背包"] }] }
+    });
+    expect(res.statusCode).toBe(200);
+    expect((await createTableAliasService(db).list()).find((e) => e.canonical === "Bag")?.aliases).toEqual(["背包"]);
+  });
+
   it("scans gamedata table names and writes the injected alias file", () => {
     const work = mkdtempSync(join(tmpdir(), "kh-alias-work-"));
     try {
