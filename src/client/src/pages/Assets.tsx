@@ -39,6 +39,20 @@ function formatContent(pathName: string, content: string): string {
   return content;
 }
 
+function collectDirPaths(root: TreeNode): string[] {
+  const paths: string[] = [];
+  const walk = (node: TreeNode) => {
+    for (const child of node.children.values()) {
+      if (child.children.size > 0) {
+        paths.push(child.path);
+        walk(child);
+      }
+    }
+  };
+  walk(root);
+  return paths;
+}
+
 export function Assets() {
   const { navigate, params } = useNav();
   const queryClient = useQueryClient();
@@ -47,6 +61,7 @@ export function Assets() {
   const [status, setStatus] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [openFile, setOpenFile] = useState<{ componentId: string } | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const packages = useQuery({ queryKey: ["packages", { q, status }], queryFn: () => listPackages({ q, status }) });
 
   // Honor cross-navigation (e.g. from global search, builder, release, review).
@@ -91,6 +106,32 @@ export function Assets() {
     enabled: Boolean(effectiveSelected && openFile),
   });
   const tree = useMemo(() => buildTree(detail.data?.components ?? []), [detail.data]);
+  const allDirPaths = useMemo(() => collectDirPaths(tree), [tree]);
+
+  // Collapse the tree when switching packages so 1000+ leaves don't all render at once.
+  useEffect(() => {
+    setExpanded(new Set());
+  }, [effectiveSelected]);
+
+  // Reveal a file that was navigated to (search / agent feedback) by expanding its ancestors.
+  useEffect(() => {
+    if (!openFile || !detail.data) return;
+    const target = detail.data.components.find((c) => c.componentId === openFile.componentId);
+    if (!target) return;
+    const parts = (target.legacyPath || target.componentId).split("/").filter(Boolean);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (let i = 1; i < parts.length; i += 1) next.add(parts.slice(0, i).join("/"));
+      return next;
+    });
+  }, [openFile, detail.data]);
+
+  const toggleDir = (path: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path); else next.add(path);
+      return next;
+    });
 
   const confirmDelete = (pkg: AssetPackage) => {
     const confirmed = window.confirm(`确认删除知识资产包「${pkg.name}」？\n\n未发布资产包会连同组件、证据和审核任务一起删除；已被发布版本引用的资产包会被后台拒绝。`);
@@ -102,17 +143,23 @@ export function Assets() {
       .sort((a, b) => (a.children.size === b.children.size ? a.name.localeCompare(b.name) : b.children.size - a.children.size))
       .flatMap((child) => {
         const isFile = child.children.size === 0 && Boolean(child.component);
+        const isOpen = expanded.has(child.path);
         const row = (
           <button
             key={child.path}
             className={`tree-node ${isFile ? "file" : "dir"} ${openFile?.componentId === child.component?.componentId ? "active" : ""}`}
             style={{ paddingLeft: `${depth * 14 + 8}px` }}
-            onClick={() => { if (isFile && child.component) setOpenFile({ componentId: child.component.componentId }); }}
+            onClick={() => {
+              if (isFile && child.component) setOpenFile({ componentId: child.component.componentId });
+              else if (!isFile) toggleDir(child.path);
+            }}
           >
-            {isFile ? "📄" : "📁"} {child.name}
+            {isFile ? "📄" : <span className="tree-caret">{isOpen ? "▾" : "▸"}</span>}
+            {isFile ? "" : (isOpen ? "📂" : "📁")} {child.name}
+            {!isFile && <span className="tree-count">{child.children.size}</span>}
           </button>
         );
-        return isFile ? [row] : [row, ...renderNode(child, depth + 1)];
+        return isFile || !expanded.has(child.path) ? [row] : [row, ...renderNode(child, depth + 1)];
       });
 
   const pkg = detail.data?.package;
@@ -197,7 +244,13 @@ export function Assets() {
                 <Metric label="待补证据" value={detail.data.evidenceCoverage.missingComponents} hint="优先进入审核中心" tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"} />
               </div>
               <div className="asset-browser">
-                <div className="asset-tree">{renderNode(tree, 0)}</div>
+                <div className="asset-tree">
+                  <div className="tree-toolbar">
+                    <button type="button" onClick={() => setExpanded(new Set(allDirPaths))} disabled={allDirPaths.length === 0}>全部展开</button>
+                    <button type="button" onClick={() => setExpanded(new Set())} disabled={expanded.size === 0}>全部收起</button>
+                  </div>
+                  {renderNode(tree, 0)}
+                </div>
                 <div className="asset-viewer">
                   {!openFile && <p className="subtle">点击左侧文件查看内容。</p>}
                   {openFile && fileContent.isLoading && <p className="subtle">加载中…</p>}
