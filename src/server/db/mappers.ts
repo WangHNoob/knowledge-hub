@@ -69,7 +69,10 @@ export function mapReviewTask(row: Record<string, unknown>): ReviewTask {
     title: row.title as string,
     description: row.description as string,
     suggestedAction: row.suggested_action as string,
-    createdAt: String(row.created_at)
+    createdAt: String(row.created_at),
+    resolvedBy: (row.resolved_by as string) ?? "",
+    resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
+    resolutionNote: (row.resolution_note as string) ?? ""
   };
 }
 

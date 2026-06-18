@@ -184,7 +184,10 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       suggested_action TEXT NOT NULL DEFAULT '',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      resolved_by TEXT NOT NULL DEFAULT '',
+      resolved_at TIMESTAMPTZ,
+      resolution_note TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS ${p}releases (
@@ -287,6 +290,9 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}knowledge_build_runs ADD COLUMN IF NOT EXISTS current_stage TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}knowledge_build_runs ADD COLUMN IF NOT EXISTS completed_stages JSONB NOT NULL DEFAULT '[]';
     ALTER TABLE ${p}knowledge_rule_profiles ADD COLUMN IF NOT EXISTS hash TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS resolved_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS resolution_note TEXT NOT NULL DEFAULT '';
   `);
 
   // 默认资料集

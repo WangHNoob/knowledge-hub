@@ -20,6 +20,7 @@ import type {
   PackageStatus,
   ReleaseRecord,
   ReviewSeverity,
+  ReviewStatus,
   ReviewTask,
   SearchHit,
   SearchResult,
@@ -221,13 +222,41 @@ export class KnowledgeService {
     return rows.length ? String(rows[0].package_id) : null;
   }
 
-  async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string } = {}): Promise<ReviewTask[]> {
+  async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string; status?: ReviewStatus } = {}): Promise<ReviewTask[]> {
     const where: string[] = [];
     const params: unknown[] = [];
     if (filter.severity) { where.push(`severity = $${params.length + 1}`); params.push(filter.severity); }
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
+    if (filter.status) { where.push(`status = $${params.length + 1}`); params.push(filter.status); }
     const sql = `SELECT * FROM review_tasks${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at`;
     const { rows } = await this.adapter.query(sql, params);
+    return rows.map(mapReviewTask);
+  }
+
+  /**
+   * Transitions review tasks to a new status (resolve / dismiss / reopen). Records the
+   * actor + timestamp + note for resolved/dismissed; reopening clears those fields.
+   * Returns the updated tasks. Unknown task ids are silently skipped.
+   */
+  async transitionReviewTasks(
+    taskIds: string[],
+    status: ReviewStatus,
+    actor: string,
+    note = ""
+  ): Promise<ReviewTask[]> {
+    if (taskIds.length === 0) return [];
+    const reopening = status === "open";
+    const resolvedBy = reopening ? "" : actor;
+    const resolvedAt = reopening ? null : new Date().toISOString();
+    const resolutionNote = reopening ? "" : note;
+    const placeholders = taskIds.map((_, index) => `$${index + 5}`).join(", ");
+    const { rows } = await this.adapter.query(
+      `UPDATE review_tasks
+         SET status = $1, resolved_by = $2, resolved_at = $3, resolution_note = $4
+       WHERE task_id IN (${placeholders})
+       RETURNING *`,
+      [status, resolvedBy, resolvedAt, resolutionNote, ...taskIds]
+    );
     return rows.map(mapReviewTask);
   }
 

@@ -1,7 +1,18 @@
-import { getJson } from "./http";
+import { getJson, postJson } from "./http";
 import type { ReviewTask } from "./types";
 
-export async function listReviewTasks(severity?: string): Promise<ReviewTask[]> {
-  const suffix = severity ? `?severity=${encodeURIComponent(severity)}` : "";
+export async function listReviewTasks(severity?: string, status?: string): Promise<ReviewTask[]> {
+  const params = new URLSearchParams();
+  if (severity) params.set("severity", severity);
+  if (status) params.set("status", status);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
   return (await getJson<{ tasks: ReviewTask[] }>(`/api/review/tasks${suffix}`)).tasks;
+}
+
+export async function transitionReviewTasks(
+  taskIds: string[],
+  status: "open" | "resolved" | "dismissed",
+  note?: string
+): Promise<ReviewTask[]> {
+  return (await postJson<{ tasks: ReviewTask[] }>("/api/review/tasks/transition", { taskIds, status, note })).tasks;
 }

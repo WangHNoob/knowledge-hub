@@ -164,6 +164,12 @@ export const searchQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional()
 });
 
+export const reviewTransitionSchema = z.object({
+  taskIds: z.array(z.string().min(1)).min(1),
+  status: z.enum(["open", "resolved", "dismissed"]),
+  note: z.string().max(1024).optional()
+});
+
 export const diagnosticLogQuerySchema = z.object({
   level: z.string().optional(),
   category: z.string().optional(),

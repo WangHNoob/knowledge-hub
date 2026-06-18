@@ -21,7 +21,7 @@ export { deletePackage, getComponentContent, getComponentOwner, getPackage, list
 export type { PackageFilter } from "./packages";
 export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
 export { searchAll } from "./search";
-export { listReviewTasks } from "./review";
+export { listReviewTasks, transitionReviewTasks } from "./review";
 export { getQualityProfile, updateQualityProfile } from "./quality";
 export {
   activateLegislationProfile,

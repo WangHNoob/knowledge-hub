@@ -135,6 +135,9 @@ export interface ReviewTask {
   description: string;
   suggestedAction: string;
   createdAt: string;
+  resolvedBy: string;
+  resolvedAt: string | null;
+  resolutionNote: string;
 }
 
 export interface ReleaseRecord {
