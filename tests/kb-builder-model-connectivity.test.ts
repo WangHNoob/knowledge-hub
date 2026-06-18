@@ -12,7 +12,14 @@ describe("model connectivity", () => {
       apiKey: "secret-key",
     }, async (url, init) => {
       calls.push({ url: String(url), init: init ?? {} });
-      return new Response(JSON.stringify({ id: "chatcmpl-test" }), { status: 200 });
+      return new Response(JSON.stringify({
+        id: "chatcmpl-test",
+        object: "chat.completion",
+        created: 1,
+        model: "gpt-test",
+        choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }), { status: 200 });
     });
 
     expect(result).toEqual({

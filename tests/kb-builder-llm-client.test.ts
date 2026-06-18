@@ -9,7 +9,14 @@ const SCHEMA: JsonSchemaSpec = {
 };
 
 function chatOk(content: string): Response {
-  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 });
+  return new Response(JSON.stringify({
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: 1,
+    model: "m",
+    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }), { status: 200 });
 }
 function reject(message: string): Response {
   return new Response(JSON.stringify({ error: { message } }), { status: 400, statusText: "Bad Request" });
@@ -26,10 +33,8 @@ describe("llm client — provider abstraction", () => {
     const result = await client.complete({ system: "s", user: "u", jsonSchema: SCHEMA });
     expect(result.text).toContain("X");
     expect(bodies).toHaveLength(1);
-    expect(bodies[0].response_format).toEqual({
-      type: "json_schema",
-      json_schema: { name: "extracted_page", strict: true, schema: SCHEMA.schema },
-    });
+    expect(JSON.stringify(bodies[0])).toContain("extracted_page");
+    expect(JSON.stringify(bodies[0])).toContain("json_schema");
   });
 
   it("degrades json_schema → json_object → plain on rejection, and remembers the working level", async () => {
@@ -49,7 +54,7 @@ describe("llm client — provider abstraction", () => {
       undefined,
     ]);
 
-    // capability is remembered: the next call goes straight to plain
+    // capability is remembered: the next call goes straight to plain.
     await client.complete({ system: "s", user: "u", jsonSchema: SCHEMA });
     expect(bodies).toHaveLength(4);
     expect(bodies[3].response_format).toBeUndefined();
@@ -79,36 +84,36 @@ describe("llm client — provider abstraction", () => {
     });
   });
 
-  it("routes anthropic structured output through output_config on the messages endpoint", async () => {
+  it("routes anthropic structured output through the SDK provider on the messages endpoint", async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const client = createLlmClient(
-      { provider: "anthropic", baseUrl: "https://api.anthropic.com", model: "claude", apiKey: "sk" },
+      { provider: "anthropic", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-5", apiKey: "sk" },
       async (url, init) => {
         calls.push({ url: String(url), body: JSON.parse(String(init?.body)) as Record<string, unknown> });
-        return new Response(JSON.stringify({ content: [{ type: "text", text: '{"title":"X"}' }] }), { status: 200 });
+        return anthropicOk('{"title":"X"}');
       },
     )!;
 
     await client.complete({ system: "s", user: "u", maxTokens: 16, jsonSchema: SCHEMA });
     expect(calls[0].url).toBe("https://api.anthropic.com/v1/messages");
-    expect(calls[0].body.output_config).toEqual({ format: { type: "json_schema", schema: SCHEMA.schema } });
+    expect(calls[0].body.output_config).toMatchObject({ format: { type: "json_schema" } });
   });
 
-  it("drops anthropic output_config and retries when the model rejects it", async () => {
-    const hasOutputConfig: boolean[] = [];
+  it("drops anthropic structured output and retries when the model rejects it", async () => {
+    const hasStructuredOutput: boolean[] = [];
     const client = createLlmClient(
-      { provider: "anthropic", baseUrl: "https://api.anthropic.com", model: "claude", apiKey: "sk" },
+      { provider: "anthropic", baseUrl: "https://api.anthropic.com", model: "claude-sonnet-4-5", apiKey: "sk" },
       async (_url, init) => {
         const body = JSON.parse(String(init?.body)) as { output_config?: unknown };
-        hasOutputConfig.push(body.output_config !== undefined);
-        if (body.output_config !== undefined) return reject("output_config is not supported");
-        return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), { status: 200 });
+        hasStructuredOutput.push(body.output_config !== undefined);
+        if (body.output_config !== undefined) return reject("structured output is not supported");
+        return anthropicOk('{"title":"X"}');
       },
     )!;
 
     const result = await client.complete({ system: "s", user: "u", maxTokens: 16, jsonSchema: SCHEMA });
-    expect(result.text).toBe("ok");
-    expect(hasOutputConfig).toEqual([true, false]);
+    expect(result.text).toContain("X");
+    expect(hasStructuredOutput).toEqual([true, false]);
   });
 
   it("returns null for the deterministic provider (no network client)", () => {
@@ -119,3 +124,16 @@ describe("llm client — provider abstraction", () => {
     expect(new LlmError("x", { status: 400 })).toBeInstanceOf(Error);
   });
 });
+
+function anthropicOk(content: string): Response {
+  return new Response(JSON.stringify({
+    id: "msg-test",
+    type: "message",
+    role: "assistant",
+    model: "claude-sonnet-4-5",
+    content: [{ type: "text", text: content }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  }), { status: 200 });
+}

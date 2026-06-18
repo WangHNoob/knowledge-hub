@@ -146,10 +146,8 @@ describe("runExtractStage", () => {
       }));
       writeFileSync(join(specDir, "system_rule.md"), "## 概览");
       writeFileSync(join(dataDir, "processed", "parsed", "battle.md"), "# Battle\n\nBattle rules.");
-      vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
-        choices: [{
-          message: {
-            content: [
+      vi.stubGlobal("fetch", async () => openAiChatOk(
+        [
               "```json",
               "{",
               "  \"type\": \"system\",",
@@ -161,10 +159,8 @@ describe("runExtractStage", () => {
               "  \"body\": \"## 概览\\nBattle rules.\"",
               "}",
               "```"
-            ].join("\n")
-          }
-        }]
-      }), { status: 200 }));
+        ].join("\n"),
+      ));
 
       const specs = loadWikiSpecs(specDir);
       const result = await runExtractStage({
@@ -197,9 +193,7 @@ describe("runExtractStage", () => {
       }));
       writeFileSync(join(specDir, "concept.md"), "## 概览");
       writeFileSync(join(dataDir, "processed", "parsed", "pvp活动模板.md"), "# PVP活动模板\n\n活动规则说明。");
-      vi.stubGlobal("fetch", async () => new Response(JSON.stringify({
-        choices: [{ message: { content: "# PVP活动模板\n\n活动规则说明。" } }]
-      }), { status: 200 }));
+      vi.stubGlobal("fetch", async () => openAiChatOk("# PVP活动模板\n\n活动规则说明。"));
 
       const specs = loadWikiSpecs(specDir);
       const result = await runExtractStage({
@@ -223,3 +217,14 @@ describe("runExtractStage", () => {
     }
   });
 });
+
+function openAiChatOk(content: string): Response {
+  return new Response(JSON.stringify({
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: 1,
+    model: "gpt-test",
+    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }), { status: 200 });
+}

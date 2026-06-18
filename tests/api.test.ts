@@ -643,7 +643,7 @@ describe("knowledge hub api", () => {
 
   it("tests OpenAI-compatible model connectivity without returning the api key", async () => {
     const { app, token } = await getToken();
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ id: "chatcmpl-test" }), { status: 200 }));
+    vi.stubGlobal("fetch", async () => openAiChatOk("ok", "gpt-test"));
     try {
       const tested = await app.inject({
         method: "POST",
@@ -677,7 +677,7 @@ describe("knowledge hub api", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      return new Response(JSON.stringify({ id: "msg-test", content: [{ type: "text", text: "ok" }] }), { status: 200 });
+      return anthropicMessageOk("ok", "claude-sonnet-4-5");
     });
     try {
       const tested = await app.inject({
@@ -718,7 +718,7 @@ describe("knowledge hub api", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      return new Response(JSON.stringify({ id: "msg-test", content: [{ type: "text", text: "ok" }] }), { status: 200 });
+      return anthropicMessageOk("ok", "claude-sonnet-4-5");
     });
     try {
       const tested = await app.inject({
@@ -747,7 +747,7 @@ describe("knowledge hub api", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       calls.push({ url, init });
-      return new Response(JSON.stringify({ id: "msg-test", content: [{ type: "text", text: "ok" }] }), { status: 200 });
+      return anthropicMessageOk("ok", "claude-sonnet-4-5");
     });
     try {
       const tested = await app.inject({
@@ -838,6 +838,30 @@ async function waitForBuildRun(app: FastifyInstance, token: string, runId: strin
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Build run ${runId} did not finish.`);
+}
+
+function openAiChatOk(content: string, model: string): Response {
+  return new Response(JSON.stringify({
+    id: "chatcmpl-test",
+    object: "chat.completion",
+    created: 1,
+    model,
+    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+  }), { status: 200 });
+}
+
+function anthropicMessageOk(content: string, model: string): Response {
+  return new Response(JSON.stringify({
+    id: "msg-test",
+    type: "message",
+    role: "assistant",
+    model,
+    content: [{ type: "text", text: content }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  }), { status: 200 });
 }
 
 async function insertPackageFixture(db: DatabaseHandle, dataDir: string, suffix: string) {

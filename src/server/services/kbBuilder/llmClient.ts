@@ -1,3 +1,6 @@
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { APICallError, generateText, jsonSchema, NoObjectGeneratedError, Output, type LanguageModel } from "ai";
 import type { PipelineModelConfig } from "./modelConfig";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -12,14 +15,11 @@ export interface JsonSchemaSpec {
  * Provider-agnostic completion request. Callers describe *what* they want, not
  * how a given provider's wire format spells it.
  *
- * Output-shape preference is best-effort and degrades gracefully so switching
- * models never breaks the pipeline:
- *   - `jsonSchema` → native structured output (OpenAI `response_format:
- *     json_schema` / Anthropic `output_config.format`); the strongest guarantee.
- *   - `jsonMode`   → JSON object mode (OpenAI `response_format: json_object`).
- * A provider/model that rejects the stronger mode is downgraded one step and
- * retried, and the capability is remembered for the rest of the run. Callers
- * should still validate the returned text against their schema.
+ * AI SDK 6 owns provider-specific request shaping and structured-output support.
+ * This adapter only negotiates the project-level fallback ladder:
+ *   - `jsonSchema` → SDK structured object output.
+ *   - `jsonMode`   → SDK JSON output.
+ *   - plain text   → prompt-only generation.
  */
 export interface LlmCompletionRequest {
   system: string;
@@ -60,50 +60,49 @@ export class LlmError extends Error {
  */
 export function createLlmClient(config: PipelineModelConfig, fetchImpl: FetchLike = fetch): LlmClient | null {
   if (config.provider === "deterministic") return null;
-  if (config.provider === "anthropic") return new AnthropicClient(config, fetchImpl);
-  return new OpenAiCompatibleClient(config, fetchImpl);
+  return new AiSdkLlmClient(config, fetchImpl);
 }
 
-// OpenAI structured-output capability, strongest first. Negotiated downward
-// when a gateway rejects a level, and remembered for the rest of the run.
-//   2 = response_format: json_schema   1 = response_format: json_object   0 = none
+// Structured-output capability, strongest first. Negotiated downward when a
+// gateway rejects a level, and remembered for the rest of the run.
+//   2 = schema-constrained object   1 = generic JSON   0 = plain text
 type JsonLevel = 0 | 1 | 2;
 
-class OpenAiCompatibleClient implements LlmClient {
-  readonly provider = "openai-compatible" as const;
+class AiSdkLlmClient implements LlmClient {
+  readonly provider;
   readonly model: string;
-  private readonly baseUrl: string;
-  private readonly apiKey?: string;
   private maxJsonLevel: JsonLevel = 2;
 
-  constructor(config: Extract<PipelineModelConfig, { provider: "openai-compatible" }>, private readonly fetchImpl: FetchLike) {
+  constructor(
+    private readonly config: Exclude<PipelineModelConfig, { provider: "deterministic" }>,
+    private readonly fetchImpl: FetchLike,
+  ) {
+    this.provider = config.provider;
     this.model = config.model;
-    this.baseUrl = config.baseUrl.replace(/\/+$/u, "");
-    this.apiKey = config.apiKey;
   }
 
   async complete(request: LlmCompletionRequest): Promise<LlmCompletionResult> {
     let level = this.desiredLevel(request);
     while (true) {
-      const response = await this.post(request, level);
-      if (response.ok) return { text: await readChatContent(response, this.model) };
-
-      const body = await safeText(response);
-      // Many "OpenAI-compatible" gateways don't implement response_format (json_schema
-      // or json_object) and reject it with a 400. Step down one level, remember it,
-      // and retry — schema → object → plain — instead of failing the run.
-      if (level > 0 && response.status === 400 && mentionsStructuredOutput(body)) {
-        level = (level - 1) as JsonLevel;
-        this.maxJsonLevel = level;
-        continue;
+      try {
+        return await this.generate(request, level);
+      } catch (error) {
+        if (level > 0 && isStructuredOutputFailure(error)) {
+          level = (level - 1) as JsonLevel;
+          this.maxJsonLevel = level;
+          continue;
+        }
+        throw toLlmError(this.model, error, endpointForError(this.config));
       }
-      throw httpError(this.model, response.status, response.statusText, body);
     }
   }
 
   async ping(request: LlmCompletionRequest): Promise<void> {
-    const response = await this.post(request, 0);
-    if (!response.ok) throw httpError(this.model, response.status, response.statusText, await safeText(response));
+    try {
+      await this.generate(request, 0);
+    } catch (error) {
+      throw toLlmError(this.model, error, endpointForError(this.config));
+    }
   }
 
   private desiredLevel(request: LlmCompletionRequest): JsonLevel {
@@ -111,91 +110,61 @@ class OpenAiCompatibleClient implements LlmClient {
     return Math.min(wanted, this.maxJsonLevel) as JsonLevel;
   }
 
-  private post(request: LlmCompletionRequest, level: JsonLevel): Promise<Response> {
-    const body: Record<string, unknown> = {
-      model: this.model,
-      messages: [
-        { role: "system", content: request.system },
-        { role: "user", content: request.user },
-      ],
-    };
-    if (request.maxTokens != null) body.max_tokens = request.maxTokens;
-    if (level === 2 && request.jsonSchema) {
-      body.response_format = {
-        type: "json_schema",
-        json_schema: { name: request.jsonSchema.name, strict: true, schema: request.jsonSchema.schema },
-      };
-    } else if (level >= 1) {
-      body.response_format = { type: "json_object" };
+  private languageModel(level: JsonLevel): LanguageModel {
+    if (this.config.provider === "anthropic") {
+      const provider = createAnthropic({
+        apiKey: this.config.apiKey,
+        baseURL: anthropicProviderBaseUrl(this.config.baseUrl),
+        fetch: adaptFetch(this.fetchImpl),
+      });
+      return provider(this.model);
     }
-    return this.fetchImpl(`${this.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${this.apiKey ?? ""}`,
-      },
-      body: JSON.stringify(body),
+
+    const provider = createOpenAICompatible({
+      name: "openai-compatible",
+      apiKey: this.config.apiKey,
+      baseURL: this.config.baseUrl.replace(/\/+$/u, ""),
+      fetch: adaptFetch(this.fetchImpl),
+      supportsStructuredOutputs: level === 2,
     });
+    return provider(this.model);
+  }
+
+  private async generate(request: LlmCompletionRequest, level: JsonLevel): Promise<LlmCompletionResult> {
+    const base = {
+      model: this.languageModel(level),
+      system: request.system,
+      prompt: request.user,
+      maxOutputTokens: request.maxTokens,
+      maxRetries: 0,
+    };
+
+    if (level === 2 && request.jsonSchema) {
+      const result = await generateText({
+        ...base,
+        output: Output.object({
+          name: request.jsonSchema.name,
+          schema: jsonSchema(request.jsonSchema.schema),
+        }),
+      });
+      return { text: JSON.stringify(result.output) };
+    }
+
+    if (level >= 1) {
+      const result = await generateText({
+        ...base,
+        output: Output.json({ name: request.jsonSchema?.name }),
+      });
+      return { text: JSON.stringify(result.output) };
+    }
+
+    const result = await generateText(base);
+    return { text: result.text };
   }
 }
 
-class AnthropicClient implements LlmClient {
-  readonly provider = "anthropic" as const;
-  readonly model: string;
-  private readonly endpoint: string;
-  private readonly apiKey?: string;
-  private structuredSupported = true;
-
-  constructor(config: Extract<PipelineModelConfig, { provider: "anthropic" }>, private readonly fetchImpl: FetchLike) {
-    this.model = config.model;
-    this.endpoint = anthropicMessagesEndpoint(config.baseUrl);
-    this.apiKey = config.apiKey;
-  }
-
-  async complete(request: LlmCompletionRequest): Promise<LlmCompletionResult> {
-    const useSchema = Boolean(request.jsonSchema) && this.structuredSupported;
-    const response = await this.post(request, useSchema);
-    if (response.ok) return { text: await readMessageContent(response, this.model) };
-
-    const body = await safeText(response);
-    // Older models / proxies may not support output_config structured outputs.
-    // Drop it, remember, and retry on prompt-only steering.
-    if (useSchema && response.status === 400 && mentionsStructuredOutput(body)) {
-      this.structuredSupported = false;
-      const retry = await this.post(request, false);
-      if (retry.ok) return { text: await readMessageContent(retry, this.model) };
-      throw httpError(this.model, retry.status, retry.statusText, await safeText(retry), this.endpoint);
-    }
-    throw httpError(this.model, response.status, response.statusText, body, this.endpoint);
-  }
-
-  async ping(request: LlmCompletionRequest): Promise<void> {
-    const response = await this.post(request, false);
-    if (!response.ok) {
-      throw httpError(this.model, response.status, response.statusText, await safeText(response), this.endpoint);
-    }
-  }
-
-  private post(request: LlmCompletionRequest, useSchema: boolean): Promise<Response> {
-    const body: Record<string, unknown> = {
-      model: this.model,
-      max_tokens: request.maxTokens ?? 4096,
-      system: request.system,
-      messages: [{ role: "user", content: [{ type: "text", text: request.user }] }],
-    };
-    if (useSchema && request.jsonSchema) {
-      body.output_config = { format: { type: "json_schema", schema: request.jsonSchema.schema } };
-    }
-    return this.fetchImpl(this.endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": this.apiKey ?? "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify(body),
-    });
-  }
+function adaptFetch(fetchImpl: FetchLike) {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => fetchImpl(String(input), init);
 }
 
 export function anthropicMessagesEndpoint(baseUrl: string): string {
@@ -203,6 +172,17 @@ export function anthropicMessagesEndpoint(baseUrl: string): string {
   if (normalized.endsWith("/messages")) return normalized;
   if (normalized.endsWith("/v1")) return `${normalized}/messages`;
   return `${normalized}/v1/messages`;
+}
+
+function anthropicProviderBaseUrl(baseUrl: string): string {
+  const normalized = baseUrl.trim().replace(/\/+$/u, "");
+  if (normalized.endsWith("/messages")) return normalized.replace(/\/messages$/u, "");
+  if (normalized.endsWith("/v1")) return normalized;
+  return `${normalized}/v1`;
+}
+
+function endpointForError(config: Exclude<PipelineModelConfig, { provider: "deterministic" }>): string | undefined {
+  return config.provider === "anthropic" ? anthropicMessagesEndpoint(config.baseUrl) : undefined;
 }
 
 /** Extract a human-readable message from a provider error body, JSON or text. */
@@ -217,34 +197,32 @@ export function extractErrorMessage(body: string, fallback: string): string {
   return body.trim() || fallback;
 }
 
-async function readChatContent(response: Response, model: string): Promise<string> {
-  const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = json.choices?.[0]?.message?.content;
-  if (!content) throw new LlmError(`${model} returned no content`);
-  return content;
+function toLlmError(model: string, error: unknown, endpoint?: string): LlmError {
+  if (error instanceof LlmError) return error;
+  if (NoObjectGeneratedError.isInstance(error) && error.text) return new LlmError(error.message, { body: error.text });
+  if (APICallError.isInstance(error)) {
+    return httpError(model, error.statusCode ?? 0, statusText(error), error.responseBody ?? error.message, endpoint ?? error.url);
+  }
+  return new LlmError(error instanceof Error ? error.message : String(error));
 }
 
-async function readMessageContent(response: Response, model: string): Promise<string> {
-  const json = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
-  const content = json.content?.find((item) => item.type === "text" && item.text)?.text;
-  if (!content) throw new LlmError(`${model} returned no content`);
-  return content;
+function isStructuredOutputFailure(error: unknown): boolean {
+  if (NoObjectGeneratedError.isInstance(error)) return true;
+  if (!APICallError.isInstance(error)) return false;
+  return error.statusCode === 400 && mentionsStructuredOutput(`${error.responseBody ?? ""}\n${error.message}`);
 }
 
-function httpError(model: string, status: number, statusText: string, body: string, endpoint?: string): LlmError {
+function httpError(model: string, status: number, statusTextValue: string, body: string, endpoint?: string): LlmError {
   const where = endpoint ? `（请求地址：${endpoint}）` : "";
-  const detail = body ? ` — ${body.length > 800 ? `${body.slice(0, 800)}…` : body}` : "";
-  return new LlmError(`${model} request failed: ${status} ${statusText}${where}${detail}`, { status, body });
+  const detail = body ? ` — ${body.length > 800 ? `${body.slice(0, 800)}...` : body}` : "";
+  return new LlmError(`${model} request failed: ${status} ${statusTextValue}${where}${detail}`, { status, body });
+}
+
+function statusText(error: APICallError): string {
+  const match = /(\d{3})\s+([A-Za-z][^\n:]+)/u.exec(error.message);
+  return match?.[2]?.trim() ?? "Provider Error";
 }
 
 function mentionsStructuredOutput(body: string): boolean {
-  return /response_format|json_object|json_schema|output_config|structured\s*output/i.test(body);
-}
-
-async function safeText(response: Response): Promise<string> {
-  try {
-    return (await response.text()).trim();
-  } catch {
-    return "";
-  }
+  return /response_format|json_object|json_schema|output_config|structured\s*output|schema/i.test(body);
 }
