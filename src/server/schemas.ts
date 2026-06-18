@@ -147,6 +147,23 @@ export const createAttributionAuditSchema = z.object({
   })).min(1)
 });
 
+export const storageCategorySchema = z.enum(["blobs", "kb_build_runs", "web_imports", "releases", "logs"]);
+
+export const reclaimRequestSchema = z.object({
+  categories: z.array(storageCategorySchema).min(1)
+});
+
+export const packageListQuerySchema = z.object({
+  q: z.string().min(1).optional(),
+  status: z.enum(["draft", "reviewing", "approved", "published", "stale"]).optional(),
+  kind: z.string().min(1).optional()
+});
+
+export const searchQuerySchema = z.object({
+  q: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(50).optional()
+});
+
 export const diagnosticLogQuerySchema = z.object({
   level: z.string().optional(),
   category: z.string().optional(),

@@ -3,9 +3,10 @@ import type { JSX } from "react";
 import { Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { deletePackage, getComponentContent, getPackage, listPackages, type AssetPackage } from "../api";
+import { deletePackage, getComponentContent, getComponentOwner, getPackage, listPackages, type AssetPackage } from "../api";
 import { Badge, Metric, Page } from "../components/Atoms";
 import { formatPercent } from "../utils/format";
+import { IdChip, useNav } from "../ui/navigation";
 
 type TreeNode = {
   name: string;
@@ -13,6 +14,8 @@ type TreeNode = {
   children: Map<string, TreeNode>;
   component?: { componentId: string; kind: string; legacyPath: string };
 };
+
+const STATUS_OPTIONS = ["draft", "reviewing", "approved", "published", "stale"];
 
 function buildTree(components: Array<{ componentId: string; kind: string; legacyPath: string }>): TreeNode {
   const root: TreeNode = { name: "", path: "", children: new Map() };
@@ -36,18 +39,31 @@ function formatContent(pathName: string, content: string): string {
   return content;
 }
 
-export function Assets({ highlightedPackage, onConsumeHighlight }: { highlightedPackage: string | null; onConsumeHighlight: () => void }) {
+export function Assets() {
+  const { navigate, params } = useNav();
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<string>("");
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("");
   const [deleteError, setDeleteError] = useState("");
-  const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
+  const [openFile, setOpenFile] = useState<{ componentId: string } | null>(null);
+  const packages = useQuery({ queryKey: ["packages", { q, status }], queryFn: () => listPackages({ q, status }) });
 
+  // Honor cross-navigation (e.g. from global search, builder, release, review).
   useEffect(() => {
-    if (highlightedPackage) {
-      setSelected(highlightedPackage);
-      onConsumeHighlight();
-    }
-  }, [highlightedPackage, onConsumeHighlight]);
+    if (params.packageId) setSelected(params.packageId);
+    if (params.componentId) setOpenFile({ componentId: params.componentId });
+  }, [params.packageId, params.componentId]);
+
+  // When navigated with only a componentId (e.g. from Agent feedback), resolve its package.
+  const owner = useQuery({
+    queryKey: ["component-owner", params.componentId],
+    queryFn: () => getComponentOwner(params.componentId!),
+    enabled: Boolean(params.componentId && !params.packageId)
+  });
+  useEffect(() => {
+    if (owner.data) setSelected(owner.data);
+  }, [owner.data]);
 
   const effectiveSelected = selected || packages.data?.[0]?.packageId || "";
   const detail = useQuery({
@@ -56,7 +72,6 @@ export function Assets({ highlightedPackage, onConsumeHighlight }: { highlighted
     enabled: Boolean(effectiveSelected)
   });
 
-  const [openFile, setOpenFile] = useState<{ componentId: string } | null>(null);
   const deleteMutation = useMutation({
     mutationFn: deletePackage,
     onSuccess: async () => {
@@ -100,37 +115,75 @@ export function Assets({ highlightedPackage, onConsumeHighlight }: { highlighted
         return isFile ? [row] : [row, ...renderNode(child, depth + 1)];
       });
 
+  const pkg = detail.data?.package;
+  const openReviewTasks = (detail.data?.reviewTasks ?? []).filter((task) => task.status === "open");
+
   return (
     <Page title="知识资产" subtitle="资产包保留 Wiki、Index、Graph、表结构、证据和质量报告之间的关系。">
       <div className="package-grid">
         <section className="package-list">
-          {(packages.data ?? []).map((pkg: AssetPackage) => (
+          <div className="list-filters">
+            <input
+              className="filter-input"
+              value={q}
+              placeholder="搜索资产包名称 / 描述"
+              onChange={(event) => setQ(event.target.value)}
+            />
+            <select value={status} onChange={(event) => setStatus(event.target.value)}>
+              <option value="">全部状态</option>
+              {STATUS_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </div>
+          {(packages.data ?? []).map((item: AssetPackage) => (
             <button
-              key={pkg.packageId}
-              className={effectiveSelected === pkg.packageId ? "package-row selected" : "package-row"}
-              onClick={() => setSelected(pkg.packageId)}
+              key={item.packageId}
+              className={effectiveSelected === item.packageId ? "package-row selected" : "package-row"}
+              onClick={() => setSelected(item.packageId)}
             >
-              <strong>{pkg.name}</strong>
-              <span>{pkg.description}</span>
-              <small>{pkg.packageId}</small>
+              <strong>{item.name}</strong>
+              <span>{item.description}</span>
+              <small>{item.packageId}</small>
             </button>
           ))}
+          {packages.data && packages.data.length === 0 && <p className="subtle">没有匹配的资产包。</p>}
         </section>
         <section className="package-detail">
-          {detail.data && (
+          {detail.data && pkg && (
             <>
               <div className="detail-head">
                 <div>
-                  <h2>{detail.data.package.name}</h2>
-                  <p>{detail.data.package.description}</p>
+                  <h2>{pkg.name}</h2>
+                  <p>{pkg.description}</p>
                 </div>
                 <div className="asset-meta">
-                  <Badge label={detail.data.package.status} />
-                  <button className="secondary-action danger" type="button" disabled={deleteMutation.isPending} onClick={() => confirmDelete(detail.data.package)}>
+                  <Badge label={pkg.status} />
+                  <button className="secondary-action danger" type="button" disabled={deleteMutation.isPending} onClick={() => confirmDelete(pkg)}>
                     <Trash2 size={15} />
                     {deleteMutation.isPending ? "删除中..." : "删除资产包"}
                   </button>
                 </div>
+              </div>
+              <div className="asset-links">
+                {pkg.createdByRunId && (
+                  <span className="asset-link">
+                    构建来源：
+                    <IdChip label={pkg.createdByRunId} title="在知识构建中查看该构建" onClick={() => navigate("builder", { runId: pkg.createdByRunId })} />
+                  </span>
+                )}
+                {pkg.sourceVersionIds.length > 0 && (
+                  <span className="asset-link">
+                    资料版本：
+                    {pkg.sourceVersionIds.map((versionId) => (
+                      <IdChip key={versionId} label={versionId} title="在资料库中查看该版本" onClick={() => navigate("sources", { versionId })} />
+                    ))}
+                  </span>
+                )}
+                {openReviewTasks.length > 0 && (
+                  <span className="asset-link">
+                    审核任务：
+                    <IdChip label={`${openReviewTasks.length} 个待处理`} title="在审核中心查看该资产包的任务" onClick={() => navigate("review", { packageId: pkg.packageId })} />
+                  </span>
+                )}
               </div>
               {deleteError && <p className="error">{deleteError}</p>}
               <div className="evidence-panel">

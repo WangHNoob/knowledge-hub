@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { IdChip, useNav } from "../ui/navigation";
 
 const MCP_TOOLS = [
   "kb_search",
@@ -27,6 +28,7 @@ const MCP_TOOLS = [
 ];
 
 export function AgentFeedback() {
+  const { navigate } = useNav();
   const queryClient = useQueryClient();
   const [toolName, setToolName] = useState("kb_search");
   const [payload, setPayload] = useState('{\n  "query": "Battle System"\n}');
@@ -116,7 +118,14 @@ export function AgentFeedback() {
                 <Badge label={record.status} tone={record.status === "miss" || record.status === "error" ? "hot" : "ok"} />
                 <div>
                   <strong>{record.toolName}</strong>
-                  <span>{record.hitComponentIds.length ? `命中 ${record.hitComponentIds.join(", ")}` : "无命中组件"} · {record.latencyMs} ms</span>
+                  <span>{record.hitComponentIds.length ? "命中组件：" : "无命中组件"} · {record.latencyMs} ms</span>
+                  {record.hitComponentIds.length > 0 && (
+                    <div className="asset-link">
+                      {record.hitComponentIds.map((componentId) => (
+                        <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <small>{record.createdAt}</small>
               </article>
@@ -132,7 +141,14 @@ export function AgentFeedback() {
                 <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
                 <div>
                   <strong>{event.query}</strong>
-                  <span>{event.hitComponentIds.length ? `命中 ${event.hitComponentIds.join(", ")}` : "未命中任何资产"}</span>
+                  <span>{event.hitComponentIds.length ? "命中组件：" : "未命中任何资产"}</span>
+                  {event.hitComponentIds.length > 0 && (
+                    <div className="asset-link">
+                      {event.hitComponentIds.map((componentId) => (
+                        <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
+                      ))}
+                    </div>
+                  )}
                   {event.suggestedAction && <small>{event.suggestedAction}</small>}
                 </div>
                 <small>{event.taskId || event.createdAt}</small>

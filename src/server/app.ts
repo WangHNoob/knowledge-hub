@@ -12,6 +12,7 @@ import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
 import { createSourceBundleService } from "./services/sourceBundleService";
+import { createStorageMaintenanceService } from "./services/storageMaintenanceService";
 import { registerAgentRoutes } from "./routes/agent";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBuilderRoutes } from "./routes/builder";
@@ -23,7 +24,9 @@ import { registerPackageRoutes } from "./routes/packages";
 import { registerQualityRoutes } from "./routes/quality";
 import { registerReleaseRoutes } from "./routes/releases";
 import { registerReviewRoutes } from "./routes/review";
+import { registerSearchRoutes } from "./routes/search";
 import { registerSourceRoutes } from "./routes/sources";
+import { registerStorageRoutes } from "./routes/storage";
 import type { RouteContext } from "./routes/context";
 import type { DatabaseHandle, UserRecord } from "./types";
 
@@ -60,7 +63,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     releaseService: createReleaseService(options.db, dataDir, diagnostics),
     queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
     legislationService: createLegislationService(options.db),
-    attributionAuditService: createAttributionAuditService(options.db)
+    attributionAuditService: createAttributionAuditService(options.db),
+    storageService: createStorageMaintenanceService(options.db, dataDir, diagnostics, {
+      webImportRetentionHours: config.webImportRetentionHours,
+      logRetentionDays: config.logRetentionDays
+    })
   };
 
   await app.register(cors, { origin: true, credentials: true });
@@ -84,6 +91,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerAgentRoutes(app, ctx);
   registerDiagnosticsRoutes(app, ctx);
   registerLegacyRoutes(app, ctx);
+  registerStorageRoutes(app, ctx);
+  registerSearchRoutes(app, ctx);
 
   app.addHook("onClose", async () => { await options.db.close(); });
   return app;

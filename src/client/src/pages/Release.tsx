@@ -14,12 +14,14 @@ import {
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { errorMessage, qualityScore, releaseVersion } from "../utils/format";
+import { IdChip, useNav } from "../ui/navigation";
 
 export function Release() {
+  const { navigate } = useNav();
   const queryClient = useQueryClient();
   const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
   const [version, setVersion] = useState(() => releaseVersion());
-  const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
+  const packages = useQuery({ queryKey: ["packages"], queryFn: () => listPackages() });
   const tasks = useQuery({ queryKey: ["review", "blocking"], queryFn: () => listReviewTasks("blocking") });
   const releases = useQuery({ queryKey: ["releases"], queryFn: listReleases });
   const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
@@ -174,6 +176,13 @@ export function Release() {
                   <span>{release.releaseId}</span>
                   <small>{release.manifestHash}</small>
                   {okfManifest(release) && <small>OKF · {okfManifest(release)?.bundleUri}</small>}
+                  {release.packageIds.length > 0 && (
+                    <div className="asset-link">
+                      {release.packageIds.map((packageId) => (
+                        <IdChip key={packageId} label={packageId} title="在知识资产中查看该资产包" onClick={() => navigate("assets", { packageId })} />
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="detail-actions">
                   <Badge label={release.status} tone={release.status === "published" ? "ok" : undefined} />

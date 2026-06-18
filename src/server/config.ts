@@ -21,6 +21,7 @@ export const config = {
   databaseUrl: required("DATABASE_URL"),
   logLevel: optional("KH_LOG_LEVEL", "info") as "debug" | "info" | "warn" | "error",
   logRetentionDays: Number(optional("KH_LOG_RETENTION_DAYS", "14")),
+  webImportRetentionHours: Number(optional("KH_WEBIMPORT_RETENTION_HOURS", "24")),
   logToFile: optional("KH_LOG_TO_FILE", "true") !== "false",
   logToDb: optional("KH_LOG_TO_DB", "true") !== "false"
 };

@@ -366,3 +366,70 @@ export interface QualityFinding {
   suggestedAction: string;
   scoreImpact: number;
 }
+
+// --- Storage maintenance (disk GC) ---
+
+export type StorageCategory = "blobs" | "kb_build_runs" | "web_imports" | "releases" | "logs";
+
+export type StorageEntryStatus = "live" | "reclaimable";
+
+export interface StorageEntry {
+  category: StorageCategory;
+  key: string;            // dir / file name, e.g. runId, releaseId, blob filename, log filename
+  bytes: number;
+  fileCount: number;
+  oldestMs: number | null;
+  newestMs: number | null;
+  status: StorageEntryStatus;
+  reason: string;         // human-readable liveness reason
+}
+
+export interface StorageCategorySummary {
+  category: StorageCategory;
+  totalBytes: number;
+  fileCount: number;
+  entryCount: number;
+  liveBytes: number;
+  reclaimableBytes: number;
+  reclaimableEntries: number;
+  oldestMs: number | null;
+  newestMs: number | null;
+}
+
+export interface StorageOverview {
+  categories: StorageCategorySummary[];
+  totalBytes: number;
+  reclaimableBytes: number;
+  scannedAt: string;
+}
+
+export interface StorageScanReport extends StorageOverview {
+  entries: StorageEntry[];
+}
+
+export interface ReclaimRequest {
+  categories: StorageCategory[];
+}
+
+export interface ReclaimResult {
+  deletedEntries: number;
+  reclaimedBytes: number;
+  perCategory: Partial<Record<StorageCategory, { count: number; bytes: number }>>;
+}
+
+// --- Cross-entity search ---
+
+export type SearchHitKind = "package" | "component" | "source_version" | "release";
+
+export interface SearchHit {
+  kind: SearchHitKind;
+  id: string;             // packageId / componentId / versionId / releaseId
+  title: string;
+  subtitle: string;
+  packageId?: string;     // for component -> Assets navigation + its owning package
+}
+
+export interface SearchResult {
+  query: string;
+  hits: SearchHit[];
+}

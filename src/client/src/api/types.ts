@@ -425,3 +425,64 @@ export interface DashboardSummary {
   agent: { recentQueries: number; misses: number; lowQualityHits: number };
   evidence: EvidenceCoverage;
 }
+
+// --- Storage maintenance ---
+
+export type StorageCategory = "blobs" | "kb_build_runs" | "web_imports" | "releases" | "logs";
+
+export interface StorageEntry {
+  category: StorageCategory;
+  key: string;
+  bytes: number;
+  fileCount: number;
+  oldestMs: number | null;
+  newestMs: number | null;
+  status: "live" | "reclaimable";
+  reason: string;
+}
+
+export interface StorageCategorySummary {
+  category: StorageCategory;
+  totalBytes: number;
+  fileCount: number;
+  entryCount: number;
+  liveBytes: number;
+  reclaimableBytes: number;
+  reclaimableEntries: number;
+  oldestMs: number | null;
+  newestMs: number | null;
+}
+
+export interface StorageOverview {
+  categories: StorageCategorySummary[];
+  totalBytes: number;
+  reclaimableBytes: number;
+  scannedAt: string;
+}
+
+export interface StorageScanReport extends StorageOverview {
+  entries: StorageEntry[];
+}
+
+export interface ReclaimResult {
+  deletedEntries: number;
+  reclaimedBytes: number;
+  perCategory: Partial<Record<StorageCategory, { count: number; bytes: number }>>;
+}
+
+// --- Cross-entity search ---
+
+export type SearchHitKind = "package" | "component" | "source_version" | "release";
+
+export interface SearchHit {
+  kind: SearchHitKind;
+  id: string;
+  title: string;
+  subtitle: string;
+  packageId?: string;
+}
+
+export interface SearchResult {
+  query: string;
+  hits: SearchHit[];
+}

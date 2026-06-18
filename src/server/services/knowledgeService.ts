@@ -17,9 +17,12 @@ import type {
   EvidenceCoverage,
   EvidenceRecord,
   McpAuditRecord,
+  PackageStatus,
   ReleaseRecord,
   ReviewSeverity,
   ReviewTask,
+  SearchHit,
+  SearchResult,
   UserRecord
 } from "../types";
 
@@ -109,13 +112,70 @@ export class KnowledgeService {
     };
   }
 
-  async listPackages(): Promise<AssetPackage[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM asset_packages ORDER BY created_at DESC");
+  async listPackages(filter: { q?: string; status?: PackageStatus; kind?: string } = {}): Promise<AssetPackage[]> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.q) {
+      where.push(`(name ILIKE $${params.length + 1} OR description ILIKE $${params.length + 1})`);
+      params.push(`%${filter.q}%`);
+    }
+    if (filter.status) { where.push(`status = $${params.length + 1}`); params.push(filter.status); }
+    if (filter.kind) { where.push(`kind = $${params.length + 1}`); params.push(filter.kind); }
+    const sql = `SELECT * FROM asset_packages${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC`;
+    const { rows } = await this.adapter.query(sql, params);
     return rows.map(mapPackage);
   }
 
-  async getPackageDetail(packageId: string) {
-    const { rows } = await this.adapter.query("SELECT * FROM asset_packages WHERE package_id = $1", [packageId]);
+  /**
+   * Cross-entity keyword search returning navigation-ready hits (each carries the IDs
+   * the UI needs to jump to the right page). Read model only — no filesystem access.
+   */
+  async search(q: string, limit = 20): Promise<SearchResult> {
+    const like = `%${q}%`;
+    const hits: SearchHit[] = [];
+
+    const packages = await this.adapter.query(
+      "SELECT package_id, name, status FROM asset_packages WHERE name ILIKE $1 OR description ILIKE $1 ORDER BY created_at DESC LIMIT $2",
+      [like, limit]
+    );
+    for (const row of packages.rows) {
+      hits.push({ kind: "package", id: String(row.package_id), title: String(row.name), subtitle: `资产包 · ${row.status}` });
+    }
+
+    const components = await this.adapter.query(
+      "SELECT component_id, package_id, title, group_name FROM asset_components WHERE title ILIKE $1 OR artifact_id ILIKE $1 ORDER BY title LIMIT $2",
+      [like, limit]
+    );
+    for (const row of components.rows) {
+      hits.push({
+        kind: "component",
+        id: String(row.component_id),
+        title: String(row.title),
+        subtitle: `组件 · ${row.group_name}`,
+        packageId: String(row.package_id)
+      });
+    }
+
+    const versions = await this.adapter.query(
+      "SELECT version_id, label, bundle_id FROM source_bundle_versions WHERE label ILIKE $1 OR note ILIKE $1 ORDER BY created_at DESC LIMIT $2",
+      [like, limit]
+    );
+    for (const row of versions.rows) {
+      hits.push({ kind: "source_version", id: String(row.version_id), title: String(row.label), subtitle: `资料版本 · ${row.bundle_id}` });
+    }
+
+    const releases = await this.adapter.query(
+      "SELECT release_id, version, status FROM releases WHERE version ILIKE $1 OR release_id ILIKE $1 ORDER BY created_at DESC LIMIT $2",
+      [like, limit]
+    );
+    for (const row of releases.rows) {
+      hits.push({ kind: "release", id: String(row.release_id), title: String(row.version), subtitle: `发布版本 · ${row.status}` });
+    }
+
+    return { query: q, hits };
+  }
+
+  async getPackageDetail(packageId: string) {    const { rows } = await this.adapter.query("SELECT * FROM asset_packages WHERE package_id = $1", [packageId]);
     if (rows.length === 0) throw new Error(`Unknown package: ${packageId}`);
     return {
       package: mapPackage(rows[0]),
@@ -150,6 +210,15 @@ export class KnowledgeService {
     const sql = `SELECT * FROM asset_components${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY group_name, title`;
     const { rows } = await this.adapter.query(sql, params);
     return rows.map(mapComponent);
+  }
+
+  /** Resolves which package owns a component — used for component → Assets navigation. */
+  async findComponentOwner(componentId: string): Promise<string | null> {
+    const { rows } = await this.adapter.query(
+      "SELECT package_id FROM asset_components WHERE component_id = $1",
+      [componentId]
+    );
+    return rows.length ? String(rows[0].package_id) : null;
   }
 
   async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string } = {}): Promise<ReviewTask[]> {

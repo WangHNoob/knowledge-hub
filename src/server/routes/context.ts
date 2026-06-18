@@ -9,6 +9,7 @@ import type { ReleaseService } from "../services/releaseService";
 import type { KnowledgeQueryService } from "../services/knowledgeQueryService";
 import type { LegislationService } from "../services/legislationService";
 import type { AttributionAuditService } from "../services/attributionAuditService";
+import type { StorageMaintenanceService } from "../services/storageMaintenanceService";
 
 export interface RouteContext {
   db: DatabaseHandle;
@@ -21,6 +22,7 @@ export interface RouteContext {
   queryService: KnowledgeQueryService;
   legislationService: LegislationService;
   attributionAuditService: AttributionAuditService;
+  storageService: StorageMaintenanceService;
 }
 
 export type RouteRegistrar = (app: FastifyInstance, ctx: RouteContext) => void | Promise<void>;

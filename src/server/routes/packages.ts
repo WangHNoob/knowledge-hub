@@ -1,13 +1,21 @@
 import type { FastifyInstance } from "fastify";
+import type { z } from "zod";
 
 import { requireRole } from "../middleware/auth";
+import { packageListQuerySchema } from "../schemas";
 import { PackageDeleteConflictError } from "../services/knowledgeService";
 import type { RouteContext } from "./context";
 
 export function registerPackageRoutes(app: FastifyInstance, ctx: RouteContext) {
-  app.get("/api/packages", { preHandler: app.authenticate }, async () => ({
-    packages: await ctx.service.listPackages()
-  }));
+  app.get<{ Querystring: z.infer<typeof packageListQuerySchema> }>(
+    "/api/packages",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const parsed = packageListQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid package query." });
+      return { packages: await ctx.service.listPackages(parsed.data) };
+    }
+  );
 
   app.get<{ Params: { packageId: string } }>(
     "/api/packages/:packageId",
@@ -50,6 +58,16 @@ export function registerPackageRoutes(app: FastifyInstance, ctx: RouteContext) {
         throw error;
       }
     },
+  );
+
+  app.get<{ Params: { componentId: string } }>(
+    "/api/components/:componentId/owner",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const packageId = await ctx.service.findComponentOwner(request.params.componentId);
+      if (!packageId) return reply.code(404).send({ error: "Unknown component." });
+      return { packageId };
+    }
   );
 
   app.get<{ Querystring: { packageId?: string; componentId?: string } }>(

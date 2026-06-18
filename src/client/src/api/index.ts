@@ -17,7 +17,10 @@ export {
   stopBuildRun,
   testModelConnectivity
 } from "./builder";
-export { deletePackage, getComponentContent, getPackage, listEvidence, listPackages } from "./packages";
+export { deletePackage, getComponentContent, getComponentOwner, getPackage, listEvidence, listPackages } from "./packages";
+export type { PackageFilter } from "./packages";
+export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
+export { searchAll } from "./search";
 export { listReviewTasks } from "./review";
 export { getQualityProfile, updateQualityProfile } from "./quality";
 export {
