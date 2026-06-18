@@ -12,13 +12,16 @@ import {
   rollbackRelease,
   type ReleaseRecord
 } from "../api";
-import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { errorMessage, qualityScore, releaseVersion } from "../utils/format";
 import { IdChip, useNav } from "../ui/navigation";
+
+type ReleaseTab = "compose" | "current";
 
 export function Release() {
   const { navigate } = useNav();
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState<ReleaseTab>("compose");
   const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
   const [version, setVersion] = useState(() => releaseVersion());
   const packages = useQuery({ queryKey: ["packages"], queryFn: () => listPackages() });
@@ -65,8 +68,18 @@ export function Release() {
 
   return (
     <Page title="发布" subtitle="发布版本是 Agent 正式消费的不可变知识视图。">
-      <div className="release-workbench">
-        <section className="release-panel">
+      <Tabs
+        active={tab}
+        onChange={setTab}
+        items={[
+          { id: "compose", label: "组建发布" },
+          { id: "current", label: "当前与历史", count: releases.data?.length }
+        ]}
+      />
+      <div className="release-workbench" key={tab}>
+        {tab === "compose" && (
+          <>
+            <section className="release-panel">
           <div className="detail-head">
             <div>
               <h2>选择资产包</h2>
@@ -148,7 +161,10 @@ export function Release() {
             <p className="error">{errorMessage(createMutation.error ?? publishMutation.error, "发布失败。")}</p>
           )}
         </section>
+          </>
+        )}
 
+        {tab === "current" && (
         <section className="release-panel">
           <div className="detail-head">
             <div>
@@ -199,6 +215,7 @@ export function Release() {
             ))}
           </div>
         </section>
+        )}
       </div>
     </Page>
   );
