@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type KnowledgeEnvelope } from "../api";
-import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { IdChip, useNav } from "../ui/navigation";
 
 const MCP_TOOLS = [
@@ -27,9 +27,12 @@ const MCP_TOOLS = [
   "kb_get_release"
 ];
 
+type AgentTab = "connect" | "simulate" | "audit" | "feedback" | "attribution";
+
 export function AgentFeedback() {
   const { navigate } = useNav();
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState<AgentTab>("simulate");
   const [toolName, setToolName] = useState("kb_search");
   const [payload, setPayload] = useState('{\n  "query": "Battle System"\n}');
   const [envelope, setEnvelope] = useState<KnowledgeEnvelope | null>(null);
@@ -60,121 +63,145 @@ export function AgentFeedback() {
   };
   return (
     <Page title="MCP 控制台" subtitle="Agent 通过 Knowledge MCP 只读 current release；审计和反馈会回流为维护任务。">
-      <div className="mcp-console">
-        <section className="mcp-panel">
-          <div className="detail-head">
-            <div>
-              <h2>启动命令</h2>
-              <p>在支持 MCP stdio 的 Agent 客户端里使用 OpenAI-compatible 风格的工具调用配置。</p>
-            </div>
-            <Badge label="stdio" />
-          </div>
-          <code className="code-block">npm run mcp:stdio</code>
-          <textarea className="code-editor small" value={JSON.stringify(configSnippet, null, 2)} readOnly />
-        </section>
-
-        <section className="mcp-panel">
-          <div className="detail-head">
-            <div>
-              <h2>模拟查询</h2>
-              <p>调用与 MCP 同源的 QueryService，便于桌面端验证 envelope、trace 和质量 flags。</p>
-            </div>
-            <Badge label={toolName} tone="ok" />
-          </div>
-          <div className="model-grid">
-            <label className="field-label">
-              Tool
-              <select value={toolName} onChange={(event) => setToolName(event.target.value)}>
-                {MCP_TOOLS.map((tool) => <option key={tool} value={tool}>{tool}</option>)}
-              </select>
-            </label>
-            <label className="field-label model-secret">
-              Payload JSON
-              <textarea className="code-editor small" value={payload} onChange={(event) => setPayload(event.target.value)} spellCheck={false} />
-            </label>
-          </div>
-          <button className="primary-action" disabled={simulate.isPending} onClick={() => simulate.mutate()}>
-            <Play size={16} />
-            {simulate.isPending ? "查询中..." : "运行模拟查询"}
-          </button>
-          {simulate.error && <p className="error">{simulate.error instanceof Error ? simulate.error.message : String(simulate.error)}</p>}
-          {envelope && (
-            <div className="envelope-view">
-              <div className="metrics compact">
-                <Metric label="Release" value={envelope.release.version} hint={envelope.release.releaseId} />
-                <Metric label="组件命中" value={envelope.trace.componentIds.length} hint={envelope.trace.componentIds.join(", ") || "none"} />
-                <Metric label="质量 flags" value={envelope.qualityFlags.length} hint={envelope.qualityFlags.join(", ") || "clean"} tone={envelope.qualityFlags.length ? "warn" : "ok"} />
+      <Tabs
+        active={tab}
+        onChange={setTab}
+        items={[
+          { id: "connect", label: "连接配置" },
+          { id: "simulate", label: "模拟查询" },
+          { id: "audit", label: "查询审计", count: audit.data?.length },
+          { id: "feedback", label: "反馈回流", count: events.data?.length },
+          { id: "attribution", label: "归因审计", count: outputAudits.data?.length }
+        ]}
+      />
+      <div className="mcp-console" key={tab}>
+        {tab === "connect" && (
+          <section className="mcp-panel">
+            <div className="detail-head">
+              <div>
+                <h2>启动命令</h2>
+                <p>在支持 MCP stdio 的 Agent 客户端里使用 OpenAI-compatible 风格的工具调用配置。</p>
               </div>
-              <pre>{JSON.stringify(envelope, null, 2)}</pre>
+              <Badge label="stdio" />
             </div>
-          )}
-        </section>
+            <code className="code-block">npm run mcp:stdio</code>
+            <textarea className="code-editor small" value={JSON.stringify(configSnippet, null, 2)} readOnly />
+          </section>
+        )}
 
-        <section className="mcp-panel">
-          <h2>查询审计</h2>
-          <div className="event-list">
-            {(audit.data ?? []).map((record) => (
-              <article className="event" key={record.auditId}>
-                <Badge label={record.status} tone={record.status === "miss" || record.status === "error" ? "hot" : "ok"} />
-                <div>
-                  <strong>{record.toolName}</strong>
-                  <span>{record.hitComponentIds.length ? "命中组件：" : "无命中组件"} · {record.latencyMs} ms</span>
-                  {record.hitComponentIds.length > 0 && (
-                    <div className="asset-link">
-                      {record.hitComponentIds.map((componentId) => (
-                        <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
-                      ))}
-                    </div>
-                  )}
+        {tab === "simulate" && (
+          <section className="mcp-panel">
+            <div className="detail-head">
+              <div>
+                <h2>模拟查询</h2>
+                <p>调用与 MCP 同源的 QueryService，便于桌面端验证 envelope、trace 和质量 flags。</p>
+              </div>
+              <Badge label={toolName} tone="ok" />
+            </div>
+            <div className="model-grid">
+              <label className="field-label">
+                Tool
+                <select value={toolName} onChange={(event) => setToolName(event.target.value)}>
+                  {MCP_TOOLS.map((tool) => <option key={tool} value={tool}>{tool}</option>)}
+                </select>
+              </label>
+              <label className="field-label model-secret">
+                Payload JSON
+                <textarea className="code-editor small" value={payload} onChange={(event) => setPayload(event.target.value)} spellCheck={false} />
+              </label>
+            </div>
+            <button className="primary-action" disabled={simulate.isPending} onClick={() => simulate.mutate()}>
+              <Play size={16} />
+              {simulate.isPending ? "查询中..." : "运行模拟查询"}
+            </button>
+            {simulate.error && <p className="error">{simulate.error instanceof Error ? simulate.error.message : String(simulate.error)}</p>}
+            {envelope && (
+              <div className="envelope-view">
+                <div className="metrics compact">
+                  <Metric label="Release" value={envelope.release.version} hint={envelope.release.releaseId} />
+                  <Metric label="组件命中" value={envelope.trace.componentIds.length} hint={envelope.trace.componentIds.join(", ") || "none"} />
+                  <Metric label="质量 flags" value={envelope.qualityFlags.length} hint={envelope.qualityFlags.join(", ") || "clean"} tone={envelope.qualityFlags.length ? "warn" : "ok"} />
                 </div>
-                <small>{record.createdAt}</small>
-              </article>
-            ))}
-          </div>
-        </section>
+                <pre>{JSON.stringify(envelope, null, 2)}</pre>
+              </div>
+            )}
+          </section>
+        )}
 
-        <section className="mcp-panel">
-          <h2>反馈回流</h2>
-          <div className="event-list">
-            {(events.data ?? []).map((event) => (
-              <article className="event" key={event.eventId}>
-                <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
-                <div>
-                  <strong>{event.query}</strong>
-                  <span>{event.hitComponentIds.length ? "命中组件：" : "未命中任何资产"}</span>
-                  {event.hitComponentIds.length > 0 && (
-                    <div className="asset-link">
-                      {event.hitComponentIds.map((componentId) => (
-                        <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
-                      ))}
-                    </div>
-                  )}
-                  {event.suggestedAction && <small>{event.suggestedAction}</small>}
-                </div>
-                <small>{event.taskId || event.createdAt}</small>
-              </article>
-            ))}
-          </div>
-        </section>
+        {tab === "audit" && (
+          <section className="mcp-panel">
+            <h2>查询审计</h2>
+            <div className="event-list">
+              {(audit.data ?? []).map((record) => (
+                <article className="event" key={record.auditId}>
+                  <Badge label={record.status} tone={record.status === "miss" || record.status === "error" ? "hot" : "ok"} />
+                  <div>
+                    <strong>{record.toolName}</strong>
+                    <span>{record.hitComponentIds.length ? "命中组件：" : "无命中组件"} · {record.latencyMs} ms</span>
+                    {record.hitComponentIds.length > 0 && (
+                      <div className="asset-link">
+                        {record.hitComponentIds.map((componentId) => (
+                          <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <small>{record.createdAt}</small>
+                </article>
+              ))}
+              {(audit.data ?? []).length === 0 && <p className="subtle">暂无查询审计记录。</p>}
+            </div>
+          </section>
+        )}
 
-        <section className="mcp-panel">
-          <h2>输出归因审计</h2>
-          <div className="event-list">
-            {(outputAudits.data ?? []).map((auditRecord) => (
-              <article className="event" key={auditRecord.auditId}>
-                <Badge label={`${auditRecord.segments.length} 段`} tone={auditRecord.segments.some((segment) => segment.attributionType === "创作" || segment.attributionType === "无法判断") ? "warn" : "ok"} />
-                <div>
-                  <strong>{auditRecord.title}</strong>
-                  <span>{auditRecord.releaseId}</span>
-                  <small>
-                    {auditRecord.segments.map((segment) => `${segment.segmentId}:${segment.attributionType}`).join(" / ")}
-                  </small>
-                </div>
-                <small>{auditRecord.createdAt}</small>
-              </article>
-            ))}
-          </div>
-        </section>
+        {tab === "feedback" && (
+          <section className="mcp-panel">
+            <h2>反馈回流</h2>
+            <div className="event-list">
+              {(events.data ?? []).map((event) => (
+                <article className="event" key={event.eventId}>
+                  <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
+                  <div>
+                    <strong>{event.query}</strong>
+                    <span>{event.hitComponentIds.length ? "命中组件：" : "未命中任何资产"}</span>
+                    {event.hitComponentIds.length > 0 && (
+                      <div className="asset-link">
+                        {event.hitComponentIds.map((componentId) => (
+                          <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
+                        ))}
+                      </div>
+                    )}
+                    {event.suggestedAction && <small>{event.suggestedAction}</small>}
+                  </div>
+                  <small>{event.taskId || event.createdAt}</small>
+                </article>
+              ))}
+              {(events.data ?? []).length === 0 && <p className="subtle">暂无反馈记录。</p>}
+            </div>
+          </section>
+        )}
+
+        {tab === "attribution" && (
+          <section className="mcp-panel">
+            <h2>输出归因审计</h2>
+            <div className="event-list">
+              {(outputAudits.data ?? []).map((auditRecord) => (
+                <article className="event" key={auditRecord.auditId}>
+                  <Badge label={`${auditRecord.segments.length} 段`} tone={auditRecord.segments.some((segment) => segment.attributionType === "创作" || segment.attributionType === "无法判断") ? "warn" : "ok"} />
+                  <div>
+                    <strong>{auditRecord.title}</strong>
+                    <span>{auditRecord.releaseId}</span>
+                    <small>
+                      {auditRecord.segments.map((segment) => `${segment.segmentId}:${segment.attributionType}`).join(" / ")}
+                    </small>
+                  </div>
+                  <small>{auditRecord.createdAt}</small>
+                </article>
+              ))}
+              {(outputAudits.data ?? []).length === 0 && <p className="subtle">暂无归因审计记录。</p>}
+            </div>
+          </section>
+        )}
       </div>
     </Page>
   );
