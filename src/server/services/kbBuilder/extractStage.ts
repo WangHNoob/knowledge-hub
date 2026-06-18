@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { z } from "zod";
 import type { PipelineModelConfig } from "./modelConfig";
 import { extractMaxTokens } from "./modelConfig";
-import { anthropicMessagesEndpoint } from "./modelConnectivity";
+import { createLlmClient, type LlmClient } from "./llmClient";
 import type { WikiSpecSet } from "./specs";
 import type { StageResult } from "./types";
 
@@ -57,12 +58,16 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
     return !only || matchesOnlyFilter(rel, only);
   });
+  // Build the LLM client once per run so capability state (e.g. whether the
+  // model supports response_format) is remembered across every file.
+  const client = createLlmClient(resolveModelConfig(options));
+  const guidance = buildSpecGuidance(options.specs);
   for (let index = 0; index < files.length; index += 1) {
     const absolute = files[index];
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
-    const extracted = await extractPage(markdown, rel, options, warnings);
+    const extracted = await extractPage(markdown, rel, client, guidance, warnings);
     const pageType = options.specs.manifest.pageTypes[extracted.type];
     if (!pageType) {
       warnings.push(`${rel}: unknown page type "${extracted.type}", skipped`);
@@ -89,60 +94,89 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   return { stage: "extract", status: "completed", outputPaths, warnings };
 }
 
-async function extractPage(markdown: string, rel: string, options: ExtractOptions, warnings: string[]): Promise<ExtractedPage> {
+async function extractPage(markdown: string, rel: string, client: LlmClient | null, guidance: string, warnings: string[]): Promise<ExtractedPage> {
   const structured = parseStructuredFrontmatter(markdown);
   if (structured) return structured;
+  if (!client) return deterministicFallback(markdown, rel);
 
-  const guidance = buildSpecGuidance(options.specs);
-
-  if (options.modelConfig?.provider === "openai-compatible" && options.modelConfig.apiKey) {
-    return withModelJsonFallback(
-      () => extractWithOpenAI(markdown, rel, options.modelConfig as Extract<PipelineModelConfig, { provider: "openai-compatible" }>, guidance),
-      markdown,
-      rel,
-      warnings,
-    );
-  }
-
-  if (options.modelConfig?.provider === "anthropic" && options.modelConfig.apiKey) {
-    return withModelJsonFallback(
-      () => extractWithAnthropic(markdown, rel, options.modelConfig as Extract<PipelineModelConfig, { provider: "anthropic" }>, guidance),
-      markdown,
-      rel,
-      warnings,
-    );
-  }
-
-  if (options.model !== "deterministic" && process.env.OPENAI_API_KEY) {
-    return withModelJsonFallback(
-      () => extractWithOpenAI(markdown, rel, {
-        provider: "openai-compatible",
-        baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
-        model: options.model,
-        apiKey: process.env.OPENAI_API_KEY,
-      }, guidance),
-      markdown,
-      rel,
-      warnings,
-    );
-  }
-
-  return deterministicFallback(markdown, rel);
-}
-
-async function withModelJsonFallback(
-  extract: () => Promise<ExtractedPage>,
-  markdown: string,
-  rel: string,
-  warnings: string[],
-): Promise<ExtractedPage> {
   try {
-    return await extract();
+    const completion = await client.complete({
+      system: `Extract a wiki page from markdown. Return only JSON with type, title, source, facts, entities, relationships, and body.\n${guidance}`,
+      user: `Source path: processed/parsed/${rel}\n\n${markdown}`,
+      maxTokens: extractMaxTokens(),
+      jsonMode: true,
+    });
+    return parseExtractedPage(completion.text, markdown, rel);
   } catch (error) {
     if (!(error instanceof ModelJsonParseError)) throw error;
     warnings.push(`${rel}: model returned invalid JSON; used deterministic fallback (${error.detail})`);
     return deterministicFallback(markdown, rel);
   }
+}
+
+// Resolve the effective model for extraction: an explicit per-build modelConfig
+// wins, then the OPENAI_API_KEY env fallback, otherwise deterministic (no client).
+function resolveModelConfig(options: ExtractOptions): PipelineModelConfig {
+  const config = options.modelConfig;
+  if (config?.provider === "openai-compatible" && config.apiKey) return config;
+  if (config?.provider === "anthropic" && config.apiKey) return config;
+  if (options.model !== "deterministic" && process.env.OPENAI_API_KEY) {
+    return {
+      provider: "openai-compatible",
+      baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+      model: options.model,
+      apiKey: process.env.OPENAI_API_KEY,
+    };
+  }
+  return { provider: "deterministic", model: "deterministic" };
+}
+
+// Contract for the model's JSON output. Every field is tolerant: wrong-typed or
+// missing values collapse to undefined/[] (via .catch) instead of failing the
+// whole parse, so a slightly-off response still yields a usable page. Missing
+// scalars are backfilled from deterministicFallback in parseExtractedPage.
+const optionalString = z.string().trim().min(1).optional().catch(undefined);
+const ModelPageSchema = z
+  .object({
+    type: optionalString,
+    title: optionalString,
+    source: optionalString,
+    facts: z.record(z.string(), z.coerce.string()).optional().catch(undefined),
+    entities: z
+      .array(z.object({ name: optionalString, type: optionalString }).catch({ name: undefined, type: undefined }))
+      .optional()
+      .catch(undefined),
+    relationships: z
+      .array(
+        z
+          .object({ source: optionalString, relation: optionalString, target: optionalString })
+          .catch({ source: undefined, relation: undefined, target: undefined }),
+      )
+      .optional()
+      .catch(undefined),
+    body: z.coerce.string().optional().catch(undefined),
+  })
+  .catch({});
+
+function parseExtractedPage(text: string, markdown: string, rel: string): ExtractedPage {
+  const data = ModelPageSchema.parse(parseModelJson(text, rel));
+  const fallback = deterministicFallback(markdown, rel);
+  return {
+    type: data.type ?? fallback.type,
+    title: data.title ?? fallback.title,
+    source: data.source ?? fallback.source,
+    facts: data.facts ?? {},
+    entities: (data.entities ?? []).map((entity) => ({
+      name: entity.name ?? fallback.title,
+      type: entity.type ?? "concept",
+    })),
+    relationships: (data.relationships ?? []).map((relationship) => ({
+      source: relationship.source ?? fallback.title,
+      relation: relationship.relation ?? "references",
+      target: relationship.target ?? fallback.title,
+    })),
+    body: data.body ?? fallback.body,
+  };
 }
 
 // Steer the model to emit a page `type` from the active legislation profile's
@@ -270,73 +304,6 @@ function parseRelationshipsBlock(lines: string[]): Relationship[] {
     );
 }
 
-async function extractWithOpenAI(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "openai-compatible" }>, guidance: string): Promise<ExtractedPage> {
-  const baseUrl = config.baseUrl.replace(/\/+$/u, "");
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: config.model,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            "Extract a wiki page from markdown. Return JSON with type, title, source, facts, entities, relationships, and body.\n" +
-            guidance,
-        },
-        { role: "user", content: `Source path: processed/parsed/${rel}\n\n${markdown}` },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenAI extraction failed for ${rel}: ${response.status} ${response.statusText}${await formatErrorBody(response)}`);
-  }
-
-  const json = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = json.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error(`OpenAI extraction returned no content for ${rel}`);
-  }
-
-  return normalizeExtractedJson(parseModelJson(content, rel), markdown, rel);
-}
-
-async function extractWithAnthropic(markdown: string, rel: string, config: Extract<PipelineModelConfig, { provider: "anthropic" }>, guidance: string): Promise<ExtractedPage> {
-  const response = await fetch(anthropicMessagesEndpoint(config.baseUrl), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": config.apiKey ?? "",
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: extractMaxTokens(),
-      system: "Extract a wiki page from markdown. Return only JSON with type, title, source, facts, entities, relationships, and body.\n" + guidance,
-      messages: [
-        { role: "user", content: [{ type: "text", text: `Source path: processed/parsed/${rel}\n\n${markdown}` }] },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Anthropic extraction failed for ${rel}: ${response.status} ${response.statusText}${await formatErrorBody(response)}`);
-  }
-
-  const json = (await response.json()) as { content?: Array<{ type?: string; text?: string }> };
-  const content = json.content?.find((item) => item.type === "text" && item.text)?.text;
-  if (!content) {
-    throw new Error(`Anthropic extraction returned no content for ${rel}`);
-  }
-
-  return normalizeExtractedJson(parseModelJson(content, rel), markdown, rel);
-}
-
 class ModelJsonParseError extends Error {
   readonly detail: string;
 
@@ -378,38 +345,6 @@ function extractFirstJsonObject(content: string): string | null {
   const end = content.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
   return content.slice(start, end + 1).trim();
-}
-
-function normalizeExtractedJson(value: unknown, markdown: string, rel: string): ExtractedPage {
-  const input = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-  const fallback = deterministicFallback(markdown, rel);
-  return {
-    type: stringValue(input.type) ?? fallback.type,
-    title: stringValue(input.title) ?? fallback.title,
-    source: stringValue(input.source) ?? fallback.source,
-    facts: recordOfStrings(input.facts),
-    entities: arrayOfRecords(input.entities).map((entity) => ({
-      name: stringValue(entity.name) ?? fallback.title,
-      type: stringValue(entity.type) ?? "concept",
-    })),
-    relationships: arrayOfRecords(input.relationships).map((relationship) => ({
-      source: stringValue(relationship.source) ?? fallback.title,
-      relation: stringValue(relationship.relation) ?? "references",
-      target: stringValue(relationship.target) ?? fallback.title,
-    })),
-    body: stringValue(input.body) ?? fallback.body,
-  };
-}
-
-async function formatErrorBody(response: Response): Promise<string> {
-  try {
-    const text = (await response.text()).trim();
-    if (!text) return "";
-    const trimmed = text.length > 800 ? `${text.slice(0, 800)}…` : text;
-    return ` — ${trimmed}`;
-  } catch {
-    return "";
-  }
 }
 
 function deterministicFallback(markdown: string, rel: string): ExtractedPage {
@@ -475,24 +410,6 @@ function titleFromPath(path: string): string {
 
 function stripFrontmatter(markdown: string): string {
   return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/u, "");
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function recordOfStrings(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== null && entry !== undefined)
-      .map(([key, entry]) => [key, String(entry)]),
-  );
-}
-
-function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry));
 }
 
 function assertContainedOutput(outputRoot: string, outputPath: string, outputRel: string) {
