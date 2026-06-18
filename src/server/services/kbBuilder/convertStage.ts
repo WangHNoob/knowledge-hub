@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import mammoth from "mammoth";
 import xlsx from "xlsx";
@@ -36,9 +36,8 @@ export async function runConvertStage(options: { dataDir: string; force: boolean
     const outAbs = resolve(options.dataDir, outRel);
     assertContainedOutput(outputRoot, outAbs, outRel);
     mkdirSync(dirname(outAbs), { recursive: true });
-    const converted = await convertFileWithContext(absolute, ext, rel);
+    const converted = await convertFileWithContext(absolute, ext, rel, outAbs);
     warnings.push(...converted.warnings);
-    writeFileSync(outAbs, converted.markdown);
     outputPaths.push(outRel);
   }
 
@@ -46,11 +45,10 @@ export async function runConvertStage(options: { dataDir: string; force: boolean
   return { stage: "convert", status: "completed", outputPaths, warnings };
 }
 
-async function convertFileWithContext(path: string, ext: string, rel: string): Promise<{ markdown: string; warnings: string[] }> {
+async function convertFileWithContext(path: string, ext: string, rel: string, outAbs: string): Promise<{ warnings: string[] }> {
   try {
-    const converted = await convertFile(path, ext);
+    const converted = await convertFile(path, ext, outAbs);
     return {
-      markdown: converted.markdown,
       warnings: converted.warnings.map((warning) => `${rel}: ${warning}`),
     };
   } catch (error) {
@@ -58,24 +56,67 @@ async function convertFileWithContext(path: string, ext: string, rel: string): P
   }
 }
 
-async function convertFile(path: string, ext: string): Promise<{ markdown: string; warnings: string[] }> {
-  if (ext === ".md") return { markdown: readFileSync(path, "utf8"), warnings: [] };
-  if (ext === ".txt") return { markdown: readFileSync(path, "utf8"), warnings: [] };
+async function convertFile(path: string, ext: string, outAbs: string): Promise<{ warnings: string[] }> {
+  if (ext === ".md" || ext === ".txt") {
+    // Copy through without materializing a second copy of the body in memory.
+    writeFileSync(outAbs, readFileSync(path));
+    return { warnings: [] };
+  }
   if (ext === ".docx") {
     const result = await mammothMarkdown.convertToMarkdown({ path });
-    return {
-      markdown: stripInlineImageData(result.value),
-      warnings: result.messages.map((message) => message.message),
-    };
+    writeFileSync(outAbs, stripInlineImageData(result.value));
+    return { warnings: result.messages.map((message) => message.message) };
   }
-  const workbook = xlsx.readFile(path);
-  return {
-    markdown: workbook.SheetNames.map((name) => {
-      const rows = xlsx.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, defval: "" });
-      return `## Sheet: ${name}\n\n${markdownTable(rows)}`;
-    }).join("\n\n"),
-    warnings: [],
-  };
+  // Spreadsheets can be tens of MB; sheet_to_json + string concat would hold
+  // the whole table (and its markdown render) in memory at once. Stream each
+  // sheet row-by-row straight to disk instead.
+  await writeWorkbookMarkdown(path, outAbs);
+  return { warnings: [] };
+}
+
+function writeWorkbookMarkdown(path: string, outAbs: string): Promise<void> {
+  const workbook = xlsx.readFile(path, { cellFormula: false, cellHTML: false, cellText: false, cellStyles: false });
+  const out = createWriteStream(outAbs, { encoding: "utf8" });
+
+  // Honor stream backpressure: on a 50MB+ sheet, firing hundreds of thousands
+  // of write()s without ever awaiting 'drain' lets Node's internal buffer grow
+  // unbounded — the same OOM in a different place. Pause on a full buffer.
+  const write = (chunk: string): Promise<void> =>
+    out.write(chunk) ? Promise.resolve() : new Promise<void>((r) => out.once("drain", r));
+
+  return new Promise<void>((resolveWrite, rejectWrite) => {
+    out.on("error", rejectWrite);
+
+    void (async () => {
+      try {
+        let firstSheet = true;
+        for (const name of workbook.SheetNames) {
+          const sheet = workbook.Sheets[name];
+          await write(`${firstSheet ? "" : "\n\n"}## Sheet: ${name}\n\n`);
+          firstSheet = false;
+          if (!sheet || !sheet["!ref"]) continue;
+
+          const range = xlsx.utils.decode_range(sheet["!ref"] as string);
+          const columns = range.e.c - range.s.c + 1;
+          for (let row = range.s.r; row <= range.e.r; row += 1) {
+            const cells: string[] = [];
+            for (let col = range.s.c; col <= range.e.c; col += 1) {
+              const cell = sheet[xlsx.utils.encode_cell({ r: row, c: col })] as { v?: unknown } | undefined;
+              cells.push(markdownCell(cell?.v));
+            }
+            await write(`${markdownTableRow(cells)}\n`);
+            if (row === range.s.r) {
+              await write(`${markdownTableRow(Array.from({ length: columns }, () => "---"))}\n`);
+            }
+          }
+        }
+        out.end(resolveWrite);
+      } catch (error) {
+        out.destroy();
+        rejectWrite(error instanceof Error ? error : new Error(String(error)));
+      }
+    })();
+  });
 }
 
 function normalizeOnlyFilter(only: string | null): string | null {
@@ -89,22 +130,6 @@ function assertContainedOutput(outputRoot: string, outputPath: string, outputRel
   if (relativeToRoot.startsWith("..") || isAbsolute(relativeToRoot)) {
     throw new Error(`Refusing to write convert output outside processed/parsed: ${outputRel}`);
   }
-}
-
-function markdownTable(rows: unknown[][]): string {
-  if (rows.length === 0) return "";
-  const columns = Math.max(...rows.map((row) => row.length));
-  const header = normalizeRow(rows[0], columns);
-  const body = rows.slice(1).map((row) => normalizeRow(row, columns));
-  return [
-    markdownTableRow(header),
-    markdownTableRow(Array.from({ length: columns }, () => "---")),
-    ...body.map(markdownTableRow),
-  ].join("\n");
-}
-
-function normalizeRow(row: unknown[], columns: number): string[] {
-  return Array.from({ length: columns }, (_, index) => markdownCell(row[index]));
 }
 
 function markdownTableRow(cells: string[]): string {

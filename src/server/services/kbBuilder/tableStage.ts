@@ -84,19 +84,25 @@ export function detectFkEdges(schemas: Record<string, { fields: string[] }>, rul
 }
 
 function readTableSchema(file: string, tableName: string, relPath: string): TableSchema {
-  const workbook = xlsx.readFile(file);
+  // Only the header row + row count are needed. Materializing every row via
+  // sheet_to_json blows the heap on large workbooks (e.g. a 53MB xlsx expands
+  // to millions of JS objects), so read just the header cells and derive the
+  // row count from the sheet's reference range instead. Disable formula/HTML/
+  // rich-text parsing to cut per-cell memory further.
+  const workbook = xlsx.readFile(file, { cellFormula: false, cellHTML: false, cellText: false, cellStyles: false });
   const fields = new Set<string>();
   let rowCount = 0;
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
-    const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-    rowCount += rows.length;
-    if (rows[0]) {
-      for (const field of Object.keys(rows[0])) fields.add(field);
-    } else {
-      const matrix = xlsx.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
-      for (const value of matrix[0] ?? []) {
-        if (String(value).trim()) fields.add(String(value).trim());
+    if (!sheet) continue;
+    const range = sheet["!ref"] ? xlsx.utils.decode_range(sheet["!ref"] as string) : null;
+    if (range) {
+      // Total data rows across the sheet = all rows minus the header row.
+      rowCount += Math.max(0, range.e.r - range.s.r);
+      for (let col = range.s.c; col <= range.e.c; col += 1) {
+        const cell = sheet[xlsx.utils.encode_cell({ r: range.s.r, c: col })] as { v?: unknown } | undefined;
+        const value = cell?.v;
+        if (value !== undefined && String(value).trim()) fields.add(String(value).trim());
       }
     }
   }
