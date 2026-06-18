@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 
@@ -390,7 +391,7 @@ export class KbBuilderPipelineService {
       );
 
       for (const artifact of artifacts) {
-        const componentId = `cmp_${slug(packageId)}_${slug(artifact.legacyPath)}`;
+        const componentId = componentIdFor(packageId, artifact.legacyPath);
         await this.adapter.query(
           `INSERT INTO asset_components
             (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
@@ -511,7 +512,12 @@ function mergeQualityRules(profile: QualityGateConfig, rules: KnowledgeRuleConfi
 }
 
 function componentIdFor(packageId: string, legacyPath: string): string {
-  return `cmp_${slug(packageId)}_${slug(legacyPath)}`;
+  // slug() drops every non-[a-z0-9] char, so distinct non-ASCII paths (e.g.
+  // Chinese filenames like "阵法特权.md") collapse to the same slug and collide
+  // on asset_components_pkey. Append a hash of the raw path to keep the id
+  // readable but unique per legacyPath.
+  const digest = createHash("sha1").update(legacyPath).digest("hex").slice(0, 10);
+  return `cmp_${slug(packageId)}_${slug(legacyPath)}_${digest}`;
 }
 
 function mapRun(row: Record<string, unknown>): KnowledgeBuildRun {
