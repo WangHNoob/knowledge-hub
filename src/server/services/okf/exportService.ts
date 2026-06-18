@@ -146,7 +146,8 @@ function okfPathForComponent(component: AssetComponent): string | null {
   return withoutWiki.split("/").filter(Boolean).join(posix.sep);
 }
 
-function okfTypeForPath(okfPath: string): string {
+function okfTypeForComponent(component: AssetComponent, okfPath: string): string {
+  if (component.kind === "table_wiki_page") return "table_registry";
   if (okfPath.startsWith("systems/")) return "system_rule";
   if (okfPath.startsWith("activities/")) return "activity_template";
   if (okfPath.startsWith("tables/")) return "table_schema";
@@ -192,7 +193,7 @@ function renderOkfMarkdown(input: {
   activeRuleProfileHash: string;
   evidenceRows: EvidenceRow[];
 }): string {
-  const type = okfTypeForPath(input.okfPath);
+  const type = okfTypeForComponent(input.component, input.okfPath);
   const title = input.component.title || input.okfPath.replace(/\.md$/u, "");
   const body = input.body || `# ${title}\n`;
   const description = firstTextLine(body) || title;

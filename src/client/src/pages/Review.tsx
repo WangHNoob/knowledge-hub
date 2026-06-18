@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { listReviewTasks, transitionReviewTasks, type ReviewTask } from "../api";
-import { Badge, ErrorState, Loading, Page } from "../components/Atoms";
+import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { formatTime } from "../utils/format";
 import { IdChip, useNav } from "../ui/navigation";
 
@@ -27,6 +27,15 @@ const SEVERITY_TONE: Record<string, "hot" | "warn" | undefined> = {
 };
 
 const STATUS_LABEL: Record<string, string> = { open: "待处理", resolved: "已解决", dismissed: "已忽略" };
+
+function taskCategory(task: ReviewTask): string {
+  const text = `${task.title} ${task.description} ${task.suggestedAction}`.toLowerCase();
+  if (/agent|miss|命中|反馈|mcp/.test(text)) return "Agent 回流";
+  if (/evidence|citation|引用|证据|source/.test(text)) return "证据";
+  if (/spec|frontmatter|字段|facts/.test(text)) return "结构";
+  if (/graph|relation|关系|图谱/.test(text)) return "图谱";
+  return "质量";
+}
 
 export function Review() {
   const { navigate, params } = useNav();
@@ -57,6 +66,10 @@ export function Review() {
   if (error) return <ErrorState error={error} />;
 
   const tasks = (data ?? []).filter((task) => !params.packageId || task.packageId === params.packageId);
+  const openTasks = tasks.filter((task) => task.status === "open");
+  const blockingTasks = openTasks.filter((task) => task.severity === "blocking");
+  const warningTasks = openTasks.filter((task) => task.severity === "warning");
+  const agentTasks = openTasks.filter((task) => /agent|命中|反馈|miss|mcp/i.test(`${task.title} ${task.description} ${task.suggestedAction}`));
   const act = (task: ReviewTask, next: "open" | "resolved" | "dismissed") =>
     transition.mutate({ taskIds: [task.taskId], next, note: notes[task.taskId] });
   const bulk = (next: "resolved" | "dismissed") => {
@@ -93,12 +106,34 @@ export function Review() {
 
       {transition.error && <p className="error">{transition.error instanceof Error ? transition.error.message : String(transition.error)}</p>}
 
+      <section className="review-flow">
+        <div className="metrics compact">
+          <Metric label="待处理" value={openTasks.length} hint="当前筛选范围" tone={openTasks.length ? "warn" : "ok"} />
+          <Metric label="阻断" value={blockingTasks.length} hint="先处理，影响发布" tone={blockingTasks.length ? "hot" : "ok"} />
+          <Metric label="可后置" value={warningTasks.length} hint="warning 可试发布后迭代" tone={warningTasks.length ? "warn" : "ok"} />
+          <Metric label="Agent 回流" value={agentTasks.length} hint="由消费反馈生成" tone={agentTasks.length ? "warn" : "ok"} />
+        </div>
+        <div className="flow-cards">
+          <button type="button" className="flow-card" onClick={() => navigate("assets", params.packageId ? { packageId: params.packageId } : {})}>
+            <strong>1. 定位资产</strong>
+            <span>从任务里的 package / component 直接跳到资产详情，先看来源、质量与 evidence。</span>
+          </button>
+          <button type="button" className="flow-card" onClick={() => navigate("agent")}>
+            <strong>2. 复测 Agent</strong>
+            <span>修完后去 MCP 控制台跑同一个查询，看 hit、trace、quality flags 是否收敛。</span>
+          </button>
+        </div>
+      </section>
+
       <div className="task-list">
         {tasks.map((task) => (
           <article className="task" key={task.taskId}>
             <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />
             <div>
-              <h3>{task.title}</h3>
+              <div className="task-title-row">
+                <h3>{task.title}</h3>
+                <Badge label={taskCategory(task)} />
+              </div>
               <p>{task.description}</p>
               <strong>{task.suggestedAction}</strong>
               <div className="asset-link">

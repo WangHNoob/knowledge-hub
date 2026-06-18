@@ -271,7 +271,8 @@ export class KnowledgeService {
   }
 
   async getEvidenceCoverage(filter: { packageId?: string } = {}): Promise<EvidenceCoverage> {
-    const components = await this.listComponents({ packageId: filter.packageId });
+    const components = (await this.listComponents({ packageId: filter.packageId }))
+      .filter((component) => EVIDENCE_COVERAGE_COMPONENT_KINDS.has(component.kind));
     const componentIds = new Set(components.map((c) => c.componentId));
     const records = await this.listEvidenceRecords({ packageId: filter.packageId });
     const coveredIds = new Set(records.map((r) => r.componentId).filter((id) => componentIds.has(id)));
@@ -309,3 +310,5 @@ function countBy<T, K extends string>(items: T[], key: (item: T) => K): Record<K
     return acc;
   }, {} as Record<K, number>);
 }
+
+const EVIDENCE_COVERAGE_COMPONENT_KINDS = new Set(["wiki_page"]);

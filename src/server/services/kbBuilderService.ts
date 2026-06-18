@@ -35,6 +35,7 @@ import type { DiagnosticLogger } from "./diagnosticService";
 
 const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "viz"];
 const TRACKED_STAGES: ReadonlySet<string> = new Set<string>(STAGE_ORDER);
+const AUTO_EVIDENCE_COMPONENT_KINDS = new Set(["wiki_page"]);
 
 export function createKbBuilderPipelineService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
   return new KbBuilderPipelineService(db, dataDir, diagnostics);
@@ -464,8 +465,10 @@ export class KbBuilderPipelineService {
         ],
       );
 
+      const componentRows: Array<{ componentId: string; artifact: CollectedArtifact; sourceRefs: string[] }> = [];
       for (const artifact of artifacts) {
         const componentId = componentIdFor(packageId, artifact.legacyPath);
+        const componentSourceRefs = artifact.sourceRefs.length ? artifact.sourceRefs : sourceRefs;
         await this.adapter.query(
           `INSERT INTO asset_components
             (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
@@ -480,7 +483,7 @@ export class KbBuilderPipelineService {
             "draft",
             artifact.legacyPath,
             artifact.storageUri,
-            JSON.stringify(artifact.sourceRefs.length ? artifact.sourceRefs : sourceRefs),
+            JSON.stringify(componentSourceRefs),
             JSON.stringify({
               ...artifact.quality,
               legislationProfile: {
@@ -490,7 +493,9 @@ export class KbBuilderPipelineService {
             }),
           ],
         );
+        componentRows.push({ componentId, artifact, sourceRefs: componentSourceRefs });
       }
+      await this.insertAutomaticEvidence(packageId, versionId, componentRows, now);
       await this.adapter.query("COMMIT");
     } catch (error) {
       await this.adapter.query("ROLLBACK");
@@ -498,6 +503,37 @@ export class KbBuilderPipelineService {
     }
 
     return this.requirePackage(packageId);
+  }
+
+  private async insertAutomaticEvidence(
+    packageId: string,
+    versionId: string,
+    components: Array<{ componentId: string; artifact: CollectedArtifact; sourceRefs: string[] }>,
+    now: string,
+  ): Promise<void> {
+    for (const { componentId, artifact, sourceRefs } of components) {
+      if (!AUTO_EVIDENCE_COMPONENT_KINDS.has(artifact.kind)) continue;
+      const refs = sourceRefs.length > 0 ? sourceRefs : ["source bundle"];
+      for (const sourceRef of refs.slice(0, 3)) {
+        const digest = createHash("sha1").update(`${componentId}:${sourceRef}`).digest("hex").slice(0, 10);
+        await this.adapter.query(
+          `INSERT INTO evidence_records
+             (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (evidence_id) DO NOTHING`,
+          [
+            `ev_${slug(componentId)}_${digest}`,
+            packageId,
+            componentId,
+            versionId,
+            `Generated from source reference: ${sourceRef}`,
+            `Auto-linked during kb-builder persist stage for ${artifact.legacyPath}.`,
+            0.72,
+            now,
+          ],
+        );
+      }
+    }
   }
 
   private async insertReviewTasks(packageId: string, artifacts: CollectedArtifact[], findings: QualityFinding[]): Promise<void> {

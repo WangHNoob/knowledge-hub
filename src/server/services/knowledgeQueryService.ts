@@ -11,6 +11,8 @@ import { createFeedbackService, type FeedbackService } from "./feedbackService";
 import { createReleaseService } from "./releaseService";
 import { createSourceBundleService } from "./sourceBundleService";
 
+const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
+
 export interface KnowledgeQueryContext {
   sessionId?: string;
   agentRole?: string;
@@ -575,7 +577,11 @@ export class KnowledgeQueryService {
       if (confidence !== null && confidence < 0.7) flags.push(`low_quality:${component.componentId}`);
     }
     if (evidenceIds.length === 0) {
-      flags.push(...componentIds.map((id) => `evidence_missing:${id}`));
+      flags.push(
+        ...components
+          .filter((component) => EVIDENCE_REQUIRED_COMPONENT_KINDS.has(component.kind))
+          .map((component) => `evidence_missing:${component.componentId}`),
+      );
     }
     return uniqueSorted(flags);
   }

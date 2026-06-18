@@ -40,7 +40,8 @@ describe("ReleaseService", () => {
       expect(pub1.manifest.okf).toMatchObject({
         bundleUri: expect.stringContaining(`${pub1.releaseId}/okf_bundle`),
         exporterVersion: 1,
-        summary: { blocking: 0 }
+        summary: { blocking: 0 },
+        citationSummary: { required: 1, present: 1 }
       });
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"))).toBe(true);
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"), "utf8")).toContain('type: "system_rule"');
@@ -112,6 +113,21 @@ async function setupReleaseFixture(options: {
       "data/wiki/systems/demo.md",
       JSON.stringify(["gamedocs/demo.md"]),
       JSON.stringify({ confidence: 0.92 }),
+    ],
+  );
+  await db.adapter.query(
+    `INSERT INTO evidence_records
+      (evidence_id, package_id, component_id, source_version_id, quote, note, confidence, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      `ev_${packageId}_page`,
+      packageId,
+      componentId,
+      "srcv_fixture",
+      "Demo source supports the demo page.",
+      "release fixture citation",
+      0.9,
+      new Date().toISOString(),
     ],
   );
 

@@ -732,6 +732,53 @@ code {
   gap: 12px;
 }
 
+.review-flow,
+.agent-flow {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.flow-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.flow-card {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.flow-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-soft);
+}
+
+.flow-card span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.task-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-title-row h3 {
+  margin: 0;
+}
+
 .asset-item,
 .source-row,
 .task,
@@ -1420,6 +1467,26 @@ code {
   max-width: 100%;
   white-space: normal;
   overflow-wrap: anywhere;
+}
+
+.okf-guidance,
+.agent-diagnosis {
+  display: grid;
+  gap: 8px;
+}
+
+.okf-guidance p,
+.diagnosis-item {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.diagnosis-item {
+  display: grid;
+  gap: 4px;
 }
 
 .history-row {

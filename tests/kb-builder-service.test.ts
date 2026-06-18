@@ -82,6 +82,10 @@ describe("KbBuilderPipelineService", () => {
         "graph_view",
         "quality_report"
       ]));
+      expect(detail.evidenceRecords.length).toBeGreaterThan(0);
+      expect(detail.evidenceCoverage.evidenceRecords).toBeGreaterThan(0);
+      expect(detail.evidenceCoverage.coverageRate).toBeGreaterThan(0);
+      expect(detail.evidenceRecords.some((record) => record.quote.includes("gamedocs/battle.md"))).toBe(true);
       expect(aliases).toHaveLength(1);
       expect(aliases[0]).toMatchObject({ canonical: "Combat/Skill", aliases: ["技能表"] });
     } finally {

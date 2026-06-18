@@ -52,6 +52,11 @@ export function AgentFeedback() {
   });
   if (events.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
   if (events.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? audit.error ?? outputAudits.error} />;
+  const eventRows = events.data ?? [];
+  const auditRows = audit.data ?? [];
+  const missCount = eventRows.filter((event) => event.status === "miss").length;
+  const flaggedCount = eventRows.filter((event) => event.qualityFlags.length > 0).length;
+  const latestFlag = eventRows.find((event) => event.qualityFlags.length > 0)?.qualityFlags[0] ?? "";
   const configSnippet = {
     mcpServers: {
       "knowledge-hub": {
@@ -74,6 +79,27 @@ export function AgentFeedback() {
           { id: "attribution", label: "归因审计", count: outputAudits.data?.length }
         ]}
       />
+      <section className="agent-flow">
+        <div className="metrics compact">
+          <Metric label="查询审计" value={auditRows.length} hint="最近 100 条" />
+          <Metric label="未命中" value={missCount} hint="会生成补资产任务" tone={missCount ? "hot" : "ok"} />
+          <Metric label="质量反馈" value={flaggedCount} hint={latestFlag || "clean"} tone={flaggedCount ? "warn" : "ok"} />
+        </div>
+        <div className="flow-cards">
+          <button type="button" className="flow-card" onClick={() => setTab("simulate")}>
+            <strong>1. 模拟消费</strong>
+            <span>选择 MCP 工具并运行查询，生成 hit/miss、trace 和 quality flags。</span>
+          </button>
+          <button type="button" className="flow-card" onClick={() => setTab("feedback")}>
+            <strong>2. 查看回流</strong>
+            <span>miss 或低质量命中会沉淀为反馈记录，并同步进入审核中心。</span>
+          </button>
+          <button type="button" className="flow-card" onClick={() => navigate("review")}>
+            <strong>3. 处理任务</strong>
+            <span>回到审核中心解决 evidence、质量或缺资产问题，再重新发布验证。</span>
+          </button>
+        </div>
+      </section>
       <div className="mcp-console" key={tab}>
         {tab === "connect" && (
           <section className="mcp-panel">
@@ -121,6 +147,21 @@ export function AgentFeedback() {
                   <Metric label="Release" value={envelope.release.version} hint={envelope.release.releaseId} />
                   <Metric label="组件命中" value={envelope.trace.componentIds.length} hint={envelope.trace.componentIds.join(", ") || "none"} />
                   <Metric label="质量 flags" value={envelope.qualityFlags.length} hint={envelope.qualityFlags.join(", ") || "clean"} tone={envelope.qualityFlags.length ? "warn" : "ok"} />
+                </div>
+                <div className="agent-diagnosis">
+                  {diagnosisForEnvelope(envelope).map((item) => (
+                    <div className="diagnosis-item" key={item.title}>
+                      <strong>{item.title}</strong>
+                      <span>{item.body}</span>
+                    </div>
+                  ))}
+                  {envelope.trace.componentIds.length > 0 && (
+                    <div className="asset-link">
+                      {envelope.trace.componentIds.map((componentId) => (
+                        <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <pre>{JSON.stringify(envelope, null, 2)}</pre>
               </div>
@@ -205,4 +246,23 @@ export function AgentFeedback() {
       </div>
     </Page>
   );
+}
+
+function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: string; body: string }> {
+  const items: Array<{ title: string; body: string }> = [];
+  if (envelope.trace.componentIds.length === 0) {
+    items.push({ title: "未命中资产", body: "这会形成 miss 反馈；下一步是在审核中心补候选资产或扩展索引词。" });
+  } else {
+    items.push({ title: "已命中资产", body: "trace 中的组件就是 Agent 实际消费的知识入口，可直接跳到资产详情复核来源。" });
+  }
+  if (envelope.qualityFlags.some((flag) => flag.startsWith("evidence_missing:"))) {
+    items.push({ title: "证据缺失", body: "优先补 evidence records 或重新构建；发布 OKF 的 citations 会随之改善。" });
+  }
+  if (envelope.qualityFlags.some((flag) => flag.startsWith("low_quality:"))) {
+    items.push({ title: "低质量命中", body: "命中内容可信度偏低，会回流为 warning 任务；适合先人工确认再决定发布后修。" });
+  }
+  if (envelope.qualityFlags.length === 0 && envelope.trace.componentIds.length > 0) {
+    items.push({ title: "可用结果", body: "当前命中没有质量 flags，可以作为一次飞轮闭环通过样例。" });
+  }
+  return items;
 }

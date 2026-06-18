@@ -224,13 +224,30 @@ export function Release() {
 function OkfSummary({ release }: { release: ReleaseRecord }) {
   const okf = okfManifest(release);
   if (!okf) return <p className="subtle">当前发布尚未记录 OKF 导出信息。</p>;
+  const missingCitations = Math.max(okf.citationSummary.required - okf.citationSummary.present, 0);
+  const linkHint = okf.linkSummary.resolved === 0 && okf.linkSummary.unresolved === 0
+    ? "暂无正文内交叉链接，不阻断发布"
+    : `${okf.linkSummary.unresolved} unresolved`;
   return (
     <div className="okf-summary">
       <div className="metrics compact">
         <Metric label="OKF Blocking" value={okf.summary.blocking} hint="必须为 0 才能发布" tone={okf.summary.blocking ? "hot" : "ok"} />
         <Metric label="OKF Warning" value={okf.summary.warning} hint="非阻断合规提示" tone={okf.summary.warning ? "warn" : "ok"} />
-        <Metric label="引用" value={`${okf.citationSummary.present}/${okf.citationSummary.required}`} hint="Citations 覆盖" />
-        <Metric label="链接" value={okf.linkSummary.resolved} hint={`${okf.linkSummary.unresolved} unresolved`} tone={okf.linkSummary.unresolved ? "warn" : "ok"} />
+        <Metric label="引用" value={`${okf.citationSummary.present}/${okf.citationSummary.required}`} hint={missingCitations ? `缺 ${missingCitations} 个引用` : "Citations 已覆盖"} tone={missingCitations ? "warn" : "ok"} />
+        <Metric label="链接" value={okf.linkSummary.resolved} hint={linkHint} tone={okf.linkSummary.unresolved ? "warn" : "ok"} />
+      </div>
+      <div className="okf-guidance">
+        {missingCitations > 0 ? (
+          <p><strong>引用缺口：</strong>重新构建会为 wiki 页自动生成基础 evidence；剩余缺口通常来自需要人工补来源的规则页。</p>
+        ) : (
+          <p><strong>引用状态：</strong>当前导出的规则类页面已经带有 Citations，Agent 后续消费可以追溯到 source version。</p>
+        )}
+        {okf.summary.warning > 0 && (
+          <p><strong>Warning 处理：</strong>warning 不阻断试发布，优先看缺引用、断链和 Obsidian 链接；确认是表目录或非规范页时可作为发布后优化项。</p>
+        )}
+        {okf.linkSummary.resolved === 0 && okf.linkSummary.unresolved === 0 && (
+          <p><strong>链接说明：</strong>OKF 只统计正文里的标准 markdown 绝对链接，发布索引不计入链接数；0 不代表 Agent 无法检索。</p>
+        )}
       </div>
       <div className="okf-paths">
         <code>{okf.bundleUri}</code>
