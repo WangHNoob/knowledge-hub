@@ -76,7 +76,7 @@ export function Release() {
           { id: "current", label: "当前与历史", count: releases.data?.length }
         ]}
       />
-      <div className="release-workbench" key={tab}>
+      <div className={`release-workbench ${tab}`} key={tab}>
         {tab === "compose" && (
           <>
             <section className="release-panel">
