@@ -36,15 +36,19 @@ describe("ReleaseService", () => {
       expect(pub1.status).toBe("published");
       expect(pub1.manifestHash).toMatch(/^sha256:/u);
       expect(pub1.manifest.packageIds).toEqual(["pkg_first"]);
-      expect(pub1.manifest.componentIds).toEqual(["cmp_pkg_first_page"]);
+      expect(pub1.manifest.componentIds).toEqual(["cmp_pkg_first_graph", "cmp_pkg_first_page", "cmp_pkg_first_table_schema"]);
       expect(pub1.manifest.okf).toMatchObject({
         bundleUri: expect.stringContaining(`${pub1.releaseId}/okf_bundle`),
+        graphUri: "graph/graph.json",
+        tableSchemasUri: "tables/schemas.json",
         exporterVersion: 1,
         summary: { blocking: 0 },
         citationSummary: { required: 1, present: 1 }
       });
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"))).toBe(true);
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"), "utf8")).toContain('type: "system_rule"');
+      expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "graph", "graph.json"), "utf8")).nodes[0].label).toBe("Demo Page");
+      expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "tables", "schemas.json"), "utf8")).tables[0].schema.table_name).toBe("Demo/Table");
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_report.json"))).toBe(true);
       expect(pub1.publishedAt).toBeTruthy();
 
@@ -94,10 +98,27 @@ async function setupReleaseFixture(options: {
   (handle as TestDbHandle & { __okfDataDir?: string }).__okfDataDir = dataDir;
   const packageId = options.packageId ?? "pkg_demo";
   const componentId = `cmp_${packageId}_page`;
+  const graphComponentId = `cmp_${packageId}_graph`;
+  const tableSchemaComponentId = `cmp_${packageId}_table_schema`;
   const runId = `run_fixture_${packageId}`;
   const artifactPath = join(dataDir, "kb-build-runs", runId, "data", "wiki", "systems", "demo.md");
+  const graphPath = join(dataDir, "kb-build-runs", runId, "data", "wiki", "graph.json");
+  const tableSchemaPath = join(dataDir, "kb-build-runs", runId, "data", "table_schemas", "Demo__Table.json");
   mkdirSync(dirname(artifactPath), { recursive: true });
+  mkdirSync(dirname(graphPath), { recursive: true });
+  mkdirSync(dirname(tableSchemaPath), { recursive: true });
   writeFileSync(artifactPath, "# Demo Page\n\nDemo release content.\n", "utf8");
+  writeFileSync(graphPath, JSON.stringify({
+    nodes: [{ id: "Demo Page", label: "Demo Page", type: "system" }],
+    edges: []
+  }, null, 2), "utf8");
+  writeFileSync(tableSchemaPath, JSON.stringify({
+    table_name: "Demo/Table",
+    rel_path: "gamedata/Demo/Table.csv",
+    fields: ["Id", "Name"],
+    row_count: 0,
+    sheets: ["Table"]
+  }, null, 2), "utf8");
 
   await db.adapter.query(
     `INSERT INTO asset_packages
@@ -116,24 +137,31 @@ async function setupReleaseFixture(options: {
       new Date().toISOString(),
     ],
   );
-  await db.adapter.query(
-    `INSERT INTO asset_components
-      (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [
-      componentId,
-      packageId,
-      "wiki/systems/demo.md",
-      "wiki",
-      "wiki_page",
-      "Demo Page",
-      "draft",
-      "wiki/systems/demo.md",
-      "data/wiki/systems/demo.md",
-      JSON.stringify(["gamedocs/demo.md"]),
-      JSON.stringify({ confidence: 0.92 }),
-    ],
-  );
+  const components = [
+    [componentId, "wiki/systems/demo.md", "wiki", "wiki_page", "Demo Page", "data/wiki/systems/demo.md", ["gamedocs/demo.md"], { confidence: 0.92 }],
+    [graphComponentId, "wiki/graph.json", "graph", "graph_snapshot", "Graph", "data/wiki/graph.json", [], { confidence: 0.92 }],
+    [tableSchemaComponentId, "table_schemas/Demo__Table.json", "table", "table_schema_json", "Demo/Table", "data/table_schemas/Demo__Table.json", [], { confidence: 0.92 }],
+  ] as const;
+  for (const [id, artifactId, group, kind, title, storageUri, sourceRefs, quality] of components) {
+    await db.adapter.query(
+      `INSERT INTO asset_components
+        (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        id,
+        packageId,
+        artifactId,
+        group,
+        kind,
+        title,
+        "draft",
+        artifactId,
+        storageUri,
+        JSON.stringify(sourceRefs),
+        JSON.stringify(quality),
+      ],
+    );
+  }
   if (options.withEvidence ?? true) {
     await db.adapter.query(
       `INSERT INTO evidence_records

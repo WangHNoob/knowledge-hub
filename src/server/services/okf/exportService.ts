@@ -13,6 +13,8 @@ export interface OkfExportManifest {
   bundleUri: string;
   reportUri: string;
   reportMarkdownUri: string;
+  graphUri?: string;
+  tableSchemasUri?: string;
   exporterVersion: number;
   okfVersion: "0.1";
   bundleHash: string;
@@ -54,6 +56,9 @@ export class OkfExportService {
     const exportedPaths: string[] = [];
     const packageById = new Map(input.packages.map((pkg) => [pkg.packageId, pkg] as const));
     const evidenceByComponent = await this.evidenceByComponent(input.components.map((component) => component.componentId));
+    const graphUri = exportGraphAsset(this.dataDir, bundleDir, input.components, packageById);
+    const tableSchemasUri = exportTableSchemasAsset(this.dataDir, bundleDir, input.components, packageById, input.release, input.packages);
+    exportedPaths.push(...[graphUri, tableSchemasUri].filter((uri): uri is string => Boolean(uri)));
 
     for (const component of input.components) {
       if (!EXPORTABLE_MARKDOWN_KINDS.has(component.kind)) continue;
@@ -95,6 +100,8 @@ export class OkfExportService {
         bundleUri: posix.join("releases", input.release.releaseId, "okf_bundle"),
         reportUri,
         reportMarkdownUri,
+        graphUri,
+        tableSchemasUri,
         exporterVersion: OKF_EXPORTER_VERSION,
         okfVersion: report.okfVersion,
         bundleHash: hashExportedBundle(bundleDir, exportedPaths),
@@ -138,6 +145,14 @@ interface EvidenceRow {
   confidence: number;
 }
 
+interface TableSchemaJson {
+  table_name?: string;
+  rel_path?: string;
+  fields?: string[];
+  row_count?: number;
+  sheets?: string[];
+}
+
 function okfPathForComponent(component: AssetComponent): string | null {
   const candidate = (component.artifactId || component.legacyPath).replace(/\\/g, "/");
   if (!candidate.endsWith(".md")) return null;
@@ -178,6 +193,75 @@ function resolveComponentFile(dataDir: string, component: AssetComponent, pkg?: 
   });
   if (!contained) throw new Error(`Refusing to export file outside allowed roots: ${component.componentId}`);
   return resolved;
+}
+
+function exportGraphAsset(dataDir: string, bundleDir: string, components: AssetComponent[], packageById: Map<string, AssetPackage>): string | undefined {
+  const component = components.find((item) => item.kind === "graph_snapshot");
+  if (!component) return undefined;
+  const graph = JSON.parse(readFileSync(resolveComponentFile(dataDir, component, packageById.get(component.packageId)), "utf8")) as Record<string, unknown>;
+  const uri = "graph/graph.json";
+  writeJsonAsset(bundleDir, uri, {
+    okfAssetType: "knowledge_graph",
+    componentId: component.componentId,
+    packageId: component.packageId,
+    artifactId: component.artifactId,
+    nodes: Array.isArray(graph.nodes) ? graph.nodes : [],
+    edges: Array.isArray(graph.edges) ? graph.edges : [],
+  });
+  return uri;
+}
+
+function exportTableSchemasAsset(dataDir: string, bundleDir: string, components: AssetComponent[], packageById: Map<string, AssetPackage>, release: ReleaseRecord, packages: AssetPackage[]): string | undefined {
+  const schemaComponents = components.filter((item) => item.kind === "table_schema_json");
+  const registryComponents = components.filter((item) => item.kind === "table_registry");
+  const tables = schemaComponents.flatMap((component) => {
+    const schema = JSON.parse(readFileSync(resolveComponentFile(dataDir, component, packageById.get(component.packageId)), "utf8")) as TableSchemaJson;
+    return normalizeTableSchemas(schema, component, packages);
+  });
+  if (tables.length === 0) {
+    for (const component of registryComponents) {
+      const registry = JSON.parse(readFileSync(resolveComponentFile(dataDir, component, packageById.get(component.packageId)), "utf8")) as Record<string, TableSchemaJson>;
+      for (const [tableName, schema] of Object.entries(registry)) {
+        tables.push(...normalizeTableSchemas({ table_name: tableName, ...schema }, component, packages));
+      }
+    }
+  }
+  if (tables.length === 0) return undefined;
+  const uri = "tables/schemas.json";
+  writeJsonAsset(bundleDir, uri, {
+    okfAssetType: "table_schema_manifest",
+    releaseId: release.releaseId,
+    sourceVersionIds: packageSourceVersionIds(packages),
+    tables: tables.sort((a, b) => a.schema.table_name.localeCompare(b.schema.table_name)),
+  });
+  return uri;
+}
+
+function normalizeTableSchemas(schema: TableSchemaJson, component: AssetComponent, packages: AssetPackage[]) {
+  if (!schema.table_name || !schema.rel_path) return [];
+  return [{
+    componentId: component.componentId,
+    packageId: component.packageId,
+    artifactId: component.artifactId,
+    sourceVersionIds: packageSourceVersionIds(packages),
+    schema: {
+      table_name: schema.table_name,
+      rel_path: schema.rel_path,
+      fields: Array.isArray(schema.fields) ? schema.fields : [],
+      row_count: Number(schema.row_count ?? 0),
+      sheets: Array.isArray(schema.sheets) ? schema.sheets : undefined,
+    },
+  }];
+}
+
+function writeJsonAsset(bundleDir: string, uri: string, value: unknown): void {
+  const target = join(bundleDir, ...uri.split(posix.sep));
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function packageSourceVersionIds(packages: AssetPackage[]): string[] {
+  return unique(packages.flatMap((pkg) => pkg.sourceVersionIds)).sort();
 }
 
 function stripFrontmatter(markdown: string): string {

@@ -88,6 +88,110 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("serves wiki knowledge from the published OKF bundle instead of internal component files", async () => {
+    const fixture = await setupPublishedKnowledgeFixture({ withEvidence: false });
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    const okfPagePath = join(fixture.dataDir, "releases", fixture.releaseId, "okf_bundle", "systems", "battle.md");
+    writeFileSync(okfPagePath, [
+      "---",
+      'type: "knowledge_note"',
+      'title: "Battle System"',
+      'artifactId: "wiki/systems/battle.md"',
+      'tags: ["wiki_page"]',
+      "kh:",
+      `  componentId: "${fixture.pageComponentId}"`,
+      '  packageId: "pkg_query_fixture"',
+      '  artifactId: "wiki/systems/battle.md"',
+      "---",
+      "# Battle System",
+      "",
+      "OKF-only rage meter is consumed by agents.",
+      "",
+      "## Data Dependencies",
+      "Uses Combat/Skill.",
+      "",
+      "# Citations",
+      "",
+      "1. OKF citation quote (okf_manual_evidence; source src_okf; confidence 0.93)",
+      ""
+    ].join("\n"), "utf8");
+
+    try {
+      const search = await service.runTool("kb_search", { query: "OKF-only rage" }, { sessionId: "test", agentRole: "planner" });
+      expect(search.result.items[0].okfPath).toBe("/systems/battle.md");
+      expect(search.trace.componentIds).toContain(fixture.pageComponentId);
+      expect(search.trace.evidenceIds).toContain("okf_manual_evidence");
+      expect(search.qualityFlags).not.toContain(`evidence_missing:${fixture.pageComponentId}`);
+
+      const page = await service.runTool("kb_get_page", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(page.result.markdown).toContain("OKF-only rage meter");
+      expect(page.result.markdown).not.toContain("Stamina controls skill usage.");
+
+      const evidence = await service.runTool("kb_get_evidence", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(evidence.result.source).toBe("okf_bundle");
+      expect(evidence.trace.evidenceIds).toContain("okf_manual_evidence");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("serves graph and table contracts from the published OKF bundle", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    const okfRoot = join(fixture.dataDir, "releases", fixture.releaseId, "okf_bundle");
+    writeFileSync(join(okfRoot, "graph", "graph.json"), JSON.stringify({
+      okfAssetType: "knowledge_graph",
+      componentId: fixture.graphComponentId,
+      packageId: "pkg_query_fixture",
+      artifactId: "wiki/graph.json",
+      nodes: [
+        { id: "OKF Battle", label: "OKF Battle", type: "system" },
+        { id: "table:Combat/SkillFromOKF", label: "Combat/SkillFromOKF", type: "table" }
+      ],
+      edges: [
+        { source: "OKF Battle", target: "table:Combat/SkillFromOKF", relation: "configured_in", edge_kind: "semantic" }
+      ]
+    }, null, 2), "utf8");
+    writeFileSync(join(okfRoot, "tables", "schemas.json"), JSON.stringify({
+      okfAssetType: "table_schema_manifest",
+      releaseId: fixture.releaseId,
+      sourceVersionIds: [fixture.sourceVersionId],
+      tables: [{
+        componentId: fixture.tableSchemaComponentId,
+        packageId: "pkg_query_fixture",
+        artifactId: "table_schemas/Combat__Skill.json",
+        sourceVersionIds: [fixture.sourceVersionId],
+        schema: {
+          table_name: "Combat/SkillFromOKF",
+          rel_path: "gamedata/Combat/Skill.csv",
+          fields: ["Id", "Name", "StaminaCost"],
+          row_count: 1,
+          sheets: ["Skill"]
+        }
+      }]
+    }, null, 2), "utf8");
+
+    try {
+      const entity = await service.runTool("kb_get_entity", { entityId: "OKF Battle" }, { sessionId: "test", agentRole: "planner" });
+      expect(entity.result.node.label).toBe("OKF Battle");
+      expect(entity.trace.componentIds).toContain(fixture.graphComponentId);
+
+      const relations = await service.runTool("kb_get_relations", { source: "OKF Battle" }, { sessionId: "test", agentRole: "planner" });
+      expect(relations.result.edges[0].target).toBe("table:Combat/SkillFromOKF");
+
+      const schema = await service.runTool("kb_get_table_schema", { table: "Combat/SkillFromOKF" }, { sessionId: "test", agentRole: "planner" });
+      expect(schema.result.schema.rel_path).toBe("gamedata/Combat/Skill.csv");
+      expect(schema.trace.componentIds).toContain(fixture.tableSchemaComponentId);
+
+      const rows = await service.runTool("kb_query_table", { table: "Combat/SkillFromOKF", where: { Name: "Slash" } }, { sessionId: "test", agentRole: "planner" });
+      expect(rows.result.rows).toEqual([{ Id: 1, Name: "Slash", StaminaCost: 10 }]);
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it("turns misses and low-quality hits into feedback events and review tasks", async () => {
     const fixture = await setupPublishedKnowledgeFixture({ lowQuality: true, withEvidence: false });
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
@@ -119,7 +223,7 @@ describe("KnowledgeQueryService", () => {
   }, 15000);
 });
 
-async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; cleanup: () => Promise<void> }> {
+async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; graphComponentId: string; tableSchemaComponentId: string; sourceVersionId: string; cleanup: () => Promise<void> }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kh-query-"));
   const handle = await createTestDb();
   const db = handle.db;
@@ -239,5 +343,14 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
   const releaseService = createReleaseService(db, dataDir);
   const draft = await releaseService.createDraft({ version: "query.1", packageIds: [packageId], requestedBy: "admin" });
   const published = await releaseService.publish(draft.releaseId, "admin");
-  return { db, dataDir, releaseId: published.releaseId, pageComponentId, cleanup: handle.cleanup };
+  return {
+    db,
+    dataDir,
+    releaseId: published.releaseId,
+    pageComponentId,
+    graphComponentId,
+    tableSchemaComponentId,
+    sourceVersionId: imported.version.versionId,
+    cleanup: handle.cleanup
+  };
 }

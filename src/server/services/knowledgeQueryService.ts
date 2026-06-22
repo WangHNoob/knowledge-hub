@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 
 import { nanoid } from "nanoid";
@@ -54,6 +54,49 @@ interface TableSchema {
   sheets?: string[];
 }
 
+interface KnowledgeAssetRef {
+  componentId: string;
+  artifactId: string;
+  title?: string;
+}
+
+interface OkfGraphAsset {
+  componentId: string;
+  artifactId: string;
+  nodes?: GraphNode[];
+  edges?: GraphEdge[];
+}
+
+interface OkfTableSchemaEntry {
+  componentId: string;
+  artifactId: string;
+  sourceVersionIds?: string[];
+  schema: TableSchema;
+}
+
+interface OkfPage {
+  okfPath: string;
+  markdown: string;
+  body: string;
+  title: string;
+  type: string;
+  componentId: string;
+  packageId: string;
+  artifactId: string;
+  kind: string;
+  citations: OkfCitation[];
+}
+
+interface OkfCitation {
+  evidenceId: string;
+  componentId: string;
+  sourceVersionId: string;
+  quote: string;
+  note: string;
+  confidence: number | null;
+  okfPath: string;
+}
+
 export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
   return new KnowledgeQueryService(db, dataDir, diagnostics);
 }
@@ -94,9 +137,13 @@ export class KnowledgeQueryService {
     try {
       const toolResult = await this.executeTool(release, toolName, payload);
       hitComponentIds = uniqueSorted(toolResult.componentIds);
-      const evidenceRecords = await this.evidenceRecordsForComponents(hitComponentIds);
-      const evidenceIds = toolResult.evidenceIds ?? evidenceRecords.map((record) => String(record.evidence_id));
-      qualityFlags = await this.qualityFlagsForComponents(hitComponentIds, evidenceRecords);
+      const okfEvidenceRecords = this.okfEvidenceRecordsForComponents(release, hitComponentIds);
+      const dbEvidenceRecords = await this.evidenceRecordsForComponents(hitComponentIds);
+      const evidenceIds = toolResult.evidenceIds ?? uniqueSorted([
+        ...okfEvidenceRecords.map((record) => record.evidenceId),
+        ...dbEvidenceRecords.map((record) => String(record.evidence_id)),
+      ]);
+      qualityFlags = await this.qualityFlagsForComponents(hitComponentIds, dbEvidenceRecords, new Set(okfEvidenceRecords.map((record) => record.componentId)));
       status = toolResult.forceHit || hitComponentIds.length > 0 ? "hit" : "miss";
 
       const envelope: KnowledgeEnvelope<any> = {
@@ -192,27 +239,29 @@ export class KnowledgeQueryService {
 
   private async kbSearch(release: ReleaseRecord, query: string): Promise<ToolResult> {
     const needle = query.toLowerCase();
-    const pages = await this.releaseComponents(release, ["wiki_page", "table_wiki_page", "topic_index"]);
+    const pages = this.readOkfPages(release);
     const items = [];
-    for (const component of pages) {
-      const markdown = await this.readComponentText(component);
-      const haystack = `${component.title}\n${component.artifactId}\n${markdown}`.toLowerCase();
+    for (const page of pages) {
+      const haystack = `${page.title}\n${page.okfPath}\n${page.artifactId}\n${page.markdown}`.toLowerCase();
       if (!needle || !haystack.includes(needle.split(/\s+/u)[0])) continue;
       const score = scoreText(haystack, needle);
       if (score <= 0) continue;
       items.push({
-        componentId: component.componentId,
-        title: component.title,
-        artifactId: component.artifactId,
-        kind: component.kind,
-        snippet: snippet(markdown, needle),
+        componentId: page.componentId,
+        title: page.title,
+        artifactId: page.artifactId,
+        okfPath: page.okfPath,
+        kind: page.kind,
+        type: page.type,
+        snippet: snippet(page.body, needle),
         score,
       });
     }
     items.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
     return {
       result: { query, items: items.slice(0, 10) },
-      componentIds: items.slice(0, 10).filter((item) => item.kind !== "topic_index").map((item) => item.componentId),
+      componentIds: items.slice(0, 10).map((item) => item.componentId),
+      artifactIds: items.slice(0, 10).map((item) => item.artifactId),
     };
   }
 
@@ -223,13 +272,21 @@ export class KnowledgeQueryService {
   }
 
   private async kbGetPage(release: ReleaseRecord, page: string): Promise<ToolResult> {
-    const component = await this.findPageComponent(release, page);
-    if (!component) return { result: { page, found: false }, componentIds: [] };
-    const markdown = await this.readComponentText(component);
+    const okfPage = this.findOkfPage(release, page);
+    if (!okfPage) return { result: { page, found: false }, componentIds: [] };
     return {
-      result: { page, found: true, componentId: component.componentId, title: component.title, artifactId: component.artifactId, markdown },
-      componentIds: [component.componentId],
-      artifactIds: [component.artifactId],
+      result: {
+        page,
+        found: true,
+        componentId: okfPage.componentId,
+        title: okfPage.title,
+        artifactId: okfPage.artifactId,
+        okfPath: okfPage.okfPath,
+        type: okfPage.type,
+        markdown: okfPage.markdown,
+      },
+      componentIds: [okfPage.componentId],
+      artifactIds: [okfPage.artifactId],
     };
   }
 
@@ -246,17 +303,20 @@ export class KnowledgeQueryService {
   }
 
   private async kbListPages(release: ReleaseRecord): Promise<ToolResult> {
-    const pages = await this.releaseComponents(release, ["wiki_page", "table_wiki_page", "topic_index"]);
+    const pages = this.readOkfPages(release);
     return {
       result: {
-        pages: pages.map((component) => ({
-          componentId: component.componentId,
-          title: component.title,
-          artifactId: component.artifactId,
-          kind: component.kind,
+        pages: pages.map((page) => ({
+          componentId: page.componentId,
+          title: page.title,
+          artifactId: page.artifactId,
+          okfPath: page.okfPath,
+          kind: page.kind,
+          type: page.type,
         })),
       },
-      componentIds: pages.map((component) => component.componentId),
+      componentIds: pages.map((page) => page.componentId),
+      artifactIds: pages.map((page) => page.artifactId),
     };
   }
 
@@ -353,7 +413,7 @@ export class KnowledgeQueryService {
   private async kbQueryTable(release: ReleaseRecord, table: string, limit: number, where: Record<string, unknown>): Promise<ToolResult> {
     const found = await this.findTableSchema(release, table);
     if (!found) return { result: { found: false, table, rows: [] }, componentIds: [] };
-    const rows = await this.readTableRows(release, found.schema);
+    const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
     const filtered = rows.filter((row) => Object.entries(where).every(([key, value]) => String(row[key] ?? "") === String(value)));
     return {
       result: { found: true, table: found.schema.table_name, rows: filtered.slice(0, Math.max(1, Math.min(limit || 20, 200))), totalRows: filtered.length },
@@ -366,7 +426,7 @@ export class KnowledgeQueryService {
   private async kbValidateTable(release: ReleaseRecord, table: string): Promise<ToolResult> {
     const found = await this.findTableSchema(release, table);
     if (!found) return { result: { valid: false, table, errors: ["table schema not found"] }, componentIds: [] };
-    const rows = await this.readTableRows(release, found.schema);
+    const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
     const missingFields = found.schema.fields.filter((field) => rows.some((row) => !(field in row)));
     return {
       result: { valid: missingFields.length === 0, table: found.schema.table_name, rowCount: rows.length, missingFields },
@@ -378,7 +438,7 @@ export class KnowledgeQueryService {
   private async kbCheckTableValue(release: ReleaseRecord, table: string, field: string, value: unknown): Promise<ToolResult> {
     const found = await this.findTableSchema(release, table);
     if (!found) return { result: { found: false, table, matches: [] }, componentIds: [] };
-    const rows = await this.readTableRows(release, found.schema);
+    const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
     const matches = rows.filter((row) => String(row[field] ?? "") === String(value));
     return {
       result: { found: true, table: found.schema.table_name, field, value, matches },
@@ -408,22 +468,46 @@ export class KnowledgeQueryService {
   private async kbGetEvidence(release: ReleaseRecord, componentId?: string, page?: string, query?: string): Promise<ToolResult> {
     const component = componentId
       ? (await this.releaseComponents(release)).find((item) => item.componentId === componentId)
-      : page ? await this.findPageComponent(release, page) : null;
+      : null;
+    const okfPage = !component && page ? this.findOkfPage(release, page) : null;
     const componentIds = component
       ? [component.componentId]
-      : query ? (await this.kbSearch(release, query)).componentIds : [];
-    const records = componentIds.length ? await this.evidenceRecordsForComponents(componentIds) : [];
-    return { result: { componentIds, records }, componentIds, evidenceIds: records.map((record) => String(record.evidence_id)) };
+      : okfPage ? [okfPage.componentId]
+        : query ? (await this.kbSearch(release, query)).componentIds : [];
+    const okfRecords = this.okfEvidenceRecordsForComponents(release, componentIds);
+    const dbRecords = componentIds.length ? await this.evidenceRecordsForComponents(componentIds) : [];
+    const records = okfRecords.length ? okfRecords : dbRecords;
+    return {
+      result: { componentIds, records, source: okfRecords.length ? "okf_bundle" : "database" },
+      componentIds,
+      evidenceIds: records.map((record) => String("evidenceId" in record ? record.evidenceId : record.evidence_id)),
+    };
   }
 
-  private async graph(release: ReleaseRecord): Promise<{ component: AssetComponent; nodes: GraphNode[]; edges: GraphEdge[] }> {
+  private async graph(release: ReleaseRecord): Promise<{ component: KnowledgeAssetRef; nodes: GraphNode[]; edges: GraphEdge[] }> {
+    const okfGraph = this.readOkfGraph(release);
+    if (okfGraph) {
+      return {
+        component: { componentId: okfGraph.componentId, artifactId: okfGraph.artifactId },
+        nodes: okfGraph.nodes ?? [],
+        edges: okfGraph.edges ?? [],
+      };
+    }
     const component = (await this.releaseComponents(release, ["graph_snapshot"]))[0];
     if (!component) throw new Error("Current release does not contain a graph_snapshot component.");
     const graph = JSON.parse(await this.readComponentText(component)) as { nodes?: GraphNode[]; edges?: GraphEdge[] };
     return { component, nodes: graph.nodes ?? [], edges: graph.edges ?? [] };
   }
 
-  private async tableSchemas(release: ReleaseRecord): Promise<Array<{ component: AssetComponent; schema: TableSchema }>> {
+  private async tableSchemas(release: ReleaseRecord): Promise<Array<{ component: KnowledgeAssetRef; schema: TableSchema; sourceVersionIds?: string[] }>> {
+    const okfSchemas = this.readOkfTableSchemas(release);
+    if (okfSchemas.length > 0) {
+      return okfSchemas.map((entry) => ({
+        component: { componentId: entry.componentId, artifactId: entry.artifactId },
+        schema: entry.schema,
+        sourceVersionIds: entry.sourceVersionIds,
+      }));
+    }
     const components = await this.releaseComponents(release, ["table_schema_json"]);
     const schemas = [];
     for (const component of components) {
@@ -432,15 +516,82 @@ export class KnowledgeQueryService {
     return schemas;
   }
 
-  private async findTableSchema(release: ReleaseRecord, table: string): Promise<{ component: AssetComponent; schema: TableSchema } | null> {
+  private readOkfPages(release: ReleaseRecord): OkfPage[] {
+    const bundleDir = this.okfBundleDir(release);
+    return walkMarkdown(bundleDir)
+      .map((absolute) => {
+        const rel = relative(bundleDir, absolute).replace(/\\/g, "/");
+        if (rel === "index.md" || rel === "log.md") return null;
+        return parseOkfPage(`/${rel}`, readFileSync(absolute, "utf8"));
+      })
+      .filter((page): page is OkfPage => Boolean(page?.componentId));
+  }
+
+  private findOkfPage(release: ReleaseRecord, page: string): OkfPage | null {
+    const normalized = normalize(page);
+    return this.readOkfPages(release).find((item) =>
+      normalize(item.componentId) === normalized ||
+      normalize(item.title) === normalized ||
+      normalize(item.artifactId) === normalized ||
+      normalize(item.artifactId.replace(/^wiki\//u, "")) === normalized ||
+      normalize(item.okfPath) === normalized ||
+      normalize(item.okfPath.replace(/^\//u, "")) === normalized
+    ) ?? null;
+  }
+
+  private okfEvidenceRecordsForComponents(release: ReleaseRecord, componentIds: string[]): OkfCitation[] {
+    if (componentIds.length === 0) return [];
+    const wanted = new Set(componentIds);
+    return this.readOkfPages(release).flatMap((page) => wanted.has(page.componentId) ? page.citations : []);
+  }
+
+  private readOkfGraph(release: ReleaseRecord): OkfGraphAsset | null {
+    return this.readOkfJsonAsset<OkfGraphAsset>(release, "graphUri", "graph/graph.json");
+  }
+
+  private readOkfTableSchemas(release: ReleaseRecord): OkfTableSchemaEntry[] {
+    const manifest = this.readOkfJsonAsset<{ tables?: OkfTableSchemaEntry[] }>(release, "tableSchemasUri", "tables/schemas.json");
+    return Array.isArray(manifest?.tables) ? manifest.tables.filter((entry) => Boolean(entry.componentId && entry.schema?.table_name)) : [];
+  }
+
+  private readOkfJsonAsset<T>(release: ReleaseRecord, manifestKey: string, fallbackUri: string): T | null {
+    const okf = objectArg((release.manifest as Record<string, unknown>).okf);
+    const uri = typeof okf[manifestKey] === "string" && String(okf[manifestKey]).trim() ? String(okf[manifestKey]) : fallbackUri;
+    const full = this.okfBundleFile(release, uri);
+    if (!existsSync(full)) return null;
+    return JSON.parse(readFileSync(full, "utf8")) as T;
+  }
+
+  private okfBundleDir(release: ReleaseRecord): string {
+    const okf = objectArg((release.manifest as Record<string, unknown>).okf);
+    const bundleUri = typeof okf.bundleUri === "string" && okf.bundleUri.trim() ? okf.bundleUri : `releases/${release.releaseId}/okf_bundle`;
+    const bundleDir = isAbsolute(bundleUri) ? bundleUri : join(this.dataDir, ...bundleUri.split(/[\\/]/u));
+    const contained = (() => {
+      const rel = relative(this.dataDir, bundleDir);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    })();
+    if (!contained) throw new Error(`Refusing to read OKF bundle outside data dir: ${bundleUri}`);
+    if (!existsSync(bundleDir)) throw new Error(`Current release OKF bundle not found: ${bundleUri}`);
+    return bundleDir;
+  }
+
+  private okfBundleFile(release: ReleaseRecord, uri: string): string {
+    const bundleDir = this.okfBundleDir(release);
+    const full = join(bundleDir, ...uri.replace(/^\/+/u, "").split(/[\\/]/u));
+    const rel = relative(bundleDir, full);
+    if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`Refusing to read OKF asset outside bundle: ${uri}`);
+    return full;
+  }
+
+  private async findTableSchema(release: ReleaseRecord, table: string): Promise<{ component: KnowledgeAssetRef; schema: TableSchema; sourceVersionIds?: string[] } | null> {
     const schemas = await this.tableSchemas(release);
     return schemas.find(({ schema, component }) =>
       same(schema.table_name, table) || same(component.title, table) || same(component.artifactId, table)
     ) ?? null;
   }
 
-  private async readTableRows(release: ReleaseRecord, schema: TableSchema): Promise<Array<Record<string, unknown>>> {
-    for (const versionId of releaseSourceVersionIds(release)) {
+  private async readTableRows(release: ReleaseRecord, schema: TableSchema, sourceVersionIds?: string[]): Promise<Array<Record<string, unknown>>> {
+    for (const versionId of (sourceVersionIds?.length ? sourceVersionIds : releaseSourceVersionIds(release))) {
       const file = await this.sourceService.readFile(versionId, schema.rel_path);
       if (!file) continue;
       const workbook = xlsx.read(file.content, { type: "buffer" });
@@ -567,7 +718,7 @@ export class KnowledgeQueryService {
     return rows.map((row) => String(row.artifact_id));
   }
 
-  private async qualityFlagsForComponents(componentIds: string[], evidenceRecords: Record<string, unknown>[]): Promise<string[]> {
+  private async qualityFlagsForComponents(componentIds: string[], evidenceRecords: Record<string, unknown>[], okfEvidenceComponentIds = new Set<string>()): Promise<string[]> {
     if (componentIds.length === 0) return [];
     const components = await this.componentsByIds(componentIds);
     const componentsWithEvidence = new Set(evidenceRecords.map((record) => String(record.component_id)));
@@ -575,7 +726,7 @@ export class KnowledgeQueryService {
     for (const component of components) {
       const confidence = numberFromQuality(component.quality, ["confidence", "score", "overallScore"]);
       if (confidence !== null && confidence < 0.7) flags.push(`low_quality:${component.componentId}`);
-      if (EVIDENCE_REQUIRED_COMPONENT_KINDS.has(component.kind) && !componentsWithEvidence.has(component.componentId)) {
+      if (EVIDENCE_REQUIRED_COMPONENT_KINDS.has(component.kind) && !componentsWithEvidence.has(component.componentId) && !okfEvidenceComponentIds.has(component.componentId)) {
         flags.push(`evidence_missing:${component.componentId}`);
       }
     }
@@ -667,6 +818,86 @@ function normalize(value: string): string {
 
 function same(a: string | undefined, b: string | undefined): boolean {
   return normalize(a ?? "") === normalize(b ?? "");
+}
+
+function walkMarkdown(root: string): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) out.push(...walkMarkdown(full));
+    else if (entry.isFile() && entry.name.endsWith(".md")) out.push(full);
+  }
+  return out.sort();
+}
+
+function parseOkfPage(okfPath: string, markdown: string): OkfPage | null {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/u.exec(markdown);
+  if (!match) return null;
+  const frontmatter = match[1];
+  const body = match[2];
+  const componentId = yamlScalar(frontmatter, "componentId");
+  const artifactId = yamlScalar(frontmatter, "artifactId") || okfPath.replace(/^\//u, "");
+  return {
+    okfPath,
+    markdown,
+    body,
+    title: yamlScalar(frontmatter, "title") || okfPath.split("/").pop()?.replace(/\.md$/u, "") || okfPath,
+    type: yamlScalar(frontmatter, "type") || "knowledge_note",
+    componentId,
+    packageId: yamlScalar(frontmatter, "packageId"),
+    artifactId,
+    kind: okfKind(frontmatter, artifactId),
+    citations: parseOkfCitations(body, componentId, okfPath),
+  };
+}
+
+function parseOkfCitations(body: string, componentId: string, okfPath: string): OkfCitation[] {
+  const lines = body.split(/\r?\n/u);
+  const headingIndex = lines.findIndex((line) => /^#\s+(Citations|引用|证据)\s*$/iu.test(line.trim()));
+  if (headingIndex < 0) return [];
+  const out: OkfCitation[] = [];
+  for (const line of lines.slice(headingIndex + 1)) {
+    if (/^#\s+\S/u.test(line)) break;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const match = /^\d+\.\s+(.+?)(?:\s+\((.+)\))?$/u.exec(trimmed);
+    if (!match) continue;
+    const meta = match[2] ?? "";
+    const idMatch = /(^|;\s*)([^;()\s]+)(?=;|$)/u.exec(meta);
+    const sourceMatch = /source\s+([^;()\s]+)/iu.exec(meta);
+    const confidenceMatch = /confidence\s+([0-9.]+)/iu.exec(meta);
+    out.push({
+      evidenceId: idMatch?.[2] ?? `okf:${componentId}:${out.length + 1}`,
+      componentId,
+      sourceVersionId: sourceMatch?.[1] ?? "",
+      quote: match[1].trim(),
+      note: "OKF citation",
+      confidence: confidenceMatch ? Number(confidenceMatch[1]) : null,
+      okfPath,
+    });
+  }
+  return out;
+}
+
+function yamlScalar(frontmatter: string, key: string): string {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = new RegExp(`^(?:${escaped}|\\s+${escaped}):\\s*(.+?)\\s*$`, "mu").exec(frontmatter);
+  if (!match) return "";
+  const raw = match[1].trim();
+  try {
+    return String(JSON.parse(raw));
+  } catch {
+    return raw.replace(/^["']|["']$/gu, "");
+  }
+}
+
+function okfKind(frontmatter: string, artifactId: string): string {
+  const tags = yamlScalar(frontmatter, "tags");
+  for (const kind of ["wiki_page", "table_wiki_page"]) {
+    if (tags.includes(kind)) return kind;
+  }
+  if (artifactId.startsWith("wiki/tables/")) return "table_wiki_page";
+  return "wiki_page";
 }
 
 function scoreText(haystack: string, query: string): number {
