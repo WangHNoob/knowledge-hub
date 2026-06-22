@@ -53,6 +53,7 @@ interface BuildRunContext {
   sourceService: SourceBundleService;
   modelConfig: PipelineModelConfig;
   ruleProfile: KnowledgeRuleProfile;
+  sourceChanges: SourceFileChange[];
 }
 
 export class KbBuilderPipelineService {
@@ -129,7 +130,7 @@ export class KbBuilderPipelineService {
       },
     });
 
-    return { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig, ruleProfile };
+    return { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig, ruleProfile, sourceChanges };
   }
 
   private async executeRun(context: BuildRunContext): Promise<{ run: KnowledgeBuildRun; package: AssetPackage; qualitySummary: Record<string, unknown> }> {
@@ -195,7 +196,14 @@ export class KbBuilderPipelineService {
         },
       }));
       await this.ensureRunActive(runId);
-      if (stages.includes("tables")) await this.withStage(runId, options, "tables", async () => runTableStage({ dataDir: workspace.dataDir, force: options.force, rules: ruleProfile.config }));
+      if (stages.includes("tables")) await this.withStage(runId, options, "tables", async () => runTableStage({
+        dataDir: workspace.dataDir,
+        force: options.force,
+        rules: ruleProfile.config,
+        cacheRoot: join(this.dataDir, ".kh-cache", "tables"),
+        changedPaths: context.sourceChanges.filter((change) => change.kind !== "removed").map((change) => change.logicalPath),
+        removedPaths: context.sourceChanges.filter((change) => change.kind === "removed").map((change) => change.logicalPath),
+      }));
       await this.ensureRunActive(runId);
       if (stages.includes("graph")) await this.withStage(runId, options, "graph", async () => runGraphStage({ dataDir: workspace.dataDir, rules: ruleProfile.config }));
       await this.ensureRunActive(runId);

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -140,6 +141,71 @@ describe("native table and graph stages", () => {
       expect(aliases).toEqual([{ table: "Combat/Skill", aliases: ["技能表"] }]);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses unchanged table schemas during incremental table rebuilds", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-table-incremental-"));
+    try {
+      mkdirSync(join(dataDir, "gamedata", "Combat"), { recursive: true });
+      const skill = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(skill, xlsx.utils.json_to_sheet([{ Id: 1, Name: "Slash" }]), "Skill");
+      xlsx.writeFile(skill, join(dataDir, "gamedata", "Combat", "Skill.xlsx"));
+      const buff = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(buff, xlsx.utils.json_to_sheet([{ Id: 10, Label: "Haste" }]), "Buff");
+      xlsx.writeFile(buff, join(dataDir, "gamedata", "Combat", "Buff.xlsx"));
+
+      await runTableStage({ dataDir, force: false });
+
+      writeFileSync(join(dataDir, "gamedata", "Combat", "Buff.xlsx"), "not a workbook");
+      const changedSkill = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(changedSkill, xlsx.utils.json_to_sheet([{ Id: 1, Name: "Slash", Cost: 5 }]), "Skill");
+      xlsx.writeFile(changedSkill, join(dataDir, "gamedata", "Combat", "Skill.xlsx"));
+
+      await runTableStage({
+        dataDir,
+        force: false,
+        changedPaths: ["gamedata/Combat/Skill.xlsx"],
+        removedPaths: []
+      });
+
+      const schemas = JSON.parse(readFileSync(join(dataDir, "wiki", "_tables", "schemas.json"), "utf8"));
+      expect(schemas["Combat/Skill"].fields).toEqual(["Id", "Name", "Cost"]);
+      expect(schemas["Combat/Buff"].fields).toEqual(["Id", "Label"]);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses table schema cache across workspaces", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-table-cache-"));
+    const cacheRoot = mkdtempSync(join(tmpdir(), "kh-kb-table-cache-root-"));
+    try {
+      mkdirSync(join(dataDir, "gamedata", "Combat"), { recursive: true });
+      const tableContent = "not,a,real,workbook\n";
+      writeFileSync(join(dataDir, "gamedata", "Combat", "Skill.csv"), tableContent);
+      const cacheKey = createHash("sha256")
+        .update("table-schema-v1\0")
+        .update("Combat/Skill")
+        .update("\0")
+        .update(Buffer.from(tableContent))
+        .digest("hex");
+      writeFileSync(join(cacheRoot, `${cacheKey}.json`), JSON.stringify({
+        table_name: "Combat/Skill",
+        rel_path: "gamedata/Combat/Skill.csv",
+        fields: ["Id", "Name", "Power"],
+        row_count: 99,
+        sheets: ["Skill"]
+      }, null, 2));
+
+      await runTableStage({ dataDir, force: false, cacheRoot });
+
+      const schema = JSON.parse(readFileSync(join(dataDir, "table_schemas", "Combat__Skill.json"), "utf8"));
+      expect(schema.fields).toEqual(["Id", "Name", "Power"]);
+      expect(schema.row_count).toBe(99);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(cacheRoot, { recursive: true, force: true });
     }
   });
 });

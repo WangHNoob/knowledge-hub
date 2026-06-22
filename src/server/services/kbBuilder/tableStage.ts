@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative } from "node:path";
 import xlsx from "xlsx";
@@ -24,7 +25,16 @@ interface TableRelationCandidate extends ForeignKeyEdge {
   reason: string;
 }
 
-export async function runTableStage(options: { dataDir: string; force: boolean; rules?: KnowledgeRuleConfig }): Promise<StageResult> {
+interface TableStageOptions {
+  dataDir: string;
+  force: boolean;
+  rules?: KnowledgeRuleConfig;
+  changedPaths?: string[];
+  removedPaths?: string[];
+  cacheRoot?: string;
+}
+
+export async function runTableStage(options: TableStageOptions): Promise<StageResult> {
   const gamedataDir = join(options.dataDir, "gamedata");
   if (!existsSync(gamedataDir)) {
     return {
@@ -35,20 +45,56 @@ export async function runTableStage(options: { dataDir: string; force: boolean; 
     };
   }
 
-  const schemas: Record<string, TableSchema> = {};
-  const groups: Record<string, string[]> = {};
+  const changedTables = tableNamesFromPaths(options.changedPaths ?? []);
+  const removedTables = tableNamesFromPaths(options.removedPaths ?? []);
+  const existingSchemas = !options.force && (changedTables.size > 0 || removedTables.size > 0)
+    ? readExistingSchemas(options.dataDir)
+    : {};
+  const schemas: Record<string, TableSchema> = Object.fromEntries(
+    Object.entries(existingSchemas).filter(([table]) => !removedTables.has(table)),
+  );
   for (const file of walkFiles(gamedataDir)) {
     if (![".xlsx", ".xls", ".csv"].includes(extname(file).toLowerCase())) continue;
     const relNoExt = relative(gamedataDir, file).replace(/\\/g, "/").replace(/\.[^.]+$/u, "");
-    const group = dirname(relNoExt) === "." ? "ungrouped" : dirname(relNoExt).replace(/\\/g, "/");
-    const schema = readTableSchema(file, relNoExt, relative(options.dataDir, file).replace(/\\/g, "/"));
+    if (!options.force && existingSchemas[relNoExt] && changedTables.size > 0 && !changedTables.has(relNoExt)) continue;
+    const relPath = relative(options.dataDir, file).replace(/\\/g, "/");
+    const schema = options.force ? readTableSchema(file, relNoExt, relPath) : readTableSchemaWithCache(file, relNoExt, relPath, options.cacheRoot ?? join(options.dataDir, ".kh-cache", "tables"));
     schemas[relNoExt] = schema;
-    groups[group] = [...(groups[group] ?? []), relNoExt].sort();
   }
+  const groups = groupSchemas(schemas);
 
   const { confirmed, candidates } = detectFkEdges(schemas, options.rules);
   const outputPaths = writeTableOutputs(options.dataDir, schemas, groups, confirmed, candidates);
   return { stage: "tables", status: "completed", outputPaths, warnings: [] };
+}
+
+function readExistingSchemas(dataDir: string): Record<string, TableSchema> {
+  const file = join(dataDir, "wiki", "_tables", "schemas.json");
+  if (!existsSync(file)) return {};
+  try {
+    return JSON.parse(readFileSync(file, "utf8")) as Record<string, TableSchema>;
+  } catch {
+    return {};
+  }
+}
+
+function tableNamesFromPaths(paths: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const path of paths) {
+    const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+    const match = /^gamedata\/(.+)\.(xlsx|xls|csv)$/iu.exec(normalized);
+    if (match) out.add(match[1]);
+  }
+  return out;
+}
+
+function groupSchemas(schemas: Record<string, TableSchema>): Record<string, string[]> {
+  const groups: Record<string, string[]> = {};
+  for (const tableName of Object.keys(schemas)) {
+    const group = dirname(tableName) === "." ? "ungrouped" : dirname(tableName).replace(/\\/g, "/");
+    groups[group] = [...(groups[group] ?? []), tableName].sort();
+  }
+  return groups;
 }
 
 export function detectFkEdges(schemas: Record<string, { fields: string[] }>, rules?: KnowledgeRuleConfig): { confirmed: ForeignKeyEdge[]; candidates: TableRelationCandidate[] } {
@@ -114,6 +160,28 @@ function readTableSchema(file: string, tableName: string, relPath: string): Tabl
     row_count: rowCount,
     sheets: workbook.SheetNames,
   };
+}
+
+function readTableSchemaWithCache(file: string, tableName: string, relPath: string, cacheRoot: string): TableSchema {
+  const content = readFileSync(file);
+  const cacheKey = createHash("sha256")
+    .update("table-schema-v1\0")
+    .update(tableName)
+    .update("\0")
+    .update(content)
+    .digest("hex");
+  const cacheFile = join(cacheRoot, `${cacheKey}.json`);
+  if (existsSync(cacheFile)) {
+    try {
+      return JSON.parse(readFileSync(cacheFile, "utf8")) as TableSchema;
+    } catch {
+      // Fall through and refresh corrupt cache entries.
+    }
+  }
+  const schema = readTableSchema(file, tableName, relPath);
+  mkdirSync(cacheRoot, { recursive: true });
+  writeFileSync(cacheFile, `${JSON.stringify(schema, null, 2)}\n`);
+  return schema;
 }
 
 function writeTableOutputs(

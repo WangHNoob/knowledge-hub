@@ -76,15 +76,15 @@ Run a test with two source versions where one table changed and one doc stayed u
 - Modify: `src/server/services/kbBuilderService.ts`
 - Test: `tests/kb-builder-table-graph.test.ts`
 
-- [ ] **Step 1: Add changed table filter**
+- [x] **Step 1: Add changed table filter**
 
 Allow `runTableStage` to accept changed logical paths and only reread matching `.csv/.xlsx/.xls` files when a previous schema manifest exists.
 
-- [ ] **Step 2: Merge old schemas**
+- [x] **Step 2: Merge old schemas**
 
 Read existing `wiki/_tables/schemas.json`, replace changed tables, remove deleted tables, and preserve unchanged schemas.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run table-stage tests proving one changed table does not rewrite unrelated table schemas.
 
