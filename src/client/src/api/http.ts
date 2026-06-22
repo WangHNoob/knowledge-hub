@@ -37,6 +37,15 @@ export async function putJson<T>(url: string, body: unknown): Promise<T> {
   return parseResponse(response);
 }
 
+export async function patchJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return parseResponse(response);
+}
+
 export async function postEmpty<T>(url: string): Promise<T> {
   const response = await fetch(url, { method: "POST", headers: authHeaders() });
   return parseResponse(response);

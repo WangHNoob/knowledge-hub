@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 
-import { requireRole } from "../middleware/auth";
-import { packageListQuerySchema } from "../schemas";
+import { requireRole, denyRole } from "../middleware/auth";
+import { packageListQuerySchema, updatePackageSchema } from "../schemas";
 import { PackageDeleteConflictError } from "../services/knowledgeService";
 import type { RouteContext } from "./context";
 
@@ -41,6 +41,18 @@ export function registerPackageRoutes(app: FastifyInstance, ctx: RouteContext) {
         return reply.code(code).send({ error: message });
       }
     },
+  );
+
+  app.patch<{ Params: { packageId: string }; Body: z.infer<typeof updatePackageSchema> }>(
+    "/api/packages/:packageId",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = updatePackageSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid package update." });
+      const updated = await ctx.service.updatePackage(request.params.packageId, parsed.data);
+      if (!updated) return reply.code(404).send({ error: "Unknown package." });
+      return { package: updated };
+    }
   );
 
   app.delete<{ Params: { packageId: string } }>(

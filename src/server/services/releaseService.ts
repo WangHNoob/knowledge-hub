@@ -201,6 +201,20 @@ export class ReleaseService {
     return rows.length ? mapRelease(rows[0]) : null;
   }
 
+  async updateRelease(releaseId: string, patch: { version?: string; note?: string }): Promise<ReleaseRecord | null> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.version !== undefined) { sets.push(`version = $${params.length + 1}`); params.push(patch.version.trim()); }
+    if (patch.note !== undefined) { sets.push(`note = $${params.length + 1}`); params.push(patch.note); }
+    if (sets.length === 0) return null;
+    params.push(releaseId);
+    const { rows } = await this.adapter.query(
+      `UPDATE releases SET ${sets.join(", ")} WHERE release_id = $${params.length} RETURNING *`,
+      params
+    );
+    return rows.length ? mapRelease(rows[0]) : null;
+  }
+
   private async pointChannelToRelease(releaseId: string, requestedBy: string): Promise<void> {
     await this.adapter.query(
       `INSERT INTO release_channels (channel_id, current_release_id, updated_by, updated_at)

@@ -14,10 +14,28 @@ export function formatBytes(value: number): string {
   return `${(value / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-export function formatTime(value: string): string {
+/** 全站时间统一按东八区（Asia/Shanghai）展示，不随浏览器/服务器时区漂移。 */
+const SHANGHAI_TZ = "Asia/Shanghai";
+
+function shanghaiParts(value: string, options: Intl.DateTimeFormatOptions): Record<string, string> | null {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("zh-CN", { timeZone: SHANGHAI_TZ, hourCycle: "h23", ...options }).formatToParts(date);
+  return Object.fromEntries(parts.map((part) => [part.type, part.value]));
+}
+
+/** YYYY-MM-DD HH:mm（东八区）。无法解析时原样返回。 */
+export function formatTime(value: string): string {
+  const p = shanghaiParts(value, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  if (!p) return value;
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
+}
+
+/** HH:mm:ss（东八区），用于日志等只需要时分秒的场景。 */
+export function formatClock(value: string): string {
+  const p = shanghaiParts(value, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  if (!p) return value;
+  return `${p.hour}:${p.minute}:${p.second}`;
 }
 
 export function groupBy<T>(items: T[], key: (item: T) => string): Record<string, T[]> {

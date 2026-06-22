@@ -8,6 +8,8 @@ export {
   importSourceBundle,
   listBundleVersions,
   listSourceBundles,
+  updateBundleVersion,
+  updateSourceBundle,
   uploadSourceBundle
 } from "./sources";
 export {
@@ -17,7 +19,7 @@ export {
   stopBuildRun,
   testModelConnectivity
 } from "./builder";
-export { deletePackage, getComponentContent, getComponentOwner, getPackage, listEvidence, listPackages } from "./packages";
+export { deletePackage, getComponentContent, getComponentOwner, getPackage, listEvidence, listPackages, updatePackage } from "./packages";
 export type { PackageFilter } from "./packages";
 export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
 export { searchAll } from "./search";
@@ -34,7 +36,8 @@ export {
   getCurrentRelease,
   listReleases,
   publishRelease,
-  rollbackRelease
+  rollbackRelease,
+  updateRelease
 } from "./releases";
 export { createOutputAudit, listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery } from "./agent";
 export { getDiagnosticSummary, getDiagnosticTrace, listDiagnosticLogs } from "./diagnostics";

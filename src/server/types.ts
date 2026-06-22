@@ -145,6 +145,7 @@ export interface ReleaseRecord {
   version: string;
   status: "draft" | "published";
   packageIds: string[];
+  note: string;
   publishedAt: string | null;
   publishedBy: string;
   createdBy: string;

@@ -292,6 +292,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS published_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS feedback_type TEXT NOT NULL DEFAULT 'hit';
     ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS suggested_action TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS task_id TEXT NOT NULL DEFAULT '';

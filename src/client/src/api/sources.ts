@@ -1,4 +1,4 @@
-import { authHeaders, getJson, parseResponse, postJson } from "./http";
+import { authHeaders, getJson, parseResponse, patchJson, postJson } from "./http";
 import type {
   ImportBundleResult,
   LocalBrowseResult,
@@ -57,6 +57,26 @@ export async function uploadSourceBundle(
     body: form
   });
   return parseResponse(response);
+}
+
+export async function updateSourceBundle(
+  bundleId: string,
+  patch: { name?: string; description?: string }
+): Promise<SourceBundle> {
+  return (await patchJson<{ bundle: SourceBundle }>(`/api/source-bundles/${encodeURIComponent(bundleId)}`, patch)).bundle;
+}
+
+export async function updateBundleVersion(
+  bundleId: string,
+  versionId: string,
+  patch: { label?: string; note?: string }
+): Promise<SourceBundleVersion> {
+  return (
+    await patchJson<{ version: SourceBundleVersion }>(
+      `/api/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}`,
+      patch
+    )
+  ).version;
 }
 
 export async function browseLocalFiles(path?: string): Promise<LocalBrowseResult> {

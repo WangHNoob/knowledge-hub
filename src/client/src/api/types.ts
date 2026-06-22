@@ -286,6 +286,7 @@ export interface ReleaseRecord {
   version: string;
   status: string;
   packageIds: string[];
+  note: string;
   publishedAt: string | null;
   publishedBy: string;
   createdBy: string;

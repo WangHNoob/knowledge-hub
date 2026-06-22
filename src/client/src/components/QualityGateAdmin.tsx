@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getQualityProfile, updateQualityProfile } from "../api";
 import { Badge, ErrorState, Loading } from "./Atoms";
+import { formatTime } from "../utils/format";
 
 export function QualityGateAdmin() {
   const queryClient = useQueryClient();
@@ -27,7 +28,7 @@ export function QualityGateAdmin() {
       <div className="detail-head">
         <div>
           <h2>知识质量门禁</h2>
-          <p>{data?.name}　·　更新于 {data?.updatedAt}</p>
+          <p>{data?.name}　·　更新于 {data?.updatedAt ? formatTime(data.updatedAt) : "—"}</p>
         </div>
         <Badge label={data?.active ? "active" : "inactive"} tone={data?.active ? "ok" : "warn"} />
       </div>

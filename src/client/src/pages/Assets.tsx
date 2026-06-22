@@ -3,8 +3,9 @@ import type { JSX } from "react";
 import { Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { deletePackage, getComponentContent, getComponentOwner, getPackage, listPackages, type AssetPackage } from "../api";
+import { deletePackage, getComponentContent, getComponentOwner, getPackage, listPackages, updatePackage, type AssetPackage } from "../api";
 import { Badge, Metric, Page } from "../components/Atoms";
+import { InlineEditor } from "../components/InlineEditor";
 import { formatPercent } from "../utils/format";
 import { IdChip, useNav } from "../ui/navigation";
 
@@ -99,6 +100,15 @@ export function Assets() {
       ]);
     },
     onError: (error) => setDeleteError(error instanceof Error ? error.message : String(error))
+  });
+  const renameMutation = useMutation({
+    mutationFn: (patch: { name?: string; description?: string }) => updatePackage(effectiveSelected, patch),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["package", effectiveSelected] }),
+        queryClient.invalidateQueries({ queryKey: ["packages"] })
+      ]);
+    }
   });
   const fileContent = useQuery({
     queryKey: ["component-content", effectiveSelected, openFile?.componentId],
@@ -200,10 +210,18 @@ export function Assets() {
               <div className="detail-head">
                 <div>
                   <h2>{pkg.name}</h2>
-                  <p>{pkg.description}</p>
+                  <p>{pkg.description || "暂无备注"}</p>
                 </div>
                 <div className="asset-meta">
                   <Badge label={pkg.status} />
+                  <InlineEditor
+                    saving={renameMutation.isPending}
+                    onSave={(patch) => renameMutation.mutateAsync(patch)}
+                    fields={[
+                      { key: "name", label: "知识资产包名称", value: pkg.name, required: true, placeholder: "便于识别的名称" },
+                      { key: "description", label: "备注", value: pkg.description, multiline: true, placeholder: "用途、范围或注意事项（可选）" }
+                    ]}
+                  />
                   <button className="secondary-action danger" type="button" disabled={deleteMutation.isPending} onClick={() => confirmDelete(pkg)}>
                     <Trash2 size={15} />
                     {deleteMutation.isPending ? "删除中..." : "删除资产包"}

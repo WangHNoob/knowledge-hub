@@ -95,6 +95,7 @@ export function mapRelease(row: Record<string, unknown>): ReleaseRecord {
     version: row.version as string,
     status: row.status as ReleaseRecord["status"],
     packageIds: jsonArray(row.package_ids),
+    note: String(row.note ?? ""),
     publishedAt: row.published_at ? String(row.published_at) : null,
     publishedBy: String(row.published_by ?? ""),
     createdBy: String(row.created_by ?? ""),

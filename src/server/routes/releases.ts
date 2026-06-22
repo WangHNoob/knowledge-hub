@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import type { z } from "zod";
 
-import { requireRole } from "../middleware/auth";
-import { createReleaseSchema, rollbackReleaseSchema } from "../schemas";
+import { requireRole, denyRole } from "../middleware/auth";
+import { createReleaseSchema, rollbackReleaseSchema, updateReleaseSchema } from "../schemas";
 import type { RouteContext } from "./context";
 
 export function registerReleaseRoutes(app: FastifyInstance, ctx: RouteContext) {
@@ -39,6 +40,18 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: RouteContext) {
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "发布失败。" });
       }
+    }
+  );
+
+  app.patch<{ Params: { releaseId: string }; Body: z.infer<typeof updateReleaseSchema> }>(
+    "/api/releases/:releaseId",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = updateReleaseSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid release update." });
+      const updated = await ctx.releaseService.updateRelease(request.params.releaseId, parsed.data);
+      if (!updated) return reply.code(404).send({ error: "Unknown release." });
+      return { release: updated };
     }
   );
 

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
-import { formatPercent } from "../utils/format";
+import { formatPercent, formatTime } from "../utils/format";
 import { IdChip, useNav } from "../ui/navigation";
 
 const MCP_TOOLS = [
@@ -201,7 +201,7 @@ export function AgentFeedback() {
                       </div>
                     )}
                   </div>
-                  <small>{record.createdAt}</small>
+                  <small>{formatTime(record.createdAt)}</small>
                 </article>
               ))}
               {(audit.data ?? []).length === 0 && <p className="subtle">暂无查询审计记录。</p>}
@@ -241,7 +241,7 @@ export function AgentFeedback() {
                       {auditRecord.segments.map((segment) => `${segment.segmentId}:${segment.attributionType}`).join(" / ")}
                     </small>
                   </div>
-                  <small>{auditRecord.createdAt}</small>
+                  <small>{formatTime(auditRecord.createdAt)}</small>
                 </article>
               ))}
               {(outputAudits.data ?? []).length === 0 && <p className="subtle">暂无归因审计记录。</p>}
@@ -344,7 +344,7 @@ function AgentFeedbackCard({
           {insight.componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(insight.componentIds[0])}>查看首个命中资产</button>}
         </div>
       </div>
-      <small>{event.createdAt}</small>
+      <small>{formatTime(event.createdAt)}</small>
     </article>
   );
 }

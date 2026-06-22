@@ -1,9 +1,11 @@
 import type { FastifyInstance } from "fastify";
+import type { z } from "zod";
 import { createWriteStream, mkdirSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 
-import { browseLocalFilesSchema, importBundleSchema } from "../schemas";
+import { browseLocalFilesSchema, importBundleSchema, updateBundleSchema, updateBundleVersionSchema } from "../schemas";
+import { denyRole } from "../middleware/auth";
 import type { RouteContext } from "./context";
 
 export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
@@ -29,6 +31,32 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
     "/api/source-bundles/:bundleId/versions",
     { preHandler: app.authenticate },
     async (request) => ({ versions: await ctx.bundleService.listVersions(request.params.bundleId) })
+  );
+
+  app.patch<{ Params: { bundleId: string }; Body: z.infer<typeof updateBundleSchema> }>(
+    "/api/source-bundles/:bundleId",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = updateBundleSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid bundle update." });
+      const updated = await ctx.bundleService.updateBundle(request.params.bundleId, parsed.data);
+      if (!updated) return reply.code(404).send({ error: "未找到该资料集。" });
+      return { bundle: updated };
+    }
+  );
+
+  app.patch<{ Params: { bundleId: string; versionId: string }; Body: z.infer<typeof updateBundleVersionSchema> }>(
+    "/api/source-bundles/:bundleId/versions/:versionId",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = updateBundleVersionSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid version update." });
+      const existing = await ctx.bundleService.getVersion(request.params.versionId);
+      if (!existing || existing.bundleId !== request.params.bundleId) return reply.code(404).send({ error: "未找到该资料版本。" });
+      const updated = await ctx.bundleService.updateVersion(request.params.versionId, parsed.data);
+      if (!updated) return reply.code(404).send({ error: "未找到该资料版本。" });
+      return { version: updated };
+    }
   );
 
   app.get<{ Params: { bundleId: string; versionId: string } }>(

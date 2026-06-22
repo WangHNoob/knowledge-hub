@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { streamBuildLogs, type BuildLogRecord } from "../api/buildLogs";
+import { formatClock } from "../utils/format";
 
 export function BuildLogConsole({ runId }: { runId: string }) {
   const [lines, setLines] = useState<BuildLogRecord[]>([]);
@@ -28,7 +29,7 @@ export function BuildLogConsole({ runId }: { runId: string }) {
       <div className="build-console-body">
         {lines.map((line) => (
           <div key={line.logId} className={`log-line lvl-${line.level} st-${line.status}`}>
-            <span className="log-time">{line.createdAt.slice(11, 19)}</span>
+            <span className="log-time">{formatClock(line.createdAt)}</span>
             <span className="log-cat">{line.category}</span>
             <span className="log-msg">{line.message}</span>
           </div>

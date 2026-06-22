@@ -175,6 +175,34 @@ export class SourceBundleService {
     if (rows.length === 0) throw new Error(`未知资料集：${bundleId}`);
     return mapBundle(rows[0]);
   }
+
+  async updateBundle(bundleId: string, patch: { name?: string; description?: string }): Promise<SourceBundle | null> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.name !== undefined) { sets.push(`name = $${params.length + 1}`); params.push(patch.name.trim()); }
+    if (patch.description !== undefined) { sets.push(`description = $${params.length + 1}`); params.push(patch.description); }
+    if (sets.length === 0) return null;
+    params.push(bundleId);
+    const { rows } = await this.adapter.query(
+      `UPDATE source_bundles SET ${sets.join(", ")} WHERE bundle_id = $${params.length} RETURNING *`,
+      params
+    );
+    return rows.length ? mapBundle(rows[0]) : null;
+  }
+
+  async updateVersion(versionId: string, patch: { label?: string; note?: string }): Promise<SourceBundleVersion | null> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.label !== undefined) { sets.push(`label = $${params.length + 1}`); params.push(patch.label.trim()); }
+    if (patch.note !== undefined) { sets.push(`note = $${params.length + 1}`); params.push(patch.note); }
+    if (sets.length === 0) return null;
+    params.push(versionId);
+    const { rows } = await this.adapter.query(
+      `UPDATE source_bundle_versions SET ${sets.join(", ")} WHERE version_id = $${params.length} RETURNING *`,
+      params
+    );
+    return rows.length ? mapVersion(rows[0]) : null;
+  }
 }
 
 interface ScannedFile {

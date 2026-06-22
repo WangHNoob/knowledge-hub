@@ -1,7 +1,7 @@
 import { ArrowRight, Square, Trash2 } from "lucide-react";
 
 import type { KnowledgeBuildRun } from "../api";
-import { runStatusLabel } from "../utils/format";
+import { runStatusLabel, formatTime } from "../utils/format";
 import { Badge } from "./Atoms";
 
 export function BuildRunCard({
@@ -77,7 +77,7 @@ export function BuildRunCard({
         </p>
       )}
       {run.error && <p className="error">{run.error}</p>}
-      <small>{run.startedAt}{run.finishedAt ? ` → ${run.finishedAt}` : ""}</small>
+      <small>{formatTime(run.startedAt)}{run.finishedAt ? ` → ${formatTime(run.finishedAt)}` : ""}</small>
     </article>
   );
 }

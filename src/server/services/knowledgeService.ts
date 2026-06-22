@@ -187,6 +187,20 @@ export class KnowledgeService {
     };
   }
 
+  async updatePackage(packageId: string, patch: { name?: string; description?: string }): Promise<AssetPackage | null> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.name !== undefined) { sets.push(`name = $${params.length + 1}`); params.push(patch.name.trim()); }
+    if (patch.description !== undefined) { sets.push(`description = $${params.length + 1}`); params.push(patch.description); }
+    if (sets.length === 0) return null;
+    params.push(packageId);
+    const { rows } = await this.adapter.query(
+      `UPDATE asset_packages SET ${sets.join(", ")} WHERE package_id = $${params.length} RETURNING *`,
+      params
+    );
+    return rows.length ? mapPackage(rows[0]) : null;
+  }
+
   async deletePackage(packageId: string): Promise<boolean> {
     const { rows } = await this.adapter.query("SELECT package_id FROM asset_packages WHERE package_id = $1", [packageId]);
     if (rows.length === 0) return false;

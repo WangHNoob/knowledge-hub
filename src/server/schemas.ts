@@ -70,6 +70,35 @@ export const rollbackReleaseSchema = z.object({
   releaseId: z.string().min(1)
 });
 
+/** 资产包/资料库/版本/发布的命名与备注更新校验：至少提供一个可编辑字段。 */
+export const updatePackageSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(2000).optional()
+}).refine((value) => value.name !== undefined || value.description !== undefined, {
+  message: "至少提供 name 或 description。"
+});
+
+export const updateBundleSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  description: z.string().max(2000).optional()
+}).refine((value) => value.name !== undefined || value.description !== undefined, {
+  message: "至少提供 name 或 description。"
+});
+
+export const updateBundleVersionSchema = z.object({
+  label: z.string().min(1).max(200).optional(),
+  note: z.string().max(2000).optional()
+}).refine((value) => value.label !== undefined || value.note !== undefined, {
+  message: "至少提供 label 或 note。"
+});
+
+export const updateReleaseSchema = z.object({
+  version: z.string().min(1).max(200).optional(),
+  note: z.string().max(2000).optional()
+}).refine((value) => value.version !== undefined || value.note !== undefined, {
+  message: "至少提供 version 或 note。"
+});
+
 export const mcpQuerySchema = z.object({
   toolName: z.string().min(1),
   payload: z.record(z.string(), z.unknown()).default({})

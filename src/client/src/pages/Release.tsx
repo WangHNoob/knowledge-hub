@@ -10,10 +10,12 @@ import {
   listReviewTasks,
   publishRelease,
   rollbackRelease,
+  updateRelease,
   type ReleaseRecord
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
-import { errorMessage, qualityScore, releaseVersion } from "../utils/format";
+import { InlineEditor } from "../components/InlineEditor";
+import { errorMessage, formatTime, qualityScore, releaseVersion } from "../utils/format";
 import { IdChip, useNav } from "../ui/navigation";
 
 type ReleaseTab = "compose" | "current";
@@ -59,6 +61,16 @@ export function Release() {
         queryClient.invalidateQueries({ queryKey: ["releases"] }),
         queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    }
+  });
+  const renameMutation = useMutation({
+    mutationFn: ({ releaseId, patch }: { releaseId: string; patch: { version?: string; note?: string } }) =>
+      updateRelease(releaseId, patch),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["releases"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current"] })
       ]);
     }
   });
@@ -177,7 +189,7 @@ export function Release() {
             <>
               <div className="release-current">
                 <strong>{current.data.manifestHash || "manifest pending"}</strong>
-                <span>{current.data.publishedAt}</span>
+                <span>{current.data.publishedAt ? formatTime(current.data.publishedAt) : "未发布"}</span>
                 <span>{current.data.packageIds.length} 个资产包</span>
               </div>
               <OkfSummary release={current.data} />
@@ -190,7 +202,9 @@ export function Release() {
                 <div>
                   <strong>{release.version}</strong>
                   <span>{release.releaseId}</span>
+                  {release.note && <span className="subtle">{release.note}</span>}
                   <small>{release.manifestHash}</small>
+                  {release.publishedAt && <small>发布于 {formatTime(release.publishedAt)}</small>}
                   {okfManifest(release) && <small>OKF · {okfManifest(release)?.bundleUri}</small>}
                   {release.packageIds.length > 0 && (
                     <div className="asset-link">
@@ -202,6 +216,15 @@ export function Release() {
                 </div>
                 <div className="detail-actions">
                   <Badge label={release.status} tone={release.status === "published" ? "ok" : undefined} />
+                  <InlineEditor
+                    saving={renameMutation.isPending}
+                    title="编辑发布版本号与备注"
+                    onSave={(patch) => renameMutation.mutateAsync({ releaseId: release.releaseId, patch })}
+                    fields={[
+                      { key: "version", label: "版本号", value: release.version, required: true, placeholder: "如 2026.06.22.001" },
+                      { key: "note", label: "备注", value: release.note, multiline: true, placeholder: "本次发布说明（可选）" }
+                    ]}
+                  />
                   <button
                     className="icon-button"
                     title="回滚到此发布"

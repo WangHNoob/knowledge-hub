@@ -45,6 +45,44 @@ describe("knowledge hub api", () => {
     return { app, token };
   }
 
+  it("renames a source bundle with a remark and denies viewers", async () => {
+    const { app, token } = await getToken();
+
+    const updated = await app.inject({
+      method: "PATCH",
+      url: "/api/source-bundles/default",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: "战斗系统资料库", description: "战斗相关配表与文档" }
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().bundle.name).toBe("战斗系统资料库");
+    expect(updated.json().bundle.description).toBe("战斗相关配表与文档");
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/source-bundles",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(listed.json().bundles.find((b: { bundleId: string }) => b.bundleId === "default").name).toBe("战斗系统资料库");
+
+    const empty = await app.inject({
+      method: "PATCH",
+      url: "/api/source-bundles/default",
+      headers: { authorization: `Bearer ${token}` },
+      payload: {}
+    });
+    expect(empty.statusCode).toBe(400);
+
+    const viewer = await getToken("viewer", "viewpw");
+    const denied = await viewer.app.inject({
+      method: "PATCH",
+      url: "/api/source-bundles/default",
+      headers: { authorization: `Bearer ${viewer.token}` },
+      payload: { name: "x" }
+    });
+    expect(denied.statusCode).toBe(403);
+  });
+
   it("requires login for knowledge endpoints and returns an empty dashboard after authentication", async () => {
     const { app, token } = await getToken();
 

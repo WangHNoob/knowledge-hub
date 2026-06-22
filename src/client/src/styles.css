@@ -1927,6 +1927,16 @@ code {
   font-size: 13px;
 }
 
+.inline-editor {
+  display: grid;
+  gap: 10px;
+  min-width: 280px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
 .field-label input,
 .field-label select,
 .field-label textarea,

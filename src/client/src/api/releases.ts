@@ -1,4 +1,4 @@
-import { getJson, postEmpty, postJson } from "./http";
+import { getJson, patchJson, postEmpty, postJson } from "./http";
 import type { ReleaseRecord } from "./types";
 
 export async function listReleases(): Promise<ReleaseRecord[]> {
@@ -19,4 +19,11 @@ export async function publishRelease(releaseId: string): Promise<ReleaseRecord> 
 
 export async function rollbackRelease(releaseId: string): Promise<ReleaseRecord> {
   return (await postJson<{ release: ReleaseRecord }>("/api/releases/rollback", { releaseId })).release;
+}
+
+export async function updateRelease(
+  releaseId: string,
+  patch: { version?: string; note?: string }
+): Promise<ReleaseRecord> {
+  return (await patchJson<{ release: ReleaseRecord }>(`/api/releases/${encodeURIComponent(releaseId)}`, patch)).release;
 }

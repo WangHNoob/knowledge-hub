@@ -1,5 +1,5 @@
 import { File, History, Server, Upload, UploadCloud } from "lucide-react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
 import {
@@ -7,13 +7,17 @@ import {
   getBundleVersion,
   importSourceBundle,
   listBundleVersions,
+  listSourceBundles,
+  updateBundleVersion,
+  updateSourceBundle,
   uploadSourceBundle,
   type SourceBundleVersion,
   type SourceFileChange
 } from "../api";
 import { Badge, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
+import { InlineEditor } from "../components/InlineEditor";
 import { LocalFileBrowser } from "../components/LocalFileBrowser";
-import { formatBytes, kindLabel } from "../utils/format";
+import { formatBytes, formatTime, kindLabel } from "../utils/format";
 
 type SourceTab = "upload" | "server" | "history";
 
@@ -35,6 +39,32 @@ export function Sources() {
   const versions = useQuery({
     queryKey: ["bundle-versions", bundleId],
     queryFn: () => listBundleVersions(bundleId)
+  });
+  const bundles = useQuery({
+    queryKey: ["source-bundles"],
+    queryFn: listSourceBundles
+  });
+  const bundle = (bundles.data ?? []).find((item) => item.bundleId === bundleId) ?? null;
+  const bundleMutation = useMutation({
+    mutationFn: (patch: { name?: string; description?: string }) => updateSourceBundle(bundleId, patch),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["source-bundles"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    }
+  });
+  const versionMutation = useMutation({
+    mutationFn: ({ versionId, patch }: { versionId: string; patch: { label?: string; note?: string } }) =>
+      updateBundleVersion(bundleId, versionId, patch),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["bundle-versions", bundleId] }),
+        selectedVersion
+          ? queryClient.invalidateQueries({ queryKey: ["bundle-version", bundleId, selectedVersion] })
+          : Promise.resolve()
+      ]);
+    }
   });
   const detail = useQuery({
     queryKey: ["bundle-version", bundleId, selectedVersion],
@@ -74,6 +104,25 @@ export function Sources() {
       subtitle="批量导入 gamedata/ 与 gamedocs/，按内容哈希去重并按时间生成版本。"
     >
       <Tabs items={tabs} active={tab} onChange={setTab} />
+      {bundle && (
+        <div className="tab-panel" style={{ marginBottom: 20 }}>
+          <div className="detail-head">
+            <div>
+              <h2 style={{ margin: 0 }}>{bundle.name}</h2>
+              <p style={{ margin: "4px 0 0" }}>{bundle.description || "暂无备注"}</p>
+            </div>
+            <InlineEditor
+              saving={bundleMutation.isPending}
+              title="编辑资料库名称与备注"
+              onSave={(patch) => bundleMutation.mutateAsync(patch)}
+              fields={[
+                { key: "name", label: "资料库名称", value: bundle.name, required: true, placeholder: "便于识别的名称" },
+                { key: "description", label: "备注", value: bundle.description, multiline: true, placeholder: "说明这个资料库的范围（可选）" }
+              ]}
+            />
+          </div>
+        </div>
+      )}
       {(message || error) && (
         <div className="tab-panel" style={{ marginBottom: 20 }}>
           {message && <p className="notice">{message}</p>}
@@ -242,11 +291,22 @@ export function Sources() {
                       <h2>{detail.data.version.label}</h2>
                       <p>
                         {detail.data.version.note || "无备注"}
-                        　·　创建于 {detail.data.version.createdAt}
+                        　·　创建于 {formatTime(detail.data.version.createdAt)}
                         　·　共 {detail.data.version.fileCount} 个文件，{(detail.data.version.totalBytes / 1024).toFixed(1)} KiB
                       </p>
                     </div>
-                    <Badge label={detail.data.version.parentVersionId ? "增量版本" : "首版"} />
+                    <div className="asset-meta">
+                      <Badge label={detail.data.version.parentVersionId ? "增量版本" : "首版"} />
+                      <InlineEditor
+                        saving={versionMutation.isPending}
+                        title="编辑版本名称与备注"
+                        onSave={(patch) => versionMutation.mutateAsync({ versionId: detail.data!.version.versionId, patch })}
+                        fields={[
+                          { key: "label", label: "版本名称", value: detail.data.version.label, required: true, placeholder: "便于识别的版本名" },
+                          { key: "note", label: "备注", value: detail.data.version.note, multiline: true, placeholder: "本次导入的说明（可选）" }
+                        ]}
+                      />
+                    </div>
                   </div>
                   <div className="evidence-panel">
                     <Metric label="新增" value={detail.data.version.addedCount} hint="本版相对上一版" />

@@ -1,4 +1,4 @@
-import { deleteJson, getJson } from "./http";
+import { deleteJson, getJson, patchJson } from "./http";
 import type { AssetPackage, ComponentContent, EvidenceCoverage, EvidenceRecord, PackageDetail } from "./types";
 
 export interface PackageFilter {
@@ -22,6 +22,13 @@ export async function getPackage(packageId: string): Promise<PackageDetail> {
 
 export async function deletePackage(packageId: string): Promise<boolean> {
   return (await deleteJson<{ deleted: boolean }>(`/api/packages/${encodeURIComponent(packageId)}`)).deleted;
+}
+
+export async function updatePackage(
+  packageId: string,
+  patch: { name?: string; description?: string }
+): Promise<AssetPackage> {
+  return (await patchJson<{ package: AssetPackage }>(`/api/packages/${encodeURIComponent(packageId)}`, patch)).package;
 }
 
 export async function listEvidence(packageId: string): Promise<{ records: EvidenceRecord[]; coverage: EvidenceCoverage }> {
