@@ -13,6 +13,7 @@ import type {
   QualityFinding,
   KnowledgeRuleConfig,
   KnowledgeRuleProfile,
+  SourceFileChange,
 } from "../types";
 import { createSourceBundleService } from "./sourceBundleService";
 import { createKnowledgeService } from "./knowledgeService";
@@ -91,6 +92,7 @@ export class KbBuilderPipelineService {
     const profile = await this.getQualityProfile(options.qualityProfileId);
     const ruleProfile = await createLegislationService(this.db).getActiveProfile();
     const modelConfig = normalizeModelConfig(options.modelConfig, options.model);
+    const sourceChanges = await sourceService.diff(options.versionId);
     const runId = `run_${new Date().toISOString().replace(/[-:.TZ]/g, "")}_${nanoid(6)}`;
     const stages = STAGE_ORDER.filter((stage) => options.stages.includes(stage));
     const workspaceRoot = join(this.dataDir, "kb-build-runs");
@@ -118,6 +120,7 @@ export class KbBuilderPipelineService {
         requestedBy: options.requestedBy,
         traceId: options.traceId,
         modelConfig: redactModelConfig(modelConfig),
+        incremental: incrementalConfig(version.parentVersionId, sourceChanges),
         ruleProfile: {
           profileId: ruleProfile.profileId,
           name: ruleProfile.name,
@@ -569,6 +572,19 @@ export class KbBuilderPipelineService {
     const detail = await createKnowledgeService(this.db).getPackageDetail(packageId);
     return detail.package;
   }
+}
+
+function incrementalConfig(parentVersionId: string | null, changes: SourceFileChange[]): Record<string, unknown> {
+  const addedPaths = changes.filter((change) => change.kind === "added").map((change) => change.logicalPath).sort();
+  const modifiedPaths = changes.filter((change) => change.kind === "modified").map((change) => change.logicalPath).sort();
+  const removedPaths = changes.filter((change) => change.kind === "removed").map((change) => change.logicalPath).sort();
+  return {
+    parentVersionId,
+    changedPaths: [...addedPaths, ...modifiedPaths, ...removedPaths].sort(),
+    addedPaths,
+    modifiedPaths,
+    removedPaths,
+  };
 }
 
 function ensureWikiSpecs(dataDir: string, rules?: KnowledgeRuleConfig): string {

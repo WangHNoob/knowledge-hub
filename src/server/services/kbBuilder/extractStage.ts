@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { PipelineModelConfig } from "./modelConfig";
-import { extractMaxTokens } from "./modelConfig";
+import { extractMaxTokens, redactModelConfig } from "./modelConfig";
 import { createLlmClient, type JsonSchemaSpec, type LlmClient } from "./llmClient";
 import type { WikiSpecSet } from "./specs";
 import { loadTableAliases, type TableAliasIndex } from "./tableAliases";
@@ -66,13 +66,20 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   const guidance = buildSpecGuidance(options.specs);
   const usedSlugs = new Map<string, number>();
   const tableAliases = loadTableAliases(options.dataDir);
+  const modelConfig = resolveModelConfig(options);
+  const aliasFingerprint = tableAliasFingerprint(options.dataDir);
   for (let index = 0; index < files.length; index += 1) {
     const absolute = files[index];
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
-    const extracted = await extractPage(markdown, rel, client, guidance, warnings);
-    normalizeTableRefs(extracted, tableAliases);
+    const cacheKey = extractCacheKey({ markdown, rel, specsHash: options.specs.hash, modelConfig, aliasFingerprint });
+    const cached = options.force ? null : readExtractCache(options.dataDir, cacheKey);
+    const extracted = cached ?? await extractPage(markdown, rel, client, guidance, warnings);
+    if (!cached) {
+      normalizeTableRefs(extracted, tableAliases);
+      writeExtractCache(options.dataDir, cacheKey, extracted);
+    }
     const pageType = options.specs.manifest.pageTypes[extracted.type];
     if (!pageType) {
       warnings.push(`${rel}: unknown page type "${extracted.type}", skipped`);
@@ -92,7 +99,7 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     writeFileSync(wikiAbs, renderWikiMarkdown(extracted));
     writeFileSync(metaAbs, `${JSON.stringify(toMetaJson(extracted, wikiRel), null, 2)}\n`);
     outputPaths.push(wikiRel, metaRel);
-    options.onProgress?.({ message: `extract ${index + 1}/${files.length}: ${rel} → ${extracted.type}`, index, total: files.length });
+    options.onProgress?.({ message: `extract ${index + 1}/${files.length}: ${rel} → ${extracted.type}${cached ? " (cached)" : ""}`, index, total: files.length });
   }
 
   outputPaths.sort();
@@ -196,6 +203,16 @@ const ModelPageSchema = z
     body: z.coerce.string().optional().catch(undefined),
   })
   .catch({});
+
+const CachedPageSchema = z.object({
+  type: z.string(),
+  title: z.string(),
+  source: z.string(),
+  facts: z.record(z.string(), z.string()),
+  entities: z.array(z.object({ name: z.string(), type: z.string() })),
+  relationships: z.array(z.object({ source: z.string(), relation: z.string(), target: z.string() })),
+  body: z.string(),
+});
 
 // Force a generated JSON Schema into the strict-mode subset both OpenAI
 // (strict: true) and Anthropic (output_config) accept.
@@ -539,6 +556,59 @@ function normalizeOnlyFilter(only: string | null): string | null {
 
 function matchesOnlyFilter(rel: string, only: string): boolean {
   return rel === only || `processed/parsed/${rel}` === only || basename(rel) === only || rel.endsWith(`/${only}`);
+}
+
+function extractCacheKey(input: {
+  markdown: string;
+  rel: string;
+  specsHash: string;
+  modelConfig: PipelineModelConfig;
+  aliasFingerprint: string;
+}): string {
+  const hash = createHash("sha256");
+  hash.update("extract-cache-v1\0");
+  hash.update(input.rel);
+  hash.update("\0");
+  hash.update(input.markdown);
+  hash.update("\0");
+  hash.update(input.specsHash);
+  hash.update("\0");
+  hash.update(JSON.stringify(redactModelConfig(input.modelConfig)));
+  hash.update("\0");
+  hash.update(input.aliasFingerprint);
+  return hash.digest("hex");
+}
+
+function readExtractCache(dataDir: string, cacheKey: string): ExtractedPage | null {
+  const file = extractCachePath(dataDir, cacheKey);
+  if (!existsSync(file)) return null;
+  try {
+    return CachedPageSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+function writeExtractCache(dataDir: string, cacheKey: string, extracted: ExtractedPage): void {
+  const file = extractCachePath(dataDir, cacheKey);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(extracted, null, 2)}\n`);
+}
+
+function extractCachePath(dataDir: string, cacheKey: string): string {
+  return join(dataDir, ".kh-cache", "extract", `${cacheKey}.json`);
+}
+
+function tableAliasFingerprint(dataDir: string): string {
+  const hash = createHash("sha256");
+  for (const rel of ["table_aliases.json", "processed/table_aliases.json", "wiki/_tables/table_aliases.json"]) {
+    const file = join(dataDir, ...rel.split("/"));
+    hash.update(rel);
+    hash.update("\0");
+    if (existsSync(file)) hash.update(readFileSync(file));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
 }
 
 function slugForPage(path: string, title: string): string {

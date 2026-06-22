@@ -94,4 +94,54 @@ describe("KbBuilderPipelineService", () => {
       rmSync(sourceRoot, { recursive: true, force: true });
     }
   }, 20000);
+
+  it("records source file changes in the build run config for incremental rebuild planning", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-service-data-"));
+    const sourceRoot = mkdtempSync(join(tmpdir(), "kh-kb-service-src-"));
+    const { db, cleanup } = await createTestDb();
+    try {
+      mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
+      mkdirSync(join(sourceRoot, "gamedata"), { recursive: true });
+      writeFileSync(join(sourceRoot, "gamedocs", "battle.md"), "# Battle\n\nBattle rules.");
+      writeFileSync(join(sourceRoot, "gamedata", "Skill.csv"), "Id,Name\n1,Slash\n");
+
+      const sourceService = createSourceBundleService(db, dataDir);
+      await sourceService.importDirectoryAsVersion({
+        rootPath: sourceRoot,
+        bundleId: "default",
+        createdBy: "admin",
+        note: "base"
+      });
+      writeFileSync(join(sourceRoot, "gamedata", "Skill.csv"), "Id,Name\n1,Cleave\n");
+      const imported = await sourceService.importDirectoryAsVersion({
+        rootPath: sourceRoot,
+        bundleId: "default",
+        createdBy: "admin",
+        note: "table patch"
+      });
+
+      const result = await createKbBuilderPipelineService(db, dataDir).build({
+        bundleId: "default",
+        versionId: imported.version.versionId,
+        requestedBy: "admin",
+        stages: ["tables"],
+        model: "deterministic",
+        force: false,
+        only: null,
+        qualityProfileId: "default"
+      });
+
+      expect(result.run.config.incremental).toMatchObject({
+        parentVersionId: expect.any(String),
+        changedPaths: ["gamedata/Skill.csv"],
+        addedPaths: [],
+        modifiedPaths: ["gamedata/Skill.csv"],
+        removedPaths: []
+      });
+    } finally {
+      await cleanup();
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(sourceRoot, { recursive: true, force: true });
+    }
+  }, 20000);
 });

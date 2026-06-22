@@ -180,6 +180,47 @@ describe("runExtractStage", () => {
     }
   });
 
+  it("reuses cached model extraction for unchanged parsed markdown", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system"],
+        relation_types: ["references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview");
+      writeFileSync(join(dataDir, "processed", "parsed", "battle.md"), "# Battle\n\nBattle rules.");
+      const specs = loadWikiSpecs(specDir);
+      const modelConfig = { provider: "openai-compatible" as const, baseUrl: "https://llm.local/v1", model: "gpt-test", apiKey: "secret" };
+
+      const fetchMock = vi.fn(async () => openAiChatOk(JSON.stringify({
+        type: "system",
+        title: "Battle System",
+        source: "gamedocs/battle.md",
+        facts: {},
+        entities: [{ name: "Battle System", type: "system" }],
+        relationships: [],
+        body: "## Overview\nBattle rules from model."
+      })));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await runExtractStage({ dataDir, specs, model: "gpt-test", modelConfig, force: false, only: null });
+      rmSync(join(dataDir, "wiki"), { recursive: true, force: true });
+      fetchMock.mockRejectedValue(new Error("LLM should not be called on cache hit"));
+
+      const result = await runExtractStage({ dataDir, specs, model: "gpt-test", modelConfig, force: false, only: null });
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.outputPaths.sort()).toEqual(["wiki/_meta/battle.json", "wiki/systems/battle.md"]);
+      expect(readFileSync(join(dataDir, "wiki", "systems", "battle.md"), "utf8")).toContain("Battle rules from model.");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("falls back with a warning when an extraction model returns markdown instead of JSON", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
     const specDir = join(dataDir, "processed", "wiki_specs");
