@@ -10,3 +10,5 @@ storage/
 .DS_Store
 .worktrees/
 .superpowers
+pnpm-lock.yaml
+pnpm-workspace.yaml
