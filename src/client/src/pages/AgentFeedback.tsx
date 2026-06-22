@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
+import { formatPercent } from "../utils/format";
 import { IdChip, useNav } from "../ui/navigation";
 
 const MCP_TOOLS = [
@@ -309,6 +310,31 @@ function AgentFeedbackCard({
           <div className="asset-link">
             {insight.componentIds.map((componentId) => (
               <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => onNavigateAsset(componentId)} />
+            ))}
+          </div>
+        )}
+        {event.components.length > 0 && (
+          <div className="feedback-components">
+            {event.components.map((component) => (
+              <button
+                key={component.componentId}
+                type="button"
+                className="feedback-component"
+                onClick={() => onNavigateAsset(component.componentId)}
+              >
+                <span>
+                  <strong>{component.title}</strong>
+                  <code>{component.artifactId}</code>
+                </span>
+                <span className="component-quality">
+                  <Badge label={component.kind} />
+                  <Badge
+                    label={`置信度 ${component.confidence === null ? "n/a" : formatPercent(component.confidence)}`}
+                    tone={component.confidence !== null && component.confidence < 0.7 ? "warn" : "ok"}
+                  />
+                  <Badge label={`证据 ${component.evidenceRecords}`} tone={component.evidenceRecords > 0 ? "ok" : "warn"} />
+                </span>
+              </button>
             ))}
           </div>
         )}

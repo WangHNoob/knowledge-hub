@@ -94,8 +94,9 @@ export class KnowledgeQueryService {
     try {
       const toolResult = await this.executeTool(release, toolName, payload);
       hitComponentIds = uniqueSorted(toolResult.componentIds);
-      const evidenceIds = toolResult.evidenceIds ?? await this.evidenceIdsForComponents(hitComponentIds);
-      qualityFlags = await this.qualityFlagsForComponents(hitComponentIds, evidenceIds);
+      const evidenceRecords = await this.evidenceRecordsForComponents(hitComponentIds);
+      const evidenceIds = toolResult.evidenceIds ?? evidenceRecords.map((record) => String(record.evidence_id));
+      qualityFlags = await this.qualityFlagsForComponents(hitComponentIds, evidenceRecords);
       status = toolResult.forceHit || hitComponentIds.length > 0 ? "hit" : "miss";
 
       const envelope: KnowledgeEnvelope<any> = {
@@ -183,7 +184,7 @@ export class KnowledgeQueryService {
       case "kb_get_quality":
         return this.kbGetQuality(release, optionalString(payload, "componentId"));
       case "kb_get_evidence":
-        return this.kbGetEvidence(release, optionalString(payload, "componentId"), optionalString(payload, "page"));
+        return this.kbGetEvidence(release, optionalString(payload, "componentId"), optionalString(payload, "page"), optionalString(payload, "query", "q", "topic"));
       default:
         throw new Error(`Unknown Knowledge MCP tool: ${toolName}`);
     }
@@ -404,13 +405,15 @@ export class KnowledgeQueryService {
     };
   }
 
-  private async kbGetEvidence(release: ReleaseRecord, componentId?: string, page?: string): Promise<ToolResult> {
+  private async kbGetEvidence(release: ReleaseRecord, componentId?: string, page?: string, query?: string): Promise<ToolResult> {
     const component = componentId
       ? (await this.releaseComponents(release)).find((item) => item.componentId === componentId)
       : page ? await this.findPageComponent(release, page) : null;
-    const componentIds = component ? [component.componentId] : [];
+    const componentIds = component
+      ? [component.componentId]
+      : query ? (await this.kbSearch(release, query)).componentIds : [];
     const records = componentIds.length ? await this.evidenceRecordsForComponents(componentIds) : [];
-    return { result: { records }, componentIds, evidenceIds: records.map((record) => String(record.evidence_id)) };
+    return { result: { componentIds, records }, componentIds, evidenceIds: records.map((record) => String(record.evidence_id)) };
   }
 
   private async graph(release: ReleaseRecord): Promise<{ component: AssetComponent; nodes: GraphNode[]; edges: GraphEdge[] }> {
@@ -547,10 +550,6 @@ export class KnowledgeQueryService {
     return readFileSync(path, "utf8");
   }
 
-  private async evidenceIdsForComponents(componentIds: string[]): Promise<string[]> {
-    return (await this.evidenceRecordsForComponents(componentIds)).map((record) => String(record.evidence_id));
-  }
-
   private async evidenceRecordsForComponents(componentIds: string[]): Promise<Record<string, unknown>[]> {
     if (componentIds.length === 0) return [];
     const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
@@ -568,20 +567,17 @@ export class KnowledgeQueryService {
     return rows.map((row) => String(row.artifact_id));
   }
 
-  private async qualityFlagsForComponents(componentIds: string[], evidenceIds: string[]): Promise<string[]> {
+  private async qualityFlagsForComponents(componentIds: string[], evidenceRecords: Record<string, unknown>[]): Promise<string[]> {
     if (componentIds.length === 0) return [];
     const components = await this.componentsByIds(componentIds);
+    const componentsWithEvidence = new Set(evidenceRecords.map((record) => String(record.component_id)));
     const flags: string[] = [];
     for (const component of components) {
       const confidence = numberFromQuality(component.quality, ["confidence", "score", "overallScore"]);
       if (confidence !== null && confidence < 0.7) flags.push(`low_quality:${component.componentId}`);
-    }
-    if (evidenceIds.length === 0) {
-      flags.push(
-        ...components
-          .filter((component) => EVIDENCE_REQUIRED_COMPONENT_KINDS.has(component.kind))
-          .map((component) => `evidence_missing:${component.componentId}`),
-      );
+      if (EVIDENCE_REQUIRED_COMPONENT_KINDS.has(component.kind) && !componentsWithEvidence.has(component.componentId)) {
+        flags.push(`evidence_missing:${component.componentId}`);
+      }
     }
     return uniqueSorted(flags);
   }
@@ -653,9 +649,12 @@ function stringArg(payload: Record<string, unknown>, ...keys: string[]): string 
   throw new Error(`Missing required argument: ${keys[0]}`);
 }
 
-function optionalString(payload: Record<string, unknown>, key: string): string | undefined {
-  const value = payload[key];
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+function optionalString(payload: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return undefined;
 }
 
 function objectArg(value: unknown): Record<string, unknown> {

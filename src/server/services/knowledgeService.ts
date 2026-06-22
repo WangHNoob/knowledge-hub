@@ -294,7 +294,36 @@ export class KnowledgeService {
 
   async listAgentEvents(): Promise<AgentEvent[]> {
     const { rows } = await this.adapter.query("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50");
-    return rows.map(mapAgentEvent);
+    const events = rows.map(mapAgentEvent);
+    const componentIds = uniqueSorted(events.flatMap((event) => event.hitComponentIds));
+    if (componentIds.length === 0) return events;
+    const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows: componentRows } = await this.adapter.query(
+      `SELECT c.component_id, c.package_id, c.title, c.kind, c.artifact_id, c.quality, COUNT(e.evidence_id)::int AS evidence_records
+       FROM asset_components c
+       LEFT JOIN evidence_records e ON e.component_id = c.component_id
+       WHERE c.component_id IN (${placeholders})
+       GROUP BY c.component_id
+       ORDER BY c.kind, c.title`,
+      componentIds,
+    );
+    const byId = new Map(componentRows.map((row) => {
+      const quality = jsonObject(row.quality);
+      return [String(row.component_id), {
+        componentId: String(row.component_id),
+        packageId: String(row.package_id),
+        title: String(row.title),
+        kind: String(row.kind),
+        artifactId: String(row.artifact_id),
+        quality,
+        confidence: numberFromQuality(quality, ["confidence", "score", "overallScore"]),
+        evidenceRecords: Number(row.evidence_records ?? 0),
+      }] as const;
+    }));
+    return events.map((event) => ({
+      ...event,
+      components: event.hitComponentIds.map((componentId) => byId.get(componentId)).filter((component): component is NonNullable<typeof component> => Boolean(component)),
+    }));
   }
 
   async listMcpAudit(): Promise<McpAuditRecord[]> {
@@ -309,6 +338,31 @@ function countBy<T, K extends string>(items: T[], key: (item: T) => K): Record<K
     acc[value] = (acc[value] ?? 0) + 1;
     return acc;
   }, {} as Record<K, number>);
+}
+
+function jsonObject(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function numberFromQuality(quality: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = quality[key];
+    if (typeof value === "number") return value;
+    if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort();
 }
 
 const EVIDENCE_COVERAGE_COMPONENT_KINDS = new Set(["wiki_page"]);

@@ -116,7 +116,8 @@ export function mapAgentEvent(row: Record<string, unknown>): AgentEvent {
     feedbackType: String(row.feedback_type ?? "hit") as AgentEvent["feedbackType"],
     suggestedAction: String(row.suggested_action ?? ""),
     taskId: String(row.task_id ?? ""),
-    createdAt: String(row.created_at)
+    createdAt: String(row.created_at),
+    components: []
   };
 }
 

@@ -165,6 +165,18 @@ export interface AgentEvent {
   suggestedAction: string;
   taskId: string;
   createdAt: string;
+  components: AgentEventComponent[];
+}
+
+export interface AgentEventComponent {
+  componentId: string;
+  packageId: string;
+  title: string;
+  kind: string;
+  artifactId: string;
+  quality: Record<string, unknown>;
+  confidence: number | null;
+  evidenceRecords: number;
 }
 
 export interface PageTypeSpec {

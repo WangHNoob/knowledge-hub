@@ -814,6 +814,52 @@ code {
   overflow-wrap: anywhere;
 }
 
+.feedback-components {
+  display: grid;
+  gap: 8px;
+}
+
+.feedback-component {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+  padding: 10px 12px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.feedback-component:hover {
+  border-color: var(--olive);
+  box-shadow: var(--shadow-soft);
+}
+
+.feedback-component > span:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.feedback-component code {
+  font-size: 11px;
+  color: var(--ink-faint);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.component-quality {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .raw-feedback {
   border: 1px dashed var(--line);
   border-radius: var(--radius-sm);

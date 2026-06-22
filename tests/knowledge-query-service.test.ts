@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createKnowledgeQueryService } from "../src/server/services/knowledgeQueryService";
+import { createKnowledgeService } from "../src/server/services/knowledgeService";
 import { createReleaseService } from "../src/server/services/releaseService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
 import { createTestDb, type TestDbHandle } from "./helpers/testDb";
@@ -61,6 +62,10 @@ describe("KnowledgeQueryService", () => {
       const evidence = await service.runTool("kb_get_evidence", { componentId: fixture.pageComponentId }, { sessionId: "test", agentRole: "planner" });
       expect(evidence.result.records[0].quote).toContain("stamina");
 
+      const evidenceByQuery = await service.runTool("kb_get_evidence", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
+      expect(evidenceByQuery.trace.componentIds).toContain(fixture.pageComponentId);
+      expect(evidenceByQuery.trace.evidenceIds).toContain("ev_query_page");
+
       const { rows: auditRows } = await fixture.db.adapter.query("SELECT * FROM mcp_audit ORDER BY created_at");
       expect(auditRows.length).toBeGreaterThanOrEqual(9);
       expect(auditRows.at(-1)?.status).toBe("hit");
@@ -95,6 +100,14 @@ describe("KnowledgeQueryService", () => {
       const { rows: events } = await fixture.db.adapter.query("SELECT * FROM agent_events ORDER BY created_at");
       expect(events.map((event) => event.feedback_type)).toContain("miss");
       expect(events.map((event) => event.feedback_type)).toContain("low_quality_hit");
+      const feedbackEvents = await createKnowledgeService(fixture.db).listAgentEvents();
+      const lowQualityEvent = feedbackEvents.find((event) => event.feedbackType === "low_quality_hit");
+      expect(lowQualityEvent?.components[0]).toMatchObject({
+        componentId: fixture.pageComponentId,
+        title: "Battle System",
+        confidence: 0.42,
+        evidenceRecords: 1
+      });
 
       const { rows: tasks } = await fixture.db.adapter.query("SELECT * FROM review_tasks ORDER BY created_at");
       expect(tasks.some((task) => task.severity === "blocking" && String(task.title).includes("错误本候选"))).toBe(true);
