@@ -123,6 +123,29 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("resolves topics to actionable table, entity, and page targets", async () => {
+    const fixture = await setupPublishedKnowledgeFixture({ dependencyText: "Uses 技能表." });
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const tableTopic = await service.runTool("kb_resolve_topic", { topic: "技能表" }, { sessionId: "test", agentRole: "planner" });
+      expect(tableTopic.result.resolvedType).toBe("table");
+      expect(tableTopic.result.resolved.id).toBe("Combat/Skill");
+      expect(tableTopic.result.suggestedTools).toContain("kb_get_table_schema");
+      expect(tableTopic.result.nextStep).toContain("kb_get_table_schema");
+
+      const entityTopic = await service.runTool("kb_resolve_topic", { topic: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(entityTopic.result.targets.some((target: { type: string }) => target.type === "entity")).toBe(true);
+      expect(entityTopic.result.suggestedTools).toContain("kb_get_neighbors");
+
+      const pageTopic = await service.runTool("kb_resolve_topic", { topic: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
+      expect(pageTopic.result.targets.some((target: { type: string; title: string }) => target.type === "page" && target.title === "Battle System")).toBe(true);
+      expect(pageTopic.result.suggestedTools).toContain("kb_get_page");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it("serves wiki knowledge from the published OKF bundle instead of internal component files", async () => {
     const fixture = await setupPublishedKnowledgeFixture({ withEvidence: false });
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);

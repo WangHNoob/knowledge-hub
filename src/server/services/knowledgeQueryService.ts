@@ -304,8 +304,51 @@ export class KnowledgeQueryService {
 
   private async kbResolveTopic(release: ReleaseRecord, topic: string): Promise<ToolResult> {
     const search = await this.kbSearch(release, topic);
-    const item = (search.result as { items: unknown[] }).items[0] ?? null;
-    return { result: { topic, resolved: item }, componentIds: search.componentIds };
+    const items = ((search.result as { items?: unknown[] }).items ?? []) as Array<Record<string, unknown>>;
+    const table = await this.findTableSchema(release, topic);
+    const entity = this.findGraphNodeSafe(release, topic);
+    const page = items[0] ?? null;
+    const targets = [
+      ...(table ? [{
+        type: "table",
+        id: table.schema.table_name,
+        title: table.schema.table_name,
+        componentId: table.component.componentId,
+        suggestedTools: ["kb_get_table_schema", "kb_query_table", "kb_validate_table"],
+        why: [`表名/别名解析到 ${table.schema.table_name}`],
+      }] : []),
+      ...(entity ? [{
+        type: "entity",
+        id: entity.node.id,
+        title: entity.node.label,
+        componentId: entity.componentId,
+        suggestedTools: ["kb_get_entity", "kb_get_neighbors", "kb_get_relations"],
+        why: [`图谱实体命中 ${entity.node.label}`],
+      }] : []),
+      ...items.slice(0, 5).map((item) => ({
+        type: "page",
+        id: String(item.componentId ?? ""),
+        title: String(item.title ?? ""),
+        componentId: String(item.componentId ?? ""),
+        okfPath: String(item.okfPath ?? ""),
+        suggestedTools: pageSuggestedTools(item),
+        why: Array.isArray(item.why) ? item.why : [],
+        trust: item.trust ?? null,
+      })),
+    ];
+    const resolved = targets[0] ?? page;
+    return {
+      result: {
+        topic,
+        resolved,
+        resolvedType: targets[0]?.type ?? (page ? "page" : "none"),
+        targets,
+        suggestedTools: uniqueSorted(targets.flatMap((target) => target.suggestedTools)),
+        nextStep: targets[0] ? nextStepForTarget(targets[0]) : "kb_search returned no target; add aliases or source material, then rebuild and publish.",
+      },
+      componentIds: uniqueSorted([...search.componentIds, ...targets.map((target) => String(target.componentId ?? ""))]),
+      artifactIds: search.artifactIds,
+    };
   }
 
   private async kbGetPage(release: ReleaseRecord, page: string): Promise<ToolResult> {
@@ -390,6 +433,17 @@ export class KnowledgeQueryService {
         .flatMap((edge) => [edge.target, edge.target.replace(/^table:/u, "")]));
     } catch {
       return new Set();
+    }
+  }
+
+  private findGraphNodeSafe(release: ReleaseRecord, entityId: string): { componentId: string; node: GraphNode } | null {
+    try {
+      const graph = this.readOkfGraph(release);
+      if (!graph) return null;
+      const node = (graph.nodes ?? []).find((item) => same(item.id, entityId) || same(item.label, entityId));
+      return node ? { componentId: graph.componentId, node } : null;
+    } catch {
+      return null;
     }
   }
 
@@ -925,6 +979,23 @@ function optionalString(payload: Record<string, unknown>, ...keys: string[]): st
 
 function objectArg(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function pageSuggestedTools(item: Record<string, unknown>): string[] {
+  const fields = Array.isArray(item.matchedFields) ? item.matchedFields.map(String) : [];
+  const tools = ["kb_get_page", "kb_get_evidence", "kb_get_quality"];
+  if (fields.includes("tables") || fields.includes("dataDependencies") || (Array.isArray(item.tableDependencies) && item.tableDependencies.length > 0)) {
+    tools.push("kb_get_page_tables");
+  }
+  return tools;
+}
+
+function nextStepForTarget(target: { type?: unknown; title?: unknown; id?: unknown }): string {
+  const title = String(target.title ?? target.id ?? "");
+  if (target.type === "table") return `Use kb_get_table_schema for ${title}, then kb_query_table if row data is needed.`;
+  if (target.type === "entity") return `Use kb_get_entity for ${title}, then kb_get_neighbors to inspect related pages and tables.`;
+  if (target.type === "page") return `Use kb_get_page for ${title}; call kb_get_page_tables when tableDependencies are present.`;
+  return "Use kb_search with a more specific topic.";
 }
 
 function normalize(value: string): string {
