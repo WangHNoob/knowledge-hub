@@ -29,6 +29,7 @@ export function evaluateQualityGate(options: {
       const quality = evaluateWikiPage(markdown, meta, requiredSections, requiredFacts);
       pageScores.push(quality.wikiSpecScore);
       componentQuality[rel] = {
+        completenessScore: quality.wikiSpecScore,
         confidence: quality.wikiSpecScore,
         structureScore: quality.structureScore,
         factsScore: quality.factsScore,

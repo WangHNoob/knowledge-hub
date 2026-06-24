@@ -7,6 +7,7 @@ import { deletePackage, getComponentContent, getComponentOwner, getPackage, list
 import { Badge, Metric, Page } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
 import { formatPercent } from "../utils/format";
+import { TRUST_DIMENSIONS, trustFromQuality, trustLabel, trustStatusLabel } from "../utils/trust";
 import { IdChip, useNav } from "../ui/navigation";
 
 type TreeNode = {
@@ -174,6 +175,11 @@ export function Assets() {
 
   const pkg = detail.data?.package;
   const openReviewTasks = (detail.data?.reviewTasks ?? []).filter((task) => task.status === "open");
+  const componentTrusts = (detail.data?.components ?? []).map((component) => trustFromQuality(component.quality)).filter((trust): trust is NonNullable<typeof trust> => Boolean(trust));
+  const avgTrust = componentTrusts.length ? componentTrusts.reduce((sum, trust) => sum + trust.score, 0) / componentTrusts.length : null;
+  const minTrust = componentTrusts.length ? Math.min(...componentTrusts.map((trust) => trust.score)) : null;
+  const selectedComponent = openFile && detail.data ? detail.data.components.find((component) => component.componentId === openFile.componentId) ?? null : null;
+  const selectedTrust = selectedComponent ? trustFromQuality(selectedComponent.quality) : null;
 
   return (
     <Page title="知识资产" subtitle="资产包保留 Wiki、Index、Graph、表结构、证据和质量报告之间的关系。">
@@ -253,12 +259,17 @@ export function Assets() {
               {deleteError && <p className="error">{deleteError}</p>}
               <div className="evidence-panel">
                 <Metric
+                  label="平均可信度"
+                  value={avgTrust === null ? "n/a" : formatPercent(avgTrust)}
+                  hint={minTrust === null ? "无 trust 数据" : `最低 ${formatPercent(minTrust)}`}
+                  tone={minTrust !== null && minTrust < 0.7 ? "warn" : "ok"}
+                />
+                <Metric
                   label="证据覆盖"
                   value={formatPercent(detail.data.evidenceCoverage.coverageRate)}
                   hint={`${detail.data.evidenceCoverage.coveredComponents}/${detail.data.evidenceCoverage.totalComponents} 个组件`}
                   tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"}
                 />
-                <Metric label="证据记录" value={detail.data.evidenceCoverage.evidenceRecords} hint="可追溯 source version" />
                 <Metric label="待补证据" value={detail.data.evidenceCoverage.missingComponents} hint="优先进入审核中心" tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"} />
               </div>
               <div className="asset-browser">
@@ -279,6 +290,27 @@ export function Assets() {
                         <code>{fileContent.data.legacyPath}</code>
                         <span>{fileContent.data.kind}{fileContent.data.truncated ? " · 已截断" : ""}</span>
                       </div>
+                      {selectedComponent && (
+                        <div className="asset-trust-detail">
+                          <div>
+                            <strong>{trustLabel(selectedTrust)}</strong>
+                            <span>{selectedTrust ? trustStatusLabel(selectedTrust.status) : "暂无可信度计算"}</span>
+                          </div>
+                          {selectedTrust && (
+                            <>
+                              <div className="trust-breakdown">
+                                {TRUST_DIMENSIONS.map((dimension) => (
+                                  <span key={dimension.key}>
+                                    <b>{dimension.label}</b>
+                                    <i>{formatPercent(selectedTrust.breakdown[dimension.key])}</i>
+                                  </span>
+                                ))}
+                              </div>
+                              <small>{selectedTrust.caps.length ? `封顶：${selectedTrust.caps.map((cap) => cap.label).join(" / ")}` : selectedTrust.reasons.join(" / ")}</small>
+                            </>
+                          )}
+                        </div>
+                      )}
                       <pre className="viewer-body">{formatContent(fileContent.data.legacyPath, fileContent.data.content)}</pre>
                     </>
                   )}

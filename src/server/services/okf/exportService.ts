@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { basename, dirname, isAbsolute, join, posix, relative } from "node:path";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from "../../types";
+import { trustFromQuality } from "../trustScore";
 import { renderReportMarkdown } from "./reportRender";
 import { scanWorkspace } from "./conformanceService";
 import { OKF_EXPORTER_VERSION, type ConformanceReport } from "./types";
@@ -205,6 +206,7 @@ function exportGraphAsset(dataDir: string, bundleDir: string, components: AssetC
     componentId: component.componentId,
     packageId: component.packageId,
     artifactId: component.artifactId,
+    trust: trustFromQuality(component.quality),
     nodes: Array.isArray(graph.nodes) ? graph.nodes : [],
     edges: Array.isArray(graph.edges) ? graph.edges : [],
   });
@@ -243,6 +245,7 @@ function normalizeTableSchemas(schema: TableSchemaJson, component: AssetComponen
     componentId: component.componentId,
     packageId: component.packageId,
     artifactId: component.artifactId,
+    trust: trustFromQuality(component.quality),
     sourceVersionIds: packageSourceVersionIds(packages),
     schema: {
       table_name: schema.table_name,
@@ -294,10 +297,46 @@ function renderOkfMarkdown(input: {
     `  packageId: ${yamlString(input.component.packageId)}`,
     `  artifactId: ${yamlString(input.component.artifactId)}`,
     `  legislationProfileHash: ${yamlString(input.activeRuleProfileHash)}`,
+    ...renderTrustFrontmatter(input.component),
     "---",
     "",
   ].join("\n");
-  return `${frontmatter}${body.trim()}\n${renderCitations(input.evidenceRows)}`;
+  return `${frontmatter}${body.trim()}\n${renderTrustSection(input.component)}${renderCitations(input.evidenceRows)}`;
+}
+
+function renderTrustFrontmatter(component: AssetComponent): string[] {
+  const trust = trustFromQuality(component.quality);
+  if (!trust) return [];
+  return [
+    "  trust:",
+    `    version: ${yamlString(trust.version)}`,
+    `    score: ${trust.score}`,
+    `    status: ${yamlString(trust.status)}`,
+    `    evidence: ${trust.breakdown.evidence}`,
+    `    completeness: ${trust.breakdown.completeness}`,
+    `    auditFreshness: ${trust.breakdown.auditFreshness}`,
+    `    consistency: ${trust.breakdown.consistency}`,
+    `    lastTrustedAuditAt: ${yamlString(trust.lastTrustedAuditAt ?? "")}`,
+  ];
+}
+
+function renderTrustSection(component: AssetComponent): string {
+  const trust = trustFromQuality(component.quality);
+  if (!trust) return "";
+  const caps = trust.caps.length ? trust.caps.map((cap) => cap.label).join("; ") : "none";
+  return [
+    "",
+    "# Trust",
+    "",
+    `- score: ${trust.score}`,
+    `- status: ${trust.status}`,
+    `- evidence: ${trust.breakdown.evidence}`,
+    `- completeness: ${trust.breakdown.completeness}`,
+    `- auditFreshness: ${trust.breakdown.auditFreshness}`,
+    `- consistency: ${trust.breakdown.consistency}`,
+    `- caps: ${caps}`,
+    "",
+  ].join("\n");
 }
 
 function renderCitations(rows: EvidenceRow[]): string {

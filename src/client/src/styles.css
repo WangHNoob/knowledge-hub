@@ -820,8 +820,8 @@ code {
 }
 
 .feedback-component {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   text-align: left;
@@ -858,6 +858,99 @@ code {
   justify-content: flex-end;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.trust-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.trust-panel,
+.asset-trust-detail {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--ink);
+  padding: 12px;
+  text-align: left;
+}
+
+.trust-panel {
+  cursor: pointer;
+}
+
+.trust-panel:hover {
+  border-color: var(--olive);
+  box-shadow: var(--shadow-soft);
+}
+
+.trust-panel > span:first-child,
+.asset-trust-detail > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.trust-panel code {
+  color: var(--ink-faint);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.trust-panel-score {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.trust-breakdown {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(86px, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.feedback-component .trust-breakdown {
+  grid-column: 1 / -1;
+}
+
+.trust-breakdown span {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  padding: 6px 8px;
+}
+
+.trust-breakdown b {
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trust-breakdown i {
+  color: var(--ink);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.asset-trust-detail {
+  margin-bottom: 10px;
+}
+
+.asset-trust-detail small,
+.trust-panel small {
+  color: var(--ink-faint);
+  line-height: 1.5;
 }
 
 .raw-feedback {
@@ -2507,7 +2600,8 @@ form button:active:not(:disabled) {
   .rule-grid.two,
   .mcp-console,
   .diagnostics-workbench,
-  .diagnostics-metrics {
+  .diagnostics-metrics,
+  .trust-breakdown {
     grid-template-columns: 1fr;
   }
 

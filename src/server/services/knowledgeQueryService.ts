@@ -4,12 +4,13 @@ import { isAbsolute, join, relative } from "node:path";
 import { nanoid } from "nanoid";
 import xlsx from "xlsx";
 
-import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, ReleaseRecord } from "../types";
+import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, ReleaseRecord, TrustScore } from "../types";
 import { jsonArray, mapComponent, mapPackage } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createFeedbackService, type FeedbackService } from "./feedbackService";
 import { createReleaseService } from "./releaseService";
 import { createSourceBundleService } from "./sourceBundleService";
+import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
 const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
 
@@ -58,11 +59,13 @@ interface KnowledgeAssetRef {
   componentId: string;
   artifactId: string;
   title?: string;
+  trust?: TrustScore | null;
 }
 
 interface OkfGraphAsset {
   componentId: string;
   artifactId: string;
+  trust?: TrustScore | null;
   nodes?: GraphNode[];
   edges?: GraphEdge[];
 }
@@ -70,6 +73,7 @@ interface OkfGraphAsset {
 interface OkfTableSchemaEntry {
   componentId: string;
   artifactId: string;
+  trust?: TrustScore | null;
   sourceVersionIds?: string[];
   schema: TableSchema;
 }
@@ -84,6 +88,7 @@ interface OkfPage {
   packageId: string;
   artifactId: string;
   kind: string;
+  trust: TrustScore | null;
   citations: OkfCitation[];
 }
 
@@ -139,17 +144,19 @@ export class KnowledgeQueryService {
       hitComponentIds = uniqueSorted(toolResult.componentIds);
       const okfEvidenceRecords = this.okfEvidenceRecordsForComponents(release, hitComponentIds);
       const dbEvidenceRecords = await this.evidenceRecordsForComponents(hitComponentIds);
+      const trust = await this.trustSummaryForComponents(release, hitComponentIds);
       const evidenceIds = toolResult.evidenceIds ?? uniqueSorted([
         ...okfEvidenceRecords.map((record) => record.evidenceId),
         ...dbEvidenceRecords.map((record) => String(record.evidence_id)),
       ]);
-      qualityFlags = await this.qualityFlagsForComponents(hitComponentIds, dbEvidenceRecords, new Set(okfEvidenceRecords.map((record) => record.componentId)));
+      qualityFlags = await this.qualityFlagsForComponents(hitComponentIds, dbEvidenceRecords, new Set(okfEvidenceRecords.map((record) => record.componentId)), new Map(trust.components.map((component) => [component.componentId, component.trust] as const)));
       status = toolResult.forceHit || hitComponentIds.length > 0 ? "hit" : "miss";
 
       const envelope: KnowledgeEnvelope<any> = {
         release: releaseEnvelope(release),
         result: toolResult.result,
         qualityFlags,
+        trust,
         trace: {
           releaseId: release.releaseId,
           componentIds: hitComponentIds,
@@ -253,6 +260,7 @@ export class KnowledgeQueryService {
         okfPath: page.okfPath,
         kind: page.kind,
         type: page.type,
+        trust: page.trust,
         snippet: snippet(page.body, needle),
         score,
       });
@@ -283,6 +291,7 @@ export class KnowledgeQueryService {
         artifactId: okfPage.artifactId,
         okfPath: okfPage.okfPath,
         type: okfPage.type,
+        trust: okfPage.trust,
         markdown: okfPage.markdown,
       },
       componentIds: [okfPage.componentId],
@@ -313,6 +322,7 @@ export class KnowledgeQueryService {
           okfPath: page.okfPath,
           kind: page.kind,
           type: page.type,
+          trust: page.trust,
         })),
       },
       componentIds: pages.map((page) => page.componentId),
@@ -328,7 +338,7 @@ export class KnowledgeQueryService {
     const graphTables = await this.pageConfiguredTables(release, title);
     const tables = schemas
       .filter(({ schema }) => markdown.includes(schema.table_name) || graphTables.has(schema.table_name) || graphTables.has(`table:${schema.table_name}`))
-      .map(({ schema, component }) => ({ table: schema.table_name, componentId: component.componentId, fields: schema.fields }));
+      .map(({ schema, component }) => ({ table: schema.table_name, componentId: component.componentId, fields: schema.fields, trust: component.trust ?? null }));
     return {
       result: { page, tables },
       componentIds: uniqueSorted([...pageResult.componentIds, ...tables.map((table) => table.componentId)]),
@@ -352,7 +362,7 @@ export class KnowledgeQueryService {
     const graph = await this.graph(release);
     const node = graph.nodes.find((item) => same(item.id, entityId) || same(item.label, entityId));
     return {
-      result: node ? { found: true, node } : { found: false, entityId },
+      result: node ? { found: true, node, trust: graph.component.trust ?? null } : { found: false, entityId },
       componentIds: node ? [graph.component.componentId] : [],
       artifactIds: node ? [graph.component.artifactId] : [],
     };
@@ -365,13 +375,13 @@ export class KnowledgeQueryService {
     const edges = graph.edges.filter((edge) => edge.source === node.id || edge.target === node.id);
     const ids = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
     const nodes = graph.nodes.filter((item) => ids.has(item.id));
-    return { result: { found: true, node, nodes, edges }, componentIds: [graph.component.componentId], artifactIds: [graph.component.artifactId] };
+    return { result: { found: true, node, nodes, edges, trust: graph.component.trust ?? null }, componentIds: [graph.component.componentId], artifactIds: [graph.component.artifactId] };
   }
 
   private async kbListEntities(release: ReleaseRecord, type?: string): Promise<ToolResult> {
     const graph = await this.graph(release);
     const nodes = type ? graph.nodes.filter((node) => same(node.type, type)) : graph.nodes;
-    return { result: { nodes }, componentIds: [graph.component.componentId], artifactIds: [graph.component.artifactId] };
+    return { result: { nodes, trust: graph.component.trust ?? null }, componentIds: [graph.component.componentId], artifactIds: [graph.component.artifactId] };
   }
 
   private async kbGetRelations(release: ReleaseRecord, source?: string, target?: string, relation?: string): Promise<ToolResult> {
@@ -381,7 +391,7 @@ export class KnowledgeQueryService {
       (!target || same(edge.target, target)) &&
       (!relation || same(edge.relation, relation))
     );
-    return { result: { edges }, componentIds: edges.length ? [graph.component.componentId] : [], artifactIds: edges.length ? [graph.component.artifactId] : [] };
+    return { result: { edges, trust: edges.length ? graph.component.trust ?? null : null }, componentIds: edges.length ? [graph.component.componentId] : [], artifactIds: edges.length ? [graph.component.artifactId] : [] };
   }
 
   private async kbListTables(release: ReleaseRecord): Promise<ToolResult> {
@@ -394,6 +404,7 @@ export class KnowledgeQueryService {
           relPath: schema.rel_path,
           fields: schema.fields,
           rowCount: schema.row_count,
+          trust: component.trust ?? null,
         })),
       },
       componentIds: schemas.map(({ component }) => component.componentId),
@@ -404,7 +415,7 @@ export class KnowledgeQueryService {
     const found = await this.findTableSchema(release, table);
     if (!found) return { result: { found: false, table }, componentIds: [] };
     return {
-      result: { found: true, table, schema: found.schema },
+      result: { found: true, table, schema: found.schema, trust: found.component.trust ?? null },
       componentIds: [found.component.componentId],
       artifactIds: [found.component.artifactId],
     };
@@ -416,7 +427,7 @@ export class KnowledgeQueryService {
     const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
     const filtered = rows.filter((row) => Object.entries(where).every(([key, value]) => String(row[key] ?? "") === String(value)));
     return {
-      result: { found: true, table: found.schema.table_name, rows: filtered.slice(0, Math.max(1, Math.min(limit || 20, 200))), totalRows: filtered.length },
+      result: { found: true, table: found.schema.table_name, rows: filtered.slice(0, Math.max(1, Math.min(limit || 20, 200))), totalRows: filtered.length, trust: found.component.trust ?? null },
       componentIds: [found.component.componentId],
       artifactIds: [found.component.artifactId],
       sourceVersionIds: releaseSourceVersionIds(release),
@@ -429,7 +440,7 @@ export class KnowledgeQueryService {
     const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
     const missingFields = found.schema.fields.filter((field) => rows.some((row) => !(field in row)));
     return {
-      result: { valid: missingFields.length === 0, table: found.schema.table_name, rowCount: rows.length, missingFields },
+      result: { valid: missingFields.length === 0, table: found.schema.table_name, rowCount: rows.length, missingFields, trust: found.component.trust ?? null },
       componentIds: [found.component.componentId],
       artifactIds: [found.component.artifactId],
     };
@@ -441,7 +452,7 @@ export class KnowledgeQueryService {
     const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
     const matches = rows.filter((row) => String(row[field] ?? "") === String(value));
     return {
-      result: { found: true, table: found.schema.table_name, field, value, matches },
+      result: { found: true, table: found.schema.table_name, field, value, matches, trust: found.component.trust ?? null },
       componentIds: [found.component.componentId],
       artifactIds: [found.component.artifactId],
     };
@@ -488,7 +499,7 @@ export class KnowledgeQueryService {
     const okfGraph = this.readOkfGraph(release);
     if (okfGraph) {
       return {
-        component: { componentId: okfGraph.componentId, artifactId: okfGraph.artifactId },
+        component: { componentId: okfGraph.componentId, artifactId: okfGraph.artifactId, trust: okfGraph.trust ?? null },
         nodes: okfGraph.nodes ?? [],
         edges: okfGraph.edges ?? [],
       };
@@ -496,14 +507,14 @@ export class KnowledgeQueryService {
     const component = (await this.releaseComponents(release, ["graph_snapshot"]))[0];
     if (!component) throw new Error("Current release does not contain a graph_snapshot component.");
     const graph = JSON.parse(await this.readComponentText(component)) as { nodes?: GraphNode[]; edges?: GraphEdge[] };
-    return { component, nodes: graph.nodes ?? [], edges: graph.edges ?? [] };
+    return { component: { ...component, trust: trustFromQuality(component.quality) }, nodes: graph.nodes ?? [], edges: graph.edges ?? [] };
   }
 
   private async tableSchemas(release: ReleaseRecord): Promise<Array<{ component: KnowledgeAssetRef; schema: TableSchema; sourceVersionIds?: string[] }>> {
     const okfSchemas = this.readOkfTableSchemas(release);
     if (okfSchemas.length > 0) {
       return okfSchemas.map((entry) => ({
-        component: { componentId: entry.componentId, artifactId: entry.artifactId },
+        component: { componentId: entry.componentId, artifactId: entry.artifactId, trust: entry.trust ?? null },
         schema: entry.schema,
         sourceVersionIds: entry.sourceVersionIds,
       }));
@@ -511,7 +522,7 @@ export class KnowledgeQueryService {
     const components = await this.releaseComponents(release, ["table_schema_json"]);
     const schemas = [];
     for (const component of components) {
-      schemas.push({ component, schema: JSON.parse(await this.readComponentText(component)) as TableSchema });
+      schemas.push({ component: { ...component, trust: trustFromQuality(component.quality) }, schema: JSON.parse(await this.readComponentText(component)) as TableSchema });
     }
     return schemas;
   }
@@ -718,14 +729,47 @@ export class KnowledgeQueryService {
     return rows.map((row) => String(row.artifact_id));
   }
 
-  private async qualityFlagsForComponents(componentIds: string[], evidenceRecords: Record<string, unknown>[], okfEvidenceComponentIds = new Set<string>()): Promise<string[]> {
+  private async trustSummaryForComponents(release: ReleaseRecord, componentIds: string[]): Promise<KnowledgeEnvelope["trust"]> {
+    if (componentIds.length === 0) return { averageScore: null, minScore: null, components: [] };
+    const components = await this.componentsByIds(componentIds);
+    const okfTrust = this.okfTrustByComponent(release, componentIds);
+    const out = components.map((component) => ({
+      componentId: component.componentId,
+      artifactId: component.artifactId,
+      title: component.title,
+      kind: component.kind,
+      trust: okfTrust.get(component.componentId) ?? trustFromQuality(component.quality),
+    }));
+    const scores = out.map((component) => component.trust?.score).filter((score): score is number => typeof score === "number" && Number.isFinite(score));
+    return {
+      averageScore: scores.length ? round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : null,
+      minScore: scores.length ? Math.min(...scores) : null,
+      components: out,
+    };
+  }
+
+  private okfTrustByComponent(release: ReleaseRecord, componentIds: string[]): Map<string, TrustScore | null> {
+    const wanted = new Set(componentIds);
+    const out = new Map<string, TrustScore | null>();
+    for (const page of this.readOkfPages(release)) {
+      if (wanted.has(page.componentId)) out.set(page.componentId, page.trust);
+    }
+    const graph = this.readOkfGraph(release);
+    if (graph && wanted.has(graph.componentId)) out.set(graph.componentId, graph.trust ?? null);
+    for (const entry of this.readOkfTableSchemas(release)) {
+      if (wanted.has(entry.componentId)) out.set(entry.componentId, entry.trust ?? null);
+    }
+    return out;
+  }
+
+  private async qualityFlagsForComponents(componentIds: string[], evidenceRecords: Record<string, unknown>[], okfEvidenceComponentIds = new Set<string>(), trustByComponent = new Map<string, TrustScore | null>()): Promise<string[]> {
     if (componentIds.length === 0) return [];
     const components = await this.componentsByIds(componentIds);
     const componentsWithEvidence = new Set(evidenceRecords.map((record) => String(record.component_id)));
     const flags: string[] = [];
     for (const component of components) {
-      const confidence = numberFromQuality(component.quality, ["confidence", "score", "overallScore"]);
-      if (confidence !== null && confidence < 0.7) flags.push(`low_quality:${component.componentId}`);
+      const trustScore = trustByComponent.get(component.componentId)?.score ?? scoreFromQuality(component.quality);
+      if (trustScore !== null && trustScore < 0.7) flags.push(`low_trust:${component.componentId}`);
       if (EVIDENCE_REQUIRED_COMPONENT_KINDS.has(component.kind) && !componentsWithEvidence.has(component.componentId) && !okfEvidenceComponentIds.has(component.componentId)) {
         flags.push(`evidence_missing:${component.componentId}`);
       }
@@ -847,7 +891,30 @@ function parseOkfPage(okfPath: string, markdown: string): OkfPage | null {
     packageId: yamlScalar(frontmatter, "packageId"),
     artifactId,
     kind: okfKind(frontmatter, artifactId),
+    trust: parseOkfTrust(frontmatter),
     citations: parseOkfCitations(body, componentId, okfPath),
+  };
+}
+
+function parseOkfTrust(frontmatter: string): TrustScore | null {
+  const score = numberScalar(frontmatter, "score");
+  const version = yamlScalar(frontmatter, "version");
+  if (score === null || version !== "v2-lite") return null;
+  return {
+    version: "v2-lite",
+    score,
+    status: statusScalar(yamlScalar(frontmatter, "status")),
+    breakdown: {
+      evidence: numberScalar(frontmatter, "evidence") ?? 0,
+      completeness: numberScalar(frontmatter, "completeness") ?? 0,
+      auditFreshness: numberScalar(frontmatter, "auditFreshness") ?? 0,
+      consistency: numberScalar(frontmatter, "consistency") ?? 0,
+    },
+    caps: [],
+    reasons: [],
+    lastTrustedAuditAt: yamlScalar(frontmatter, "lastTrustedAuditAt") || null,
+    auditHalfLifeDays: 180,
+    evidenceRequired: true,
   };
 }
 
@@ -889,6 +956,15 @@ function yamlScalar(frontmatter: string, key: string): string {
   } catch {
     return raw.replace(/^["']|["']$/gu, "");
   }
+}
+
+function numberScalar(frontmatter: string, key: string): number | null {
+  const value = yamlScalar(frontmatter, key);
+  return value.trim() !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+function statusScalar(value: string): TrustScore["status"] {
+  return value === "trusted" || value === "usable_with_risk" || value === "needs_review" || value === "blocked" ? value : "needs_review";
 }
 
 function okfKind(frontmatter: string, artifactId: string): string {
@@ -934,6 +1010,10 @@ function numberFromQuality(quality: Record<string, unknown>, keys: string[]): nu
     if (typeof value === "string" && Number.isFinite(Number(value))) return Number(value);
   }
   return null;
+}
+
+function round(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function uniqueSorted(values: string[]): string[] {

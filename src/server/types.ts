@@ -106,6 +106,31 @@ export interface AssetComponent {
   quality: Record<string, unknown>;
 }
 
+export interface TrustScoreBreakdown {
+  evidence: number;
+  completeness: number;
+  auditFreshness: number;
+  consistency: number;
+}
+
+export interface TrustScoreCap {
+  id: string;
+  label: string;
+  maxScore: number;
+}
+
+export interface TrustScore {
+  version: "v2-lite";
+  score: number;
+  status: "trusted" | "usable_with_risk" | "needs_review" | "blocked";
+  breakdown: TrustScoreBreakdown;
+  caps: TrustScoreCap[];
+  reasons: string[];
+  lastTrustedAuditAt: string | null;
+  auditHalfLifeDays: number;
+  evidenceRequired: boolean;
+}
+
 export interface EvidenceRecord {
   evidenceId: string;
   packageId: string;
@@ -177,6 +202,7 @@ export interface AgentEventComponent {
   artifactId: string;
   quality: Record<string, unknown>;
   confidence: number | null;
+  trust: TrustScore | null;
   evidenceRecords: number;
 }
 
@@ -296,6 +322,17 @@ export interface KnowledgeEnvelope<T = unknown> {
   };
   result: T;
   qualityFlags: string[];
+  trust: {
+    averageScore: number | null;
+    minScore: number | null;
+    components: Array<{
+      componentId: string;
+      artifactId: string;
+      title: string;
+      kind: string;
+      trust: TrustScore | null;
+    }>;
+  };
   trace: KnowledgeTrace;
 }
 

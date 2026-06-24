@@ -26,6 +26,7 @@ import type {
   SearchResult,
   UserRecord
 } from "../types";
+import { trustFromQuality } from "./trustScore";
 
 export function createKnowledgeService(db: DatabaseHandle) {
   return new KnowledgeService(db);
@@ -331,6 +332,7 @@ export class KnowledgeService {
         artifactId: String(row.artifact_id),
         quality,
         confidence: numberFromQuality(quality, ["confidence", "score", "overallScore"]),
+        trust: trustFromQuality(quality),
         evidenceRecords: Number(row.evidence_records ?? 0),
       }] as const;
     }));

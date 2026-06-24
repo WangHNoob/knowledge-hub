@@ -6,6 +6,7 @@ import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
 import { formatPercent, formatTime } from "../utils/format";
+import { TRUST_DIMENSIONS, trustLabel, trustStatusLabel, trustTone } from "../utils/trust";
 import { IdChip, useNav } from "../ui/navigation";
 
 const MCP_TOOLS = [
@@ -160,8 +161,27 @@ export function AgentFeedback() {
                 <div className="metrics compact">
                   <Metric label="Release" value={envelope.release.version} hint={envelope.release.releaseId} />
                   <Metric label="组件命中" value={envelope.trace.componentIds.length} hint={envelope.trace.componentIds.join(", ") || "none"} />
+                  <Metric
+                    label="平均可信度"
+                    value={envelope.trust.averageScore === null ? "n/a" : formatPercent(envelope.trust.averageScore)}
+                    hint={envelope.trust.minScore === null ? "无命中组件" : `最低 ${formatPercent(envelope.trust.minScore)}`}
+                    tone={envelope.trust.minScore !== null && envelope.trust.minScore < 0.7 ? "warn" : "ok"}
+                  />
                   <Metric label="质量 flags" value={envelope.qualityFlags.length} hint={envelope.qualityFlags.join(", ") || "clean"} tone={envelope.qualityFlags.length ? "warn" : "ok"} />
                 </div>
+                {envelope.trust.components.length > 0 && (
+                  <div className="trust-stack">
+                    {envelope.trust.components.map((component) => (
+                      <TrustPanel
+                        key={component.componentId}
+                        title={component.title || component.artifactId}
+                        subtitle={component.artifactId}
+                        trust={component.trust}
+                        onClick={() => navigate("assets", { componentId: component.componentId })}
+                      />
+                    ))}
+                  </div>
+                )}
                 <div className="agent-diagnosis">
                   {diagnosisForEnvelope(envelope).map((item) => (
                     <div className="diagnosis-item" key={item.title}>
@@ -263,8 +283,8 @@ function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: strin
   if (envelope.qualityFlags.some((flag) => flag.startsWith("evidence_missing:"))) {
     items.push({ title: "证据缺失", body: "优先补证据记录或重新构建；发布 OKF 的引用覆盖会随之改善。" });
   }
-  if (envelope.qualityFlags.some((flag) => flag.startsWith("low_quality:"))) {
-    items.push({ title: "低质量命中", body: "命中内容可信度偏低，会回流为 warning 任务；适合先人工确认再决定发布后修。" });
+  if (envelope.qualityFlags.some((flag) => flag.startsWith("low_quality:") || flag.startsWith("low_trust:"))) {
+    items.push({ title: "低可信命中", body: "命中内容 Trust Score 偏低；查看证据、全面性、审计时效和一致性后再决定是否消费。" });
   }
   if (envelope.qualityFlags.length === 0 && envelope.trace.componentIds.length > 0) {
     items.push({ title: "可用结果", body: "当前命中没有质量 flags，可以作为一次飞轮闭环通过样例。" });
@@ -329,11 +349,12 @@ function AgentFeedbackCard({
                 <span className="component-quality">
                   <Badge label={component.kind} />
                   <Badge
-                    label={`置信度 ${component.confidence === null ? "n/a" : formatPercent(component.confidence)}`}
-                    tone={component.confidence !== null && component.confidence < 0.7 ? "warn" : "ok"}
+                    label={trustLabel(component.trust)}
+                    tone={trustTone(component.trust)}
                   />
                   <Badge label={`证据 ${component.evidenceRecords}`} tone={component.evidenceRecords > 0 ? "ok" : "warn"} />
                 </span>
+                {component.trust && <TrustBreakdown trust={component.trust} />}
               </button>
             ))}
           </div>
@@ -346,5 +367,35 @@ function AgentFeedbackCard({
       </div>
       <small>{formatTime(event.createdAt)}</small>
     </article>
+  );
+}
+
+function TrustPanel({ title, subtitle, trust, onClick }: { title: string; subtitle: string; trust: AgentEvent["components"][number]["trust"]; onClick?: () => void }) {
+  return (
+    <button type="button" className="trust-panel" onClick={onClick}>
+      <span>
+        <strong>{title}</strong>
+        <code>{subtitle}</code>
+      </span>
+      <span className="trust-panel-score">
+        <Badge label={trustLabel(trust)} tone={trustTone(trust)} />
+        {trust && <Badge label={trustStatusLabel(trust.status)} tone={trustTone(trust)} />}
+      </span>
+      {trust && <TrustBreakdown trust={trust} />}
+      {trust?.caps.length ? <small>封顶：{trust.caps.map((cap) => cap.label).join(" / ")}</small> : null}
+    </button>
+  );
+}
+
+function TrustBreakdown({ trust }: { trust: NonNullable<AgentEvent["components"][number]["trust"]> }) {
+  return (
+    <span className="trust-breakdown">
+      {TRUST_DIMENSIONS.map((dimension) => (
+        <span key={dimension.key}>
+          <b>{dimension.label}</b>
+          <i>{formatPercent(trust.breakdown[dimension.key])}</i>
+        </span>
+      ))}
+    </span>
   );
 }

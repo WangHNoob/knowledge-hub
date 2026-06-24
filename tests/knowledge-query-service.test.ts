@@ -34,6 +34,8 @@ describe("KnowledgeQueryService", () => {
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
       expect(search.result.items[0].title).toBe("Battle System");
       expect(search.trace.componentIds).toContain(fixture.pageComponentId);
+      expect(search.trust.components[0].trust?.score).toBeGreaterThan(0);
+      expect(search.result.items[0].trust?.version).toBe("v2-lite");
 
       const page = await service.runTool("kb_get_page", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
       expect(page.result.markdown).toContain("Stamina controls skill usage.");
@@ -212,10 +214,11 @@ describe("KnowledgeQueryService", () => {
         confidence: 0.42,
         evidenceRecords: 1
       });
+      expect(lowQualityEvent?.components[0].trust?.score).toBeLessThan(0.7);
 
       const { rows: tasks } = await fixture.db.adapter.query("SELECT * FROM review_tasks ORDER BY created_at");
       expect(tasks.some((task) => task.severity === "blocking" && String(task.title).includes("错误本候选"))).toBe(true);
-      expect(tasks.some((task) => task.severity === "warning" && String(task.title).includes("低质量命中"))).toBe(true);
+      expect(tasks.some((task) => task.severity === "warning" && String(task.title).includes("低可信命中"))).toBe(true);
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });

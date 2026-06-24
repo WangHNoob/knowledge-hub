@@ -34,7 +34,7 @@ export class FeedbackService {
       await this.recordFeedback({ release, toolName, payload, feedbackType: "miss", hitComponentIds: [], qualityFlags: [] });
       return;
     }
-    if (qualityFlags.some((flag) => flag.startsWith("low_quality:"))) {
+    if (qualityFlags.some((flag) => flag.startsWith("low_quality:") || flag.startsWith("low_trust:"))) {
       await this.recordFeedback({ release, toolName, payload, feedbackType: "low_quality_hit", hitComponentIds, qualityFlags });
       return;
     }
@@ -127,7 +127,7 @@ function feedbackQueryKey(toolName: string, payload: Record<string, unknown>): s
 function feedbackTitle(feedbackType: FeedbackType, severity: string, query: string): string {
   if (feedbackType === "miss") return severity === "blocking" ? `错误本候选：MCP 查询连续无命中 ${query}` : `MCP 查询无命中 ${query}`;
   if (feedbackType === "repeated_query") return `错误本候选：MCP 查询重复失败 ${query}`;
-  if (feedbackType === "low_quality_hit") return `MCP 低质量命中 ${query}`;
+  if (feedbackType === "low_quality_hit") return `MCP 低可信命中 ${query}`;
   if (feedbackType === "evidence_insufficient") return `MCP 证据不足命中 ${query}`;
   return `MCP 反馈 ${query}`;
 }
@@ -135,7 +135,7 @@ function feedbackTitle(feedbackType: FeedbackType, severity: string, query: stri
 function feedbackSuggestedAction(feedbackType: FeedbackType): string {
   if (feedbackType === "miss") return "补充 topic/page/table/index，使 Agent 查询能够命中当前发布知识。";
   if (feedbackType === "repeated_query") return "同类查询已重复触发，修订 topic_index、Wiki 或图谱关系，并纳入错误本复盘。";
-  if (feedbackType === "low_quality_hit") return "补齐 wiki spec、证据引用和质量门禁缺口后重新构建资产包。";
+  if (feedbackType === "low_quality_hit") return "查看 Trust Score 明细，补证据、完整度、审计时效或一致性缺口后重新发布。";
   if (feedbackType === "evidence_insufficient") return "补充来源引用和 evidence_records，确保回答可追溯。";
   return "检查知识图谱关系和查询意图映射。";
 }

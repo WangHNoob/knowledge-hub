@@ -33,6 +33,7 @@ import { createLlmClient } from "./kbBuilder/llmClient";
 import type { BuildPipelineOptions, CollectedArtifact, QualityGateResult } from "./kbBuilder/types";
 import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelConfig } from "./kbBuilder/modelConfig";
 import type { DiagnosticLogger } from "./diagnosticService";
+import { computeTrustScore } from "./trustScore";
 
 const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "viz"];
 const TRACKED_STAGES: ReadonlySet<string> = new Set<string>(STAGE_ORDER);
@@ -480,6 +481,23 @@ export class KbBuilderPipelineService {
       for (const artifact of artifacts) {
         const componentId = componentIdFor(packageId, artifact.legacyPath);
         const componentSourceRefs = artifact.sourceRefs.length ? artifact.sourceRefs : sourceRefs;
+        const componentQuality: Record<string, unknown> = {
+          ...artifact.quality,
+          legislationProfile: {
+            profileId: ruleProfile.profileId,
+            hash: ruleProfile.hash,
+          },
+        };
+        componentQuality.trust = computeTrustScore({
+          component: {
+            artifactId: artifact.artifactId,
+            kind: artifact.kind,
+            legacyPath: artifact.legacyPath,
+            quality: componentQuality,
+            sourceRefs: componentSourceRefs,
+          },
+          now,
+        });
         await this.adapter.query(
           `INSERT INTO asset_components
             (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
@@ -495,13 +513,7 @@ export class KbBuilderPipelineService {
             artifact.legacyPath,
             artifact.storageUri,
             JSON.stringify(componentSourceRefs),
-            JSON.stringify({
-              ...artifact.quality,
-              legislationProfile: {
-                profileId: ruleProfile.profileId,
-                hash: ruleProfile.hash,
-              },
-            }),
+            JSON.stringify(componentQuality),
           ],
         );
         componentRows.push({ componentId, artifact, sourceRefs: componentSourceRefs });

@@ -130,14 +130,14 @@ function problemFromText(title: string, description: string, qualityFlags: strin
   const text = `${title} ${description}`.toLowerCase();
   if (text.includes("重复") || text.includes("repeated")) return "repeated";
   if (text.includes("无命中") || text.includes("miss")) return "miss";
-  if (text.includes("低质量") || qualityFlags.some((flag) => flag.startsWith("low_quality:"))) return "quality";
+  if (text.includes("低质量") || text.includes("低可信") || qualityFlags.some((flag) => flag.startsWith("low_quality:") || flag.startsWith("low_trust:"))) return "quality";
   if (text.includes("证据不足") || qualityFlags.some((flag) => flag.startsWith("evidence_missing:"))) return "evidence";
   return "other";
 }
 
 function componentIdsFromFlags(flags: string[]): string[] {
   return flags
-    .map((flag) => /^evidence_missing:(.+)$/u.exec(flag)?.[1] ?? /^low_quality:(.+)$/u.exec(flag)?.[1] ?? "")
+    .map((flag) => /^evidence_missing:(.+)$/u.exec(flag)?.[1] ?? /^low_quality:(.+)$/u.exec(flag)?.[1] ?? /^low_trust:(.+)$/u.exec(flag)?.[1] ?? "")
     .filter(Boolean);
 }
 

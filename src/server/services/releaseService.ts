@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 
 import { nanoid } from "nanoid";
 
-import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from "../types";
+import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord, ReviewTask } from "../types";
 import { mapComponent, mapPackage, mapRelease } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
+import { computeTrustScore, scoreFromQuality } from "./trustScore";
 
 const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
 
@@ -103,20 +104,21 @@ export class ReleaseService {
       const packages = await this.loadPackages(release.packageIds);
       const components = await this.loadComponents(release.packageIds);
       const activeRuleProfile = await createLegislationService(this.db).getActiveProfile();
-      const qualityGate = summarizePackages(packages, components, activeRuleProfile.hash);
       const publishedAt = new Date().toISOString();
       await this.ensurePublishEvidence(packages, components, publishedAt);
+      const trustedComponents = await this.componentsWithTrustScores(components, publishedAt);
+      const qualityGate = summarizePackages(packages, trustedComponents, activeRuleProfile.hash);
       const okfExport = await createOkfExportService(this.db, this.dataDir).exportRelease({
         release,
         packages,
-        components,
+        components: trustedComponents,
         publishedAt,
         activeRuleProfileHash: activeRuleProfile.hash,
       });
       const manifest = buildManifest({
         release,
         packages,
-        components,
+        components: trustedComponents,
         qualityGate,
         publishedAt,
         publishedBy,
@@ -146,6 +148,7 @@ export class ReleaseService {
             publishedAt,
           ],
         );
+        await this.updateComponentQualities(trustedComponents);
         await this.pointChannelToRelease(releaseId, publishedBy);
         await this.adapter.query("COMMIT");
       } catch (error) {
@@ -302,6 +305,85 @@ export class ReleaseService {
       }
     }
   }
+
+  private async componentsWithTrustScores(components: AssetComponent[], publishedAt: string): Promise<AssetComponent[]> {
+    const componentIds = components.map((component) => component.componentId);
+    const [evidenceByComponent, reviewTasksByComponent] = await Promise.all([
+      this.evidenceRowsByComponent(componentIds),
+      this.openReviewTasksByComponent(componentIds),
+    ]);
+    return components.map((component) => {
+      const quality: Record<string, unknown> = { ...component.quality };
+      quality.trust = computeTrustScore({
+        component: { ...component, quality },
+        evidenceRows: evidenceByComponent.get(component.componentId) ?? [],
+        reviewTasks: reviewTasksByComponent.get(component.componentId) ?? [],
+        now: publishedAt,
+        lastTrustedAuditAt: publishedAt,
+      });
+      return { ...component, quality };
+    });
+  }
+
+  private async evidenceRowsByComponent(componentIds: string[]): Promise<Map<string, Array<{ sourceVersionId: string; quote: string; confidence: number }>>> {
+    if (componentIds.length === 0) return new Map();
+    const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT component_id, source_version_id, quote, confidence
+       FROM evidence_records
+       WHERE component_id IN (${placeholders})`,
+      componentIds,
+    );
+    const out = new Map<string, Array<{ sourceVersionId: string; quote: string; confidence: number }>>();
+    for (const row of rows) {
+      const componentId = String(row.component_id);
+      out.set(componentId, [...(out.get(componentId) ?? []), {
+        sourceVersionId: String(row.source_version_id ?? ""),
+        quote: String(row.quote ?? ""),
+        confidence: Number(row.confidence ?? 0),
+      }]);
+    }
+    return out;
+  }
+
+  private async openReviewTasksByComponent(componentIds: string[]): Promise<Map<string, ReviewTask[]>> {
+    if (componentIds.length === 0) return new Map();
+    const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM review_tasks
+       WHERE component_id IN (${placeholders}) AND status = 'open'`,
+      componentIds,
+    );
+    const out = new Map<string, ReviewTask[]>();
+    for (const row of rows) {
+      const task: ReviewTask = {
+        taskId: String(row.task_id),
+        packageId: String(row.package_id),
+        componentId: String(row.component_id),
+        severity: row.severity as ReviewTask["severity"],
+        status: row.status as ReviewTask["status"],
+        title: String(row.title ?? ""),
+        description: String(row.description ?? ""),
+        suggestedAction: String(row.suggested_action ?? ""),
+        createdAt: String(row.created_at ?? ""),
+        resolvedBy: String(row.resolved_by ?? ""),
+        resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
+        resolutionNote: String(row.resolution_note ?? ""),
+      };
+      out.set(task.componentId, [...(out.get(task.componentId) ?? []), task]);
+    }
+    return out;
+  }
+
+  private async updateComponentQualities(components: AssetComponent[]): Promise<void> {
+    for (const component of components) {
+      await this.adapter.query(
+        "UPDATE asset_components SET quality = $2 WHERE component_id = $1",
+        [component.componentId, JSON.stringify(component.quality)],
+      );
+    }
+  }
 }
 
 function buildManifest(input: {
@@ -357,7 +439,7 @@ function summarizePackages(packages: AssetPackage[], components: AssetComponent[
     .map((pkg) => numberFromQuality(pkg.qualitySummary, ["overallScore", "score", "confidence"]))
     .filter((score): score is number => Number.isFinite(score));
   const componentScores = components
-    .map((component) => numberFromQuality(component.quality, ["confidence", "score", "overallScore"]))
+    .map((component) => scoreFromQuality(component.quality))
     .filter((score): score is number => Number.isFinite(score));
   const allScores = [...scores, ...componentScores];
   const blockingCount = packages.reduce((sum, pkg) => sum + Number(pkg.qualitySummary.blockingCount ?? 0), 0);
