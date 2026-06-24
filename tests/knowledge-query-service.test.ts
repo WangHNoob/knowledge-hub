@@ -90,6 +90,22 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("resolves page tables and schemas from OKF table aliases when graph links are missing", async () => {
+    const fixture = await setupPublishedKnowledgeFixture({ dependencyText: "Uses 技能表.", withGraphRelation: false });
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const pageTables = await service.runTool("kb_get_page_tables", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(pageTables.result.tables[0].table).toBe("Combat/Skill");
+
+      const schema = await service.runTool("kb_get_table_schema", { table: "技能表" }, { sessionId: "test", agentRole: "planner" });
+      expect(schema.result.found).toBe(true);
+      expect(schema.result.schema.table_name).toBe("Combat/Skill");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it("serves wiki knowledge from the published OKF bundle instead of internal component files", async () => {
     const fixture = await setupPublishedKnowledgeFixture({ withEvidence: false });
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
@@ -226,7 +242,7 @@ describe("KnowledgeQueryService", () => {
   }, 15000);
 });
 
-async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; graphComponentId: string; tableSchemaComponentId: string; sourceVersionId: string; cleanup: () => Promise<void> }> {
+async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string; withGraphRelation?: boolean } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; graphComponentId: string; tableSchemaComponentId: string; sourceVersionId: string; cleanup: () => Promise<void> }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kh-query-"));
   const handle = await createTestDb();
   const db = handle.db;
@@ -262,7 +278,7 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
       { id: "Battle System", label: "Battle System", type: "system", wiki_page: "wiki/systems/battle.md" },
       { id: "table:Combat/Skill", label: "Combat/Skill", type: "table" }
     ],
-    edges: [
+    edges: options.withGraphRelation === false ? [] : [
       { source: "Battle System", target: "table:Combat/Skill", relation: "configured_in", edge_kind: "semantic" }
     ]
   }, null, 2));
@@ -275,6 +291,9 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
       sheets: ["Skill"]
     }
   }, null, 2));
+  writeFileSync(join(buildData, "wiki", "_tables", "table_aliases.json"), JSON.stringify([
+    { table: "Combat/Skill", aliases: ["技能表"] }
+  ], null, 2));
   writeFileSync(join(buildData, "table_schemas", "Combat__Skill.json"), JSON.stringify({
     table_name: "Combat/Skill",
     rel_path: "gamedata/Combat/Skill.csv",
@@ -287,6 +306,7 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
   const pageComponentId = "cmp_query_page";
   const graphComponentId = "cmp_query_graph";
   const tableRegistryComponentId = "cmp_query_table_registry";
+  const tableAliasesComponentId = "cmp_query_table_aliases";
   const tableSchemaComponentId = "cmp_query_table_schema";
   const confidence = options.lowQuality ? 0.42 : 0.91;
 
@@ -312,6 +332,7 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
     [pageComponentId, "wiki/systems/battle.md", "wiki", "wiki_page", "Battle System", "data/wiki/systems/battle.md", { confidence }],
     [graphComponentId, "wiki/graph.json", "graph", "graph_snapshot", "Graph", "data/wiki/graph.json", { confidence: 0.9 }],
     [tableRegistryComponentId, "wiki/_tables/schemas.json", "table", "table_registry", "Table Registry", "data/wiki/_tables/schemas.json", { confidence: 0.9 }],
+    [tableAliasesComponentId, "wiki/_tables/table_aliases.json", "table", "table_registry", "Table Aliases", "data/wiki/_tables/table_aliases.json", { confidence: 0.9 }],
     [tableSchemaComponentId, "table_schemas/Combat__Skill.json", "table", "table_schema_json", "Combat/Skill", "data/table_schemas/Combat__Skill.json", { confidence: 0.9 }]
   ] as const;
   for (const [componentId, artifactId, group, kind, title, storageUri, quality] of components) {

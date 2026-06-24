@@ -78,6 +78,13 @@ interface OkfTableSchemaEntry {
   schema: TableSchema;
 }
 
+interface OkfTableAliasEntry {
+  table?: string;
+  canonical?: string;
+  canonicalName?: string;
+  aliases?: string[];
+}
+
 interface OkfPage {
   okfPath: string;
   markdown: string;
@@ -336,8 +343,14 @@ export class KnowledgeQueryService {
     const schemas = await this.tableSchemas(release);
     const markdown = String((pageResult.result as Record<string, unknown>).markdown ?? "");
     const graphTables = await this.pageConfiguredTables(release, title);
+    const aliasTables = this.tablesMentionedByAlias(release, markdown);
     const tables = schemas
-      .filter(({ schema }) => markdown.includes(schema.table_name) || graphTables.has(schema.table_name) || graphTables.has(`table:${schema.table_name}`))
+      .filter(({ schema }) =>
+        markdown.includes(schema.table_name) ||
+        graphTables.has(schema.table_name) ||
+        graphTables.has(`table:${schema.table_name}`) ||
+        aliasTables.has(schema.table_name)
+      )
       .map(({ schema, component }) => ({ table: schema.table_name, componentId: component.componentId, fields: schema.fields, trust: component.trust ?? null }));
     return {
       result: { page, tables },
@@ -565,6 +578,11 @@ export class KnowledgeQueryService {
     return Array.isArray(manifest?.tables) ? manifest.tables.filter((entry) => Boolean(entry.componentId && entry.schema?.table_name)) : [];
   }
 
+  private readOkfTableAliases(release: ReleaseRecord): OkfTableAliasEntry[] {
+    const manifest = this.readOkfJsonAsset<{ aliases?: OkfTableAliasEntry[] }>(release, "tableAliasesUri", "tables/aliases.json");
+    return Array.isArray(manifest?.aliases) ? manifest.aliases : [];
+  }
+
   private readOkfJsonAsset<T>(release: ReleaseRecord, manifestKey: string, fallbackUri: string): T | null {
     const okf = objectArg((release.manifest as Record<string, unknown>).okf);
     const uri = typeof okf[manifestKey] === "string" && String(okf[manifestKey]).trim() ? String(okf[manifestKey]) : fallbackUri;
@@ -596,9 +614,35 @@ export class KnowledgeQueryService {
 
   private async findTableSchema(release: ReleaseRecord, table: string): Promise<{ component: KnowledgeAssetRef; schema: TableSchema; sourceVersionIds?: string[] } | null> {
     const schemas = await this.tableSchemas(release);
+    const canonical = this.resolveTableAlias(release, table) ?? table;
     return schemas.find(({ schema, component }) =>
-      same(schema.table_name, table) || same(component.title, table) || same(component.artifactId, table)
+      same(schema.table_name, canonical) || same(component.title, canonical) || same(component.artifactId, canonical)
     ) ?? null;
+  }
+
+  private tablesMentionedByAlias(release: ReleaseRecord, text: string): Set<string> {
+    const haystack = aliasKey(text);
+    const out = new Set<string>();
+    for (const row of this.readOkfTableAliases(release)) {
+      const table = row.table ?? row.canonical ?? row.canonicalName ?? "";
+      if (!table) continue;
+      if (haystack.includes(aliasKey(table))) out.add(table);
+      for (const alias of row.aliases ?? []) {
+        if (alias && haystack.includes(aliasKey(alias))) out.add(table);
+      }
+    }
+    return out;
+  }
+
+  private resolveTableAlias(release: ReleaseRecord, value: string): string | null {
+    const normalized = aliasKey(value);
+    for (const row of this.readOkfTableAliases(release)) {
+      const table = row.table ?? row.canonical ?? row.canonicalName ?? "";
+      if (!table) continue;
+      if (aliasKey(table) === normalized) return table;
+      if ((row.aliases ?? []).some((alias) => aliasKey(alias) === normalized)) return table;
+    }
+    return null;
   }
 
   private async readTableRows(release: ReleaseRecord, schema: TableSchema, sourceVersionIds?: string[]): Promise<Array<Record<string, unknown>>> {
@@ -858,6 +902,10 @@ function objectArg(value: unknown): Record<string, unknown> {
 
 function normalize(value: string): string {
   return value.toLowerCase().replace(/\\/gu, "/").replace(/\s+/gu, " ").trim();
+}
+
+function aliasKey(value: string): string {
+  return value.normalize("NFKC").trim().toLowerCase().replace(/[\s_\-()[\]（）【】{}《》:：,，.。/\\]+/gu, "");
 }
 
 function same(a: string | undefined, b: string | undefined): boolean {

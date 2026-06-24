@@ -76,10 +76,8 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     const cacheKey = extractCacheKey({ markdown, rel, specsHash: options.specs.hash, modelConfig, aliasFingerprint });
     const cached = options.force ? null : readExtractCache(options.dataDir, cacheKey);
     const extracted = cached ?? await extractPage(markdown, rel, client, guidance, warnings);
-    if (!cached) {
-      normalizeTableRefs(extracted, tableAliases);
-      writeExtractCache(options.dataDir, cacheKey, extracted);
-    }
+    normalizeTableRefs(extracted, tableAliases);
+    writeExtractCache(options.dataDir, cacheKey, extracted);
     const pageType = options.specs.manifest.pageTypes[extracted.type];
     if (!pageType) {
       warnings.push(`${rel}: unknown page type "${extracted.type}", skipped`);
@@ -492,11 +490,17 @@ function normalizeTableRefs(page: ExtractedPage, tableAliases: TableAliasIndex):
     return { ...relationship, source, target };
   });
 
+  for (const table of dependencySectionTables(page.body, tableAliases)) canonicalTables.add(table);
+
+  if (canonicalTables.size > 0) {
+    page.facts.config_table = [...canonicalTables].sort().join(", ");
+  }
   for (const table of canonicalTables) {
     addUniqueEntity(page.entities, { name: table, type: "config_table" });
     addUniqueRelationship(page.relationships, { source: page.title, relation: "configured_in", target: table });
   }
   page.body = annotateTableAliasesInDependencySections(page.body, tableAliases);
+  page.body = alignDataDependenciesSection(page.body, canonicalTables);
 }
 
 function isTableEntityType(type: string): boolean {
@@ -538,6 +542,47 @@ function annotateTableAliasesInDependencySections(body: string, tableAliases: Ta
     }
     return next;
   }).join("\n");
+}
+
+function dependencySectionTables(body: string, tableAliases: TableAliasIndex): string[] {
+  const out = new Set<string>();
+  const lines = body.split(/\r?\n/u);
+  let inDependencySection = false;
+  for (const line of lines) {
+    const heading = /^(#{1,6})\s+(.+?)\s*$/u.exec(line);
+    if (heading) {
+      inDependencySection = dependencyHeading(heading[2]);
+      continue;
+    }
+    if (!inDependencySection) continue;
+    for (const table of tableAliases.resolveMany(line)) out.add(table);
+  }
+  return [...out].sort();
+}
+
+function alignDataDependenciesSection(body: string, canonicalTables: Set<string>): string {
+  const tables = [...canonicalTables].sort();
+  if (tables.length === 0) return body;
+  const lines = body.split(/\r?\n/u);
+  const headingIndex = lines.findIndex((line) => {
+    const heading = /^(#{1,6})\s+(.+?)\s*$/u.exec(line);
+    return Boolean(heading && heading[2].trim().toLowerCase() === "data dependencies");
+  });
+  const dependencyLines = tables.map((table) => `- ${table}`);
+  if (headingIndex < 0) {
+    return `${body.trimEnd()}\n\n## Data Dependencies\n${dependencyLines.join("\n")}`;
+  }
+
+  let endIndex = headingIndex + 1;
+  while (endIndex < lines.length && !/^(#{1,6})\s+.+?\s*$/u.test(lines[endIndex])) endIndex += 1;
+
+  const existing = lines.slice(headingIndex + 1, endIndex);
+  const existingText = existing.join("\n").trim();
+  const hasOnlyEmptyMarker = existingText === "" || /^(?:[(（]?\s*(无|none|n\/a|na|null|no)\s*[)）]?|[-*]\s*(?:无|none|n\/a|na|null|no))$/iu.test(existingText);
+  const nextSection = hasOnlyEmptyMarker
+    ? dependencyLines
+    : [...existing, ...dependencyLines.filter((line) => !existingText.includes(line.slice(2)))];
+  return [...lines.slice(0, headingIndex + 1), ...nextSection, ...lines.slice(endIndex)].join("\n");
 }
 
 function dependencyHeading(value: string): boolean {

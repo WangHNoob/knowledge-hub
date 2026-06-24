@@ -84,7 +84,8 @@ function addAliasFile(
 
   for (const [key, value] of Object.entries(input)) {
     if (typeof value === "string") {
-      addAlias(aliasToCanonical, originalAliases, canonicalNames, key, value);
+      addAlias(aliasToCanonical, originalAliases, canonicalNames, key, key);
+      addAlias(aliasToCanonical, originalAliases, canonicalNames, value, key);
       continue;
     }
     if (Array.isArray(value)) {

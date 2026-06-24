@@ -16,6 +16,7 @@ export interface OkfExportManifest {
   reportMarkdownUri: string;
   graphUri?: string;
   tableSchemasUri?: string;
+  tableAliasesUri?: string;
   exporterVersion: number;
   okfVersion: "0.1";
   bundleHash: string;
@@ -59,7 +60,8 @@ export class OkfExportService {
     const evidenceByComponent = await this.evidenceByComponent(input.components.map((component) => component.componentId));
     const graphUri = exportGraphAsset(this.dataDir, bundleDir, input.components, packageById);
     const tableSchemasUri = exportTableSchemasAsset(this.dataDir, bundleDir, input.components, packageById, input.release, input.packages);
-    exportedPaths.push(...[graphUri, tableSchemasUri].filter((uri): uri is string => Boolean(uri)));
+    const tableAliasesUri = exportTableAliasesAsset(this.dataDir, bundleDir, input.components, packageById);
+    exportedPaths.push(...[graphUri, tableSchemasUri, tableAliasesUri].filter((uri): uri is string => Boolean(uri)));
 
     for (const component of input.components) {
       if (!EXPORTABLE_MARKDOWN_KINDS.has(component.kind)) continue;
@@ -103,6 +105,7 @@ export class OkfExportService {
         reportMarkdownUri,
         graphUri,
         tableSchemasUri,
+        tableAliasesUri,
         exporterVersion: OKF_EXPORTER_VERSION,
         okfVersion: report.okfVersion,
         bundleHash: hashExportedBundle(bundleDir, exportedPaths),
@@ -152,6 +155,13 @@ interface TableSchemaJson {
   fields?: string[];
   row_count?: number;
   sheets?: string[];
+}
+
+interface TableAliasRow {
+  table?: string;
+  canonical?: string;
+  canonicalName?: string;
+  aliases?: unknown;
 }
 
 function okfPathForComponent(component: AssetComponent): string | null {
@@ -237,6 +247,51 @@ function exportTableSchemasAsset(dataDir: string, bundleDir: string, components:
     tables: tables.sort((a, b) => a.schema.table_name.localeCompare(b.schema.table_name)),
   });
   return uri;
+}
+
+function exportTableAliasesAsset(dataDir: string, bundleDir: string, components: AssetComponent[], packageById: Map<string, AssetPackage>): string | undefined {
+  const component = components.find((item) => item.kind === "table_registry" && /(?:^|\/)table_aliases\.json$/u.test(item.artifactId));
+  if (!component) return undefined;
+  const rows = readAliasRows(resolveComponentFile(dataDir, component, packageById.get(component.packageId)));
+  if (rows.length === 0) return undefined;
+  const uri = "tables/aliases.json";
+  writeJsonAsset(bundleDir, uri, {
+    okfAssetType: "table_alias_manifest",
+    componentId: component.componentId,
+    packageId: component.packageId,
+    artifactId: component.artifactId,
+    trust: trustFromQuality(component.quality),
+    aliases: rows,
+  });
+  return uri;
+}
+
+function readAliasRows(path: string): Array<{ table: string; aliases: string[] }> {
+  const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+  if (Array.isArray(raw)) {
+    return raw
+      .map((row) => {
+        const record = row as TableAliasRow;
+        const table = stringValue(record.table) || stringValue(record.canonical) || stringValue(record.canonicalName);
+        const aliases = Array.isArray(record.aliases) ? record.aliases.filter((alias): alias is string => typeof alias === "string" && alias.trim().length > 0).map((alias) => alias.trim()) : [];
+        return table ? { table, aliases } : null;
+      })
+      .filter((row): row is { table: string; aliases: string[] } => row !== null && row.aliases.length > 0);
+  }
+  if (raw && typeof raw === "object") {
+    return Object.entries(raw as Record<string, unknown>)
+      .flatMap(([table, value]) => {
+        if (typeof value === "string" && value.trim()) return [{ table, aliases: [value.trim()] }];
+        if (Array.isArray(value)) return [{ table, aliases: value.filter((alias): alias is string => typeof alias === "string" && alias.trim().length > 0).map((alias) => alias.trim()) }];
+        if (value && typeof value === "object") {
+          const aliases = (value as { aliases?: unknown }).aliases;
+          if (Array.isArray(aliases)) return [{ table, aliases: aliases.filter((alias): alias is string => typeof alias === "string" && alias.trim().length > 0).map((alias) => alias.trim()) }];
+        }
+        return [];
+      })
+      .filter((row) => row.table && row.aliases.length > 0);
+  }
+  return [];
 }
 
 function normalizeTableSchemas(schema: TableSchemaJson, component: AssetComponent, packages: AssetPackage[]) {
@@ -382,6 +437,10 @@ function firstTextLine(markdown: string): string {
 
 function yamlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function unique(values: string[]): string[] {

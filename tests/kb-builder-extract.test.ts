@@ -367,6 +367,57 @@ describe("runExtractStage", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("backfills structured table dependencies from dependency-section aliases", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(dataDir, "table_aliases.json"), JSON.stringify({
+        HomeLandDress: "家园装扮表"
+      }));
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system", "config_table", "concept"],
+        relation_types: ["configured_in", "references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview\n## Data Dependencies\n| key | required |\n| --- | --- |\n| config_table | yes |");
+      writeFileSync(join(dataDir, "processed", "parsed", "homeland.md"), [
+        "---",
+        "type: system",
+        "title: 家园装扮",
+        "source: gamedocs/homeland.md",
+        "facts: {}",
+        "entities:",
+        "  - name: 家园装扮",
+        "    type: system",
+        "relationships: []",
+        "---",
+        "## Overview",
+        "家园装扮说明。",
+        "",
+        "## 关联配置表",
+        "使用家园装扮表。",
+        "",
+        "## Data Dependencies",
+        "（无）"
+      ].join("\n"));
+
+      const specs = loadWikiSpecs(specDir);
+      await runExtractStage({ dataDir, specs, model: "deterministic", force: false, only: null });
+
+      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "homeland.json"), "utf8"));
+      expect(meta.facts.config_table).toBe("HomeLandDress");
+      expect(meta.entities).toContainEqual({ name: "HomeLandDress", type: "config_table" });
+      expect(meta.relationships).toContainEqual({ source: "家园装扮", relation: "configured_in", target: "HomeLandDress" });
+      const wiki = readFileSync(join(dataDir, "wiki", "systems", "homeland.md"), "utf8");
+      expect(wiki).toContain("家园装扮表（HomeLandDress）");
+      expect(wiki).toContain("## Data Dependencies\n- HomeLandDress");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 function openAiChatOk(content: string): Response {
