@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync, rmSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { nanoid } from "nanoid";
 
@@ -10,6 +12,7 @@ import { createOkfExportService, type OkfExportManifest } from "./okf/exportServ
 import { computeTrustScore, scoreFromQuality } from "./trustScore";
 
 const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
+const RELEASE_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
 
 export interface CreateReleaseDraftInput {
   version: string;
@@ -188,6 +191,41 @@ export class ReleaseService {
     }
   }
 
+  async deleteRelease(releaseId: string, requestedBy: string): Promise<ReleaseRecord> {
+    const span = this.diagnostics?.startSpan({
+      category: "release",
+      message: "delete release",
+      actor: requestedBy,
+      entityType: "release",
+      entityId: releaseId,
+      releaseId
+    });
+    try {
+      if (!RELEASE_ID_PATTERN.test(releaseId)) throw new Error("Invalid release id.");
+      const release = await this.getRelease(releaseId);
+      if (!release) throw new Error(`Unknown release: ${releaseId}`);
+      const current = await this.getCurrent();
+      if (current?.releaseId === releaseId) throw new Error("Cannot delete the current Agent release. Roll back to another release first.");
+
+      await this.adapter.query("BEGIN");
+      try {
+        await this.adapter.query("DELETE FROM releases WHERE release_id = $1", [releaseId]);
+        await this.adapter.query("COMMIT");
+      } catch (error) {
+        await this.adapter.query("ROLLBACK");
+        throw error;
+      }
+
+      const releaseDir = this.releaseDir(releaseId);
+      if (existsSync(releaseDir)) rmSync(releaseDir, { recursive: true, force: true });
+      await span?.complete({ releaseId, version: release.version });
+      return release;
+    } catch (error) {
+      await span?.fail(error);
+      throw error;
+    }
+  }
+
   async getCurrent(): Promise<ReleaseRecord | null> {
     const { rows } = await this.adapter.query(
       `SELECT r.*
@@ -228,6 +266,16 @@ export class ReleaseService {
                      updated_at = EXCLUDED.updated_at`,
       ["default", releaseId, requestedBy, new Date().toISOString()],
     );
+  }
+
+  private releaseDir(releaseId: string): string {
+    const root = join(this.dataDir, "releases");
+    const dir = join(root, releaseId);
+    const rel = relative(resolve(root), resolve(dir));
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+      throw new Error(`Refusing to delete release directory outside storage root: ${releaseId}`);
+    }
+    return dir;
   }
 
   private async findOpenBlockingTasks(packageIds: string[]): Promise<Record<string, unknown>[]> {

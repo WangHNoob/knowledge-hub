@@ -1,4 +1,4 @@
-import { getJson, patchJson, postEmpty, postJson } from "./http";
+import { deleteJson, getJson, patchJson, postEmpty, postJson } from "./http";
 import type { ReleaseRecord } from "./types";
 
 export async function listReleases(): Promise<ReleaseRecord[]> {
@@ -26,4 +26,8 @@ export async function updateRelease(
   patch: { version?: string; note?: string }
 ): Promise<ReleaseRecord> {
   return (await patchJson<{ release: ReleaseRecord }>(`/api/releases/${encodeURIComponent(releaseId)}`, patch)).release;
+}
+
+export async function deleteRelease(releaseId: string): Promise<ReleaseRecord> {
+  return (await deleteJson<{ release: ReleaseRecord }>(`/api/releases/${encodeURIComponent(releaseId)}`)).release;
 }

@@ -1,9 +1,10 @@
-import { CheckCircle2, GitBranch, RotateCcw } from "lucide-react";
+import { CheckCircle2, GitBranch, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import {
   createRelease,
+  deleteRelease,
   getCurrentRelease,
   listPackages,
   listReleases,
@@ -71,6 +72,18 @@ export function Release() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["releases"] }),
         queryClient.invalidateQueries({ queryKey: ["releases", "current"] })
+      ]);
+    }
+  });
+  const deleteMutation = useMutation({
+    mutationFn: deleteRelease,
+    onSuccess: async (_release, releaseId) => {
+      if (draft?.releaseId === releaseId) setDraft(null);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["releases"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["storage"] })
       ]);
     }
   });
@@ -233,10 +246,22 @@ export function Release() {
                   >
                     <RotateCcw size={16} />
                   </button>
+                  <button
+                    className="icon-button"
+                    title={current.data?.releaseId === release.releaseId ? "当前 Agent 版本不能删除" : "删除此发布版本"}
+                    disabled={current.data?.releaseId === release.releaseId || deleteMutation.isPending}
+                    onClick={() => {
+                      const ok = window.confirm(`确认删除发布版本 ${release.version}？\n\n将删除该 release 记录和对应 OKF bundle，已经不是当前 Agent 版本时才允许删除。`);
+                      if (ok) deleteMutation.mutate(release.releaseId);
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
                 </div>
               </article>
             ))}
           </div>
+          {deleteMutation.error && <p className="error">{errorMessage(deleteMutation.error, "删除发布版本失败。")}</p>}
         </section>
         )}
       </div>

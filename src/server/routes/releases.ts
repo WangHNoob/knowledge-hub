@@ -55,6 +55,18 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: RouteContext) {
     }
   );
 
+  app.delete<{ Params: { releaseId: string } }>(
+    "/api/releases/:releaseId",
+    { preHandler: [app.authenticate, requireRole("admin")] },
+    async (request, reply) => {
+      try {
+        return { release: await ctx.releaseService.deleteRelease(request.params.releaseId, request.user.username) };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "删除发布版本失败。" });
+      }
+    }
+  );
+
   app.post("/api/releases/rollback", {
     preHandler: [app.authenticate, requireRole("admin")]
   }, async (request, reply) => {

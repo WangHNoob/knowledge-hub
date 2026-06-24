@@ -67,6 +67,30 @@ describe("ReleaseService", () => {
     }
   }, 15000);
 
+  it("deletes non-current releases and their OKF storage but protects the current release", async () => {
+    const first = await setupReleaseFixture({ packageId: "pkg_delete_old" });
+    await setupReleaseFixture({ handle: first.handle, packageId: "pkg_delete_current" });
+    const service = createReleaseService(first.db, first.dataDir);
+
+    try {
+      const rel1 = await service.createDraft({ version: "2026.06.15.delete-old", packageIds: ["pkg_delete_old"], requestedBy: "admin" });
+      const pub1 = await service.publish(rel1.releaseId, "admin");
+      const rel2 = await service.createDraft({ version: "2026.06.15.delete-current", packageIds: ["pkg_delete_current"], requestedBy: "admin" });
+      const pub2 = await service.publish(rel2.releaseId, "admin");
+
+      await expect(service.deleteRelease(pub2.releaseId, "admin")).rejects.toThrow(/current Agent release/i);
+      expect(existsSync(join(first.dataDir, "releases", pub2.releaseId))).toBe(true);
+
+      const deleted = await service.deleteRelease(pub1.releaseId, "admin");
+      expect(deleted.releaseId).toBe(pub1.releaseId);
+      expect(await service.getRelease(pub1.releaseId)).toBeNull();
+      expect(existsSync(join(first.dataDir, "releases", pub1.releaseId))).toBe(false);
+      expect((await service.getCurrent())?.releaseId).toBe(pub2.releaseId);
+    } finally {
+      await first.cleanup();
+    }
+  }, 15000);
+
   it("backfills publish evidence from source refs before OKF export", async () => {
     const fixture = await setupReleaseFixture({ packageId: "pkg_backfill", withEvidence: false });
     const service = createReleaseService(fixture.db, fixture.dataDir);

@@ -33,6 +33,7 @@ export {
 } from "./legislation";
 export {
   createRelease,
+  deleteRelease,
   getCurrentRelease,
   listReleases,
   publishRelease,
