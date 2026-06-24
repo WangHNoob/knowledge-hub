@@ -6,6 +6,7 @@ import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from
 import { trustFromQuality } from "../trustScore";
 import { renderReportMarkdown } from "./reportRender";
 import { scanWorkspace } from "./conformanceService";
+import { buildOkfSearchIndex } from "./searchIndex";
 import { OKF_EXPORTER_VERSION, type ConformanceReport } from "./types";
 
 const EXPORTABLE_MARKDOWN_KINDS = new Set(["wiki_page", "table_wiki_page"]);
@@ -17,6 +18,7 @@ export interface OkfExportManifest {
   graphUri?: string;
   tableSchemasUri?: string;
   tableAliasesUri?: string;
+  searchIndexUri?: string;
   exporterVersion: number;
   okfVersion: "0.1";
   bundleHash: string;
@@ -63,6 +65,7 @@ export class OkfExportService {
     const tableAliasesUri = exportTableAliasesAsset(this.dataDir, bundleDir, input.components, packageById);
     exportedPaths.push(...[graphUri, tableSchemasUri, tableAliasesUri].filter((uri): uri is string => Boolean(uri)));
 
+    const searchPages: Array<{ okfPath: string; markdown: string }> = [];
     for (const component of input.components) {
       if (!EXPORTABLE_MARKDOWN_KINDS.has(component.kind)) continue;
       const okfPath = okfPathForComponent(component);
@@ -81,8 +84,12 @@ export class OkfExportService {
       const target = join(bundleDir, ...okfPath.split(posix.sep));
       mkdirSync(dirname(target), { recursive: true });
       writeFileSync(target, rendered, "utf8");
+      searchPages.push({ okfPath: `/${okfPath}`, markdown: rendered });
       exportedPaths.push(okfPath);
     }
+
+    const searchIndexUri = exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
+    if (searchIndexUri) exportedPaths.push(searchIndexUri);
 
     writeFileSync(join(bundleDir, "index.md"), renderIndex(input.release, exportedPaths), "utf8");
     writeFileSync(join(bundleDir, "log.md"), renderLog(input.release, input.publishedAt, input.packages), "utf8");
@@ -106,6 +113,7 @@ export class OkfExportService {
         graphUri,
         tableSchemasUri,
         tableAliasesUri,
+        searchIndexUri,
         exporterVersion: OKF_EXPORTER_VERSION,
         okfVersion: report.okfVersion,
         bundleHash: hashExportedBundle(bundleDir, exportedPaths),
@@ -263,6 +271,13 @@ function exportTableAliasesAsset(dataDir: string, bundleDir: string, components:
     trust: trustFromQuality(component.quality),
     aliases: rows,
   });
+  return uri;
+}
+
+function exportSearchIndexAsset(bundleDir: string, generatedAt: string, pages: Array<{ okfPath: string; markdown: string }>): string | undefined {
+  if (pages.length === 0) return undefined;
+  const uri = "search/index.json";
+  writeJsonAsset(bundleDir, uri, buildOkfSearchIndex({ generatedAt, pages, bundleDir }));
   return uri;
 }
 

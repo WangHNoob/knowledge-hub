@@ -36,6 +36,8 @@ describe("KnowledgeQueryService", () => {
       expect(search.trace.componentIds).toContain(fixture.pageComponentId);
       expect(search.trust.components[0].trust?.score).toBeGreaterThan(0);
       expect(search.result.items[0].trust?.version).toBe("v2-lite");
+      expect(search.result.items[0].matchedFields).toContain("title");
+      expect(search.result.items[0].why.length).toBeGreaterThan(0);
 
       const page = await service.runTool("kb_get_page", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
       expect(page.result.markdown).toContain("Stamina controls skill usage.");
@@ -100,6 +102,21 @@ describe("KnowledgeQueryService", () => {
       const schema = await service.runTool("kb_get_table_schema", { table: "技能表" }, { sessionId: "test", agentRole: "planner" });
       expect(schema.result.found).toBe(true);
       expect(schema.result.schema.table_name).toBe("Combat/Skill");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("uses OKF search index intent expansion and table aliases for explainable hits", async () => {
+    const fixture = await setupPublishedKnowledgeFixture({ dependencyText: "Uses 技能表." });
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const search = await service.runTool("kb_search", { query: "配置表" }, { sessionId: "test", agentRole: "planner" });
+      expect(search.result.items[0].title).toBe("Battle System");
+      expect(search.result.items[0].matchedFields).toEqual(expect.arrayContaining(["dataDependencies", "tables"]));
+      expect(search.result.items[0].why.some((line: string) => line.includes("配置表意图扩展"))).toBe(true);
+      expect(search.result.items[0].tableDependencies).toContain("Combat/Skill");
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });

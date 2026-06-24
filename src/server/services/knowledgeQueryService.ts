@@ -10,6 +10,7 @@ import type { DiagnosticLogger } from "./diagnosticService";
 import { createFeedbackService, type FeedbackService } from "./feedbackService";
 import { createReleaseService } from "./releaseService";
 import { createSourceBundleService } from "./sourceBundleService";
+import { searchOkfIndex, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
 const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
@@ -252,6 +253,23 @@ export class KnowledgeQueryService {
   }
 
   private async kbSearch(release: ReleaseRecord, query: string): Promise<ToolResult> {
+    const indexItems = this.kbSearchIndex(release, query);
+    if (indexItems.length > 0) {
+      return {
+        result: { query, items: indexItems },
+        componentIds: indexItems.map((item) => item.componentId),
+        artifactIds: indexItems.map((item) => item.artifactId),
+      };
+    }
+    return this.kbSearchMarkdownFallback(release, query);
+  }
+
+  private kbSearchIndex(release: ReleaseRecord, query: string): OkfSearchResultItem[] {
+    const index = this.readOkfSearchIndex(release);
+    return index ? searchOkfIndex(index, query, 10) : [];
+  }
+
+  private async kbSearchMarkdownFallback(release: ReleaseRecord, query: string): Promise<ToolResult> {
     const needle = query.toLowerCase();
     const pages = this.readOkfPages(release);
     const items = [];
@@ -270,6 +288,10 @@ export class KnowledgeQueryService {
         trust: page.trust,
         snippet: snippet(page.body, needle),
         score,
+        matchedTerms: query.toLowerCase().split(/\s+/u).filter(Boolean),
+        matchedFields: ["body"],
+        why: ["兼容模式：Markdown 正文关键词命中"],
+        tableDependencies: [],
       });
     }
     items.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
@@ -581,6 +603,11 @@ export class KnowledgeQueryService {
   private readOkfTableAliases(release: ReleaseRecord): OkfTableAliasEntry[] {
     const manifest = this.readOkfJsonAsset<{ aliases?: OkfTableAliasEntry[] }>(release, "tableAliasesUri", "tables/aliases.json");
     return Array.isArray(manifest?.aliases) ? manifest.aliases : [];
+  }
+
+  private readOkfSearchIndex(release: ReleaseRecord): OkfSearchIndex | null {
+    const index = this.readOkfJsonAsset<OkfSearchIndex>(release, "searchIndexUri", "search/index.json");
+    return index?.okfAssetType === "search_index" && Array.isArray(index.pages) ? index : null;
   }
 
   private readOkfJsonAsset<T>(release: ReleaseRecord, manifestKey: string, fallbackUri: string): T | null {

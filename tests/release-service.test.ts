@@ -41,6 +41,7 @@ describe("ReleaseService", () => {
         bundleUri: expect.stringContaining(`${pub1.releaseId}/okf_bundle`),
         graphUri: "graph/graph.json",
         tableSchemasUri: "tables/schemas.json",
+        searchIndexUri: "search/index.json",
         exporterVersion: 1,
         summary: { blocking: 0 },
         citationSummary: { required: 1, present: 1 }
@@ -49,6 +50,7 @@ describe("ReleaseService", () => {
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"), "utf8")).toContain('type: "system_rule"');
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "graph", "graph.json"), "utf8")).nodes[0].label).toBe("Demo Page");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "tables", "schemas.json"), "utf8")).tables[0].schema.table_name).toBe("Demo/Table");
+      expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "search", "index.json"), "utf8")).pages[0].title).toBe("Demo Page");
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_report.json"))).toBe(true);
       expect(pub1.publishedAt).toBeTruthy();
 
