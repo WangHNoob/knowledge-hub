@@ -814,6 +814,28 @@ code {
   overflow-wrap: anywhere;
 }
 
+.quality-task-brief {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.quality-task-brief p,
+.quality-task-brief strong {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.quality-task-brief strong {
+  color: var(--ink-muted);
+}
+
 .feedback-components {
   display: grid;
   gap: 8px;

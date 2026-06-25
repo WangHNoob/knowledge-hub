@@ -38,6 +38,12 @@ function taskCategory(task: ReviewTask): string {
   return "质量";
 }
 
+function isAgentFeedbackTask(task: ReviewTask): boolean {
+  return task.taskId.startsWith("task_mcp_")
+    || /^MCP |^Agent /i.test(task.title)
+    || task.description.includes("Knowledge MCP");
+}
+
 function resolutionLabel(insight: FeedbackInsight): string {
   if (insight.problem === "evidence") return "标记已补证据";
   if (insight.problem === "miss" || insight.problem === "repeated") return "标记已补资产";
@@ -186,36 +192,46 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onNavigateAsset: (componentId: string) => void;
   onRetest: (insight: FeedbackInsight) => void;
 }) {
-  const insight = insightFromTask(task);
-  const componentIds = insight.componentIds.length ? insight.componentIds : task.componentId ? [task.componentId] : [];
+  const isAgentTask = isAgentFeedbackTask(task);
+  const insight = isAgentTask ? insightFromTask(task) : null;
+  const componentIds = insight?.componentIds.length ? insight.componentIds : task.componentId ? [task.componentId] : [];
   return (
     <article className="task actionable-task">
       <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />
       <div>
         <div className="task-title-row">
-          <h3>{insight.headline}</h3>
+          <h3>{insight ? insight.headline : task.title}</h3>
           <Badge label={taskCategory(task)} />
           <Badge label={STATUS_LABEL[task.status] ?? task.status} tone={task.status === "open" ? "warn" : "ok"} />
         </div>
-        <div className="feedback-brief">
-          <div>
-            <span>触发查询</span>
-            <strong>{insight.toolName}:{insight.queryText}</strong>
+        {insight ? (
+          <>
+            <div className="feedback-brief">
+              <div>
+                <span>触发查询</span>
+                <strong>{insight.toolName}:{insight.queryText}</strong>
+              </div>
+              <div>
+                <span>影响</span>
+                <strong>{insight.impact}</strong>
+              </div>
+              <div>
+                <span>下一步</span>
+                <strong>{insight.nextStep}</strong>
+              </div>
+            </div>
+            <details className="raw-feedback">
+              <summary>查看原始反馈</summary>
+              <p>{task.description}</p>
+              <strong>{task.suggestedAction}</strong>
+            </details>
+          </>
+        ) : (
+          <div className="quality-task-brief">
+            <p>{task.description}</p>
+            <strong>{task.suggestedAction}</strong>
           </div>
-          <div>
-            <span>影响</span>
-            <strong>{insight.impact}</strong>
-          </div>
-          <div>
-            <span>下一步</span>
-            <strong>{insight.nextStep}</strong>
-          </div>
-        </div>
-        <details className="raw-feedback">
-          <summary>查看原始反馈</summary>
-          <p>{task.description}</p>
-          <strong>{task.suggestedAction}</strong>
-        </details>
+        )}
         <div className="asset-link">
           <IdChip label={task.packageId} title="在知识资产中查看该资产包" onClick={onNavigatePackage} />
           {componentIds.map((componentId) => (
@@ -232,8 +248,8 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
           <div className="task-actions split-actions">
             <div className="task-primary-actions">
               {componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(componentIds[0])}>查看命中资产</button>}
-              <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>
-              <button className="primary-action" type="button" disabled={isPending} onClick={() => onTransition("resolved")}>{resolutionLabel(insight)}</button>
+              {insight && <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>}
+              <button className="primary-action" type="button" disabled={isPending} onClick={() => onTransition("resolved")}>{insight ? resolutionLabel(insight) : "标记已处理"}</button>
               <button className="secondary-action" type="button" disabled={isPending} onClick={() => onTransition("dismissed")}>不影响本版</button>
             </div>
             <input

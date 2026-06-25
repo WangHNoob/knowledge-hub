@@ -70,7 +70,7 @@ export function evaluateQualityGate(options: {
         const metaSource = stringValue((meta as Record<string, unknown>).source);
         const source = metaSource || frontmatterSource;
         const sourceMismatch = Boolean(frontmatterSource && metaSource && metaSource !== frontmatterSource);
-        if (!source || !options.sourceLogicalPaths.has(source) || sourceMismatch) {
+        if (!source || !isKnownSourceTrace(source, options.sourceLogicalPaths) || sourceMismatch) {
           findings.push(finding(
             "frontmatterSource",
             severity(sourceRule, "blocking"),
@@ -178,6 +178,22 @@ function evaluateGraph(dataDir: string, specs: WikiSpecSet, profile: QualityGate
     return finding("graphIntegrity", severity(graphRule, "blocking"), "wiki/graph.json", "Invalid relation type", invalidRelation.relation, "改用 manifest 中定义的关系类型。", 1);
   }
   return null;
+}
+
+function isKnownSourceTrace(source: string, sourceLogicalPaths: Set<string>): boolean {
+  if (sourceLogicalPaths.has(source)) return true;
+  const parsedPrefix = "processed/parsed/";
+  if (!source.startsWith(parsedPrefix)) return false;
+  const parsedStem = stripExtension(source.slice(parsedPrefix.length));
+  for (const logicalPath of sourceLogicalPaths) {
+    if (!logicalPath.startsWith("gamedocs/")) continue;
+    if (stripExtension(logicalPath.slice("gamedocs/".length)) === parsedStem) return true;
+  }
+  return false;
+}
+
+function stripExtension(value: string): string {
+  return value.replace(/\.[^/.]+$/u, "");
 }
 
 function evaluateConceptOveruse(dataDir: string, profile: QualityGateConfig): QualityFinding[] {
