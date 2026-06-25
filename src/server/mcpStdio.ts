@@ -132,6 +132,52 @@ const tools: Array<{ name: string; title: string; description: string; inputSche
     inputSchema: z.object({ ...contextFields, componentId: componentIdField.optional(), page: pageField.optional(), query: z.string().optional(), q: z.string().optional(), topic: z.string().optional() }).passthrough(),
   },
   { name: "kb_get_release", title: "Get Release", description: "Read the current published release envelope and OKF manifest.", inputSchema: noArgs },
+  {
+    name: "kb_report_gap",
+    title: "Report Knowledge Gap",
+    description: "Agent feedback: report that current published knowledge cannot answer a user query. Routes a review task into the flywheel.",
+    inputSchema: z.object({
+      ...contextFields,
+      query: queryField,
+      q: queryField.optional(),
+      expected: z.string().optional().describe("What knowledge or answer the Agent expected to find."),
+      reason: z.string().optional().describe("Why the current result is insufficient."),
+      note: z.string().optional().describe("Additional triage context for reviewers."),
+    }).passthrough(),
+  },
+  {
+    name: "kb_report_bad_hit",
+    title: "Report Bad Hit",
+    description: "Agent feedback: report that a retrieved component was irrelevant or misleading. Routes a review task into the flywheel.",
+    inputSchema: z.object({
+      ...contextFields,
+      query: queryField,
+      q: queryField.optional(),
+      componentId: componentIdField.optional(),
+      componentIds: z.array(componentIdField).optional(),
+      page: pageField.optional(),
+      expected: z.string().optional().describe("The expected topic/component/table if known."),
+      reason: z.string().optional().describe("Why the hit is wrong or misleading."),
+      note: z.string().optional().describe("Additional triage context for reviewers."),
+    }).passthrough(),
+  },
+  {
+    name: "kb_report_stale",
+    title: "Report Stale Knowledge",
+    description: "Agent feedback: report that a component appears outdated, contradicted, or no longer reliable. Routes a review task into the flywheel.",
+    inputSchema: z.object({
+      ...contextFields,
+      componentId: componentIdField.optional(),
+      componentIds: z.array(componentIdField).optional(),
+      page: pageField.optional(),
+      query: z.string().optional(),
+      q: z.string().optional(),
+      topic: z.string().optional(),
+      expected: z.string().optional().describe("The fresher or corrected understanding if known."),
+      reason: z.string().optional().describe("Why the knowledge appears stale or incorrect."),
+      note: z.string().optional().describe("Additional triage context for reviewers."),
+    }).passthrough(),
+  },
 ];
 
 for (const tool of tools) {

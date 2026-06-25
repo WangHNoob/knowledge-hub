@@ -7,7 +7,7 @@ import xlsx from "xlsx";
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, ReleaseRecord, TrustScore } from "../types";
 import { jsonArray, mapComponent, mapPackage } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
-import { createFeedbackService, type FeedbackService } from "./feedbackService";
+import { createFeedbackService, type FeedbackService, type FeedbackType } from "./feedbackService";
 import { createReleaseService } from "./releaseService";
 import { createSourceBundleService } from "./sourceBundleService";
 import { searchOkfIndex, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
@@ -249,6 +249,12 @@ export class KnowledgeQueryService {
         return this.kbGetQuality(release, optionalString(payload, "componentId"));
       case "kb_get_evidence":
         return this.kbGetEvidence(release, optionalString(payload, "componentId"), optionalString(payload, "page"), optionalString(payload, "query", "q", "topic"));
+      case "kb_report_gap":
+        return this.kbReportFeedback(release, "kb_report_gap", payload, "knowledge_gap");
+      case "kb_report_bad_hit":
+        return this.kbReportFeedback(release, "kb_report_bad_hit", payload, "bad_hit");
+      case "kb_report_stale":
+        return this.kbReportFeedback(release, "kb_report_stale", payload, "stale_knowledge");
       default:
         throw new Error(`Unknown Knowledge MCP tool: ${toolName}`);
     }
@@ -723,6 +729,50 @@ export class KnowledgeQueryService {
       componentIds,
       evidenceIds: records.map((record) => String("evidenceId" in record ? record.evidenceId : record.evidence_id)),
     };
+  }
+
+  private async kbReportFeedback(release: ReleaseRecord, toolName: string, payload: Record<string, unknown>, feedbackType: FeedbackType): Promise<ToolResult> {
+    const hitComponentIds = await this.feedbackComponentIds(release, payload);
+    const result = await this.feedback.recordExplicitFeedback({
+      release,
+      toolName,
+      payload,
+      feedbackType,
+      hitComponentIds,
+      qualityFlags: feedbackType === "knowledge_gap" ? [] : [`agent_reported:${feedbackType}`],
+    });
+    return {
+      result: {
+        ...result,
+        message: result.recorded
+          ? "Feedback recorded and routed to review center."
+          : "Feedback accepted but no target component/package was available for review routing.",
+        nextStep: result.recorded
+          ? "Review center can now triage this Agent feedback; rebuild and republish after fixing."
+          : "Publish at least one package before routing Agent feedback into review tasks.",
+      },
+      componentIds: hitComponentIds,
+      forceHit: true,
+    };
+  }
+
+  private async feedbackComponentIds(release: ReleaseRecord, payload: Record<string, unknown>): Promise<string[]> {
+    const direct = [
+      optionalString(payload, "componentId"),
+      ...jsonArray(payload.componentIds).map(String),
+    ].filter((value): value is string => Boolean(value));
+    if (direct.length > 0) return uniqueSorted(direct);
+    const page = optionalString(payload, "page", "title");
+    if (page) {
+      const pageResult = await this.kbGetPage(release, page);
+      if (pageResult.componentIds.length > 0) return pageResult.componentIds;
+    }
+    const query = optionalString(payload, "query", "q", "topic");
+    if (query) {
+      const search = await this.kbSearch(release, query, 3);
+      return search.componentIds.slice(0, 3);
+    }
+    return [];
   }
 
   private async graph(release: ReleaseRecord): Promise<{ component: KnowledgeAssetRef; nodes: GraphNode[]; edges: GraphEdge[] }> {

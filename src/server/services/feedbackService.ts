@@ -3,7 +3,25 @@ import { nanoid } from "nanoid";
 import { mapComponent } from "../db/mappers";
 import type { AssetComponent, DatabaseHandle, ReleaseRecord } from "../types";
 
-export type FeedbackType = "miss" | "low_quality_hit" | "repeated_query" | "evidence_insufficient" | "relation_inference_failed";
+export type FeedbackType =
+  | "miss"
+  | "low_quality_hit"
+  | "repeated_query"
+  | "evidence_insufficient"
+  | "relation_inference_failed"
+  | "knowledge_gap"
+  | "bad_hit"
+  | "stale_knowledge";
+
+export interface FeedbackRecordResult {
+  recorded: boolean;
+  taskId: string | null;
+  feedbackType: FeedbackType;
+  severity: "blocking" | "warning";
+  query: string;
+  targetComponentId: string | null;
+  suggestedAction: string;
+}
 
 export function createFeedbackService(db: DatabaseHandle): FeedbackService {
   return new FeedbackService(db);
@@ -43,6 +61,24 @@ export class FeedbackService {
     }
   }
 
+  async recordExplicitFeedback(input: {
+    release: ReleaseRecord;
+    toolName: string;
+    payload: Record<string, unknown>;
+    feedbackType: FeedbackType;
+    hitComponentIds: string[];
+    qualityFlags?: string[];
+  }): Promise<FeedbackRecordResult> {
+    return this.recordFeedback({
+      release: input.release,
+      toolName: input.toolName,
+      payload: input.payload,
+      feedbackType: input.feedbackType,
+      hitComponentIds: input.hitComponentIds,
+      qualityFlags: input.qualityFlags ?? [],
+    });
+  }
+
   private async recordFeedback(input: {
     release: ReleaseRecord;
     toolName: string;
@@ -50,7 +86,7 @@ export class FeedbackService {
     feedbackType: FeedbackType;
     hitComponentIds: string[];
     qualityFlags: string[];
-  }): Promise<void> {
+  }): Promise<FeedbackRecordResult> {
     const { release, toolName, payload, feedbackType, hitComponentIds, qualityFlags } = input;
     const query = feedbackQueryKey(toolName, payload);
     const { rows: countRows } = await this.adapter.query(
@@ -61,10 +97,20 @@ export class FeedbackService {
     const effectiveFeedbackType: FeedbackType = feedbackType === "miss" && repeatedCount >= 3 ? "repeated_query" : feedbackType;
     const severity = repeatedCount >= 3 ? "blocking" : "warning";
     const targetComponent = await this.targetComponent(release, hitComponentIds);
-    if (!targetComponent) return;
+    const suggestedAction = feedbackSuggestedAction(effectiveFeedbackType);
+    if (!targetComponent) {
+      return {
+        recorded: false,
+        taskId: null,
+        feedbackType: effectiveFeedbackType,
+        severity,
+        query,
+        targetComponentId: null,
+        suggestedAction,
+      };
+    }
     const title = feedbackTitle(effectiveFeedbackType, severity, query);
     const taskId = `task_mcp_${slug(effectiveFeedbackType)}_${nanoid(6)}`;
-    const suggestedAction = feedbackSuggestedAction(effectiveFeedbackType);
 
     await this.adapter.query(
       `INSERT INTO review_tasks (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
@@ -76,7 +122,7 @@ export class FeedbackService {
         severity,
         "open",
         title,
-        `Knowledge MCP ${toolName} feedback: ${JSON.stringify(payload)}. Quality flags: ${qualityFlags.join(", ") || "none"}.`,
+        feedbackDescription(toolName, payload, qualityFlags),
         suggestedAction,
         new Date().toISOString()
       ]
@@ -98,6 +144,15 @@ export class FeedbackService {
         new Date().toISOString()
       ]
     );
+    return {
+      recorded: true,
+      taskId,
+      feedbackType: effectiveFeedbackType,
+      severity,
+      query,
+      targetComponentId: targetComponent.componentId,
+      suggestedAction,
+    };
   }
 
   private async targetComponent(release: ReleaseRecord, hitComponentIds: string[]): Promise<AssetComponent | null> {
@@ -125,6 +180,9 @@ function feedbackQueryKey(toolName: string, payload: Record<string, unknown>): s
 }
 
 function feedbackTitle(feedbackType: FeedbackType, severity: string, query: string): string {
+  if (feedbackType === "knowledge_gap") return severity === "blocking" ? `错误本候选：Agent 主动报告知识缺口 ${query}` : `Agent 主动报告知识缺口 ${query}`;
+  if (feedbackType === "bad_hit") return `Agent 主动报告错命中 ${query}`;
+  if (feedbackType === "stale_knowledge") return `Agent 主动报告知识过期或错误 ${query}`;
   if (feedbackType === "miss") return severity === "blocking" ? `错误本候选：MCP 查询连续无命中 ${query}` : `MCP 查询无命中 ${query}`;
   if (feedbackType === "repeated_query") return `错误本候选：MCP 查询重复失败 ${query}`;
   if (feedbackType === "low_quality_hit") return `MCP 低可信命中 ${query}`;
@@ -133,11 +191,27 @@ function feedbackTitle(feedbackType: FeedbackType, severity: string, query: stri
 }
 
 function feedbackSuggestedAction(feedbackType: FeedbackType): string {
+  if (feedbackType === "knowledge_gap") return "补充缺失 topic/page/table/graph 关系，重新构建发布后让 Agent 复测同一查询。";
+  if (feedbackType === "bad_hit") return "检查检索排序、标题/别名/索引和命中组件内容；必要时修订知识正文或表依赖后重新发布。";
+  if (feedbackType === "stale_knowledge") return "核对来源版本与最后可信审计，更新原始资料或知识资产后重新构建发布。";
   if (feedbackType === "miss") return "补充 topic/page/table/index，使 Agent 查询能够命中当前发布知识。";
   if (feedbackType === "repeated_query") return "同类查询已重复触发，修订 topic_index、Wiki 或图谱关系，并纳入错误本复盘。";
   if (feedbackType === "low_quality_hit") return "查看 Trust Score 明细，补证据、完整度、审计时效或一致性缺口后重新发布。";
   if (feedbackType === "evidence_insufficient") return "补充来源引用和 evidence_records，确保回答可追溯。";
   return "检查知识图谱关系和查询意图映射。";
+}
+
+function feedbackDescription(toolName: string, payload: Record<string, unknown>, qualityFlags: string[]): string {
+  const note = typeof payload.note === "string" ? payload.note : "";
+  const expected = typeof payload.expected === "string" ? payload.expected : "";
+  const reason = typeof payload.reason === "string" ? payload.reason : "";
+  return [
+    `Knowledge MCP ${toolName} feedback: ${JSON.stringify(payload)}.`,
+    `Quality flags: ${qualityFlags.join(", ") || "none"}.`,
+    reason ? `Reason: ${reason}.` : "",
+    expected ? `Expected: ${expected}.` : "",
+    note ? `Note: ${note}.` : "",
+  ].filter(Boolean).join(" ");
 }
 
 function slug(value: string): string {

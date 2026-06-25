@@ -289,6 +289,41 @@ describe("KnowledgeQueryService", () => {
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   }, 15000);
+
+  it("routes explicit Agent feedback reports into review tasks", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const badHit = await service.runTool("kb_report_bad_hit", {
+        query: "Battle stamina",
+        componentId: fixture.pageComponentId,
+        reason: "Agent judged this hit misleading for the user's intent.",
+        expected: "A page about stamina recovery rules."
+      }, { sessionId: "test", agentRole: "planner" });
+      expect(badHit.result.recorded).toBe(true);
+      expect(badHit.result.feedbackType).toBe("bad_hit");
+      expect(badHit.result.taskId).toMatch(/^task_mcp_bad_hit_/);
+      expect(badHit.trace.componentIds).toContain(fixture.pageComponentId);
+
+      const gap = await service.runTool("kb_report_gap", {
+        query: "missing resurrection economy",
+        expected: "Need an economy spec page.",
+        reason: "Search results cannot answer the question."
+      }, { sessionId: "test", agentRole: "planner" });
+      expect(gap.result.recorded).toBe(true);
+      expect(gap.result.feedbackType).toBe("knowledge_gap");
+
+      const { rows: events } = await fixture.db.adapter.query("SELECT feedback_type, query FROM agent_events ORDER BY created_at");
+      expect(events.map((event) => event.feedback_type)).toEqual(expect.arrayContaining(["bad_hit", "knowledge_gap"]));
+      const { rows: tasks } = await fixture.db.adapter.query("SELECT title, description, suggested_action FROM review_tasks ORDER BY created_at");
+      expect(tasks.some((task) => String(task.title).includes("错命中"))).toBe(true);
+      expect(tasks.some((task) => String(task.title).includes("知识缺口"))).toBe(true);
+      expect(tasks.some((task) => String(task.description).includes("stamina recovery rules"))).toBe(true);
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
 });
 
 async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string; withGraphRelation?: boolean } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; graphComponentId: string; tableSchemaComponentId: string; sourceVersionId: string; cleanup: () => Promise<void> }> {
