@@ -38,6 +38,13 @@ describe("KnowledgeQueryService", () => {
       expect(search.result.items[0].trust?.version).toBe("v2-lite");
       expect(search.result.items[0].matchedFields).toContain("title");
       expect(search.result.items[0].why.length).toBeGreaterThan(0);
+      expect(search.result.cards[0]).toMatchObject({
+        title: "Battle System",
+        componentId: fixture.pageComponentId,
+        evidence: { count: 1, traceable: true, suggestedTool: "kb_get_evidence" }
+      });
+      expect(search.result.cards[0].suggestedNextTools).toEqual(expect.arrayContaining(["kb_get_page", "kb_get_evidence", "kb_get_quality"]));
+      expect(search.result.guidance).toMatchObject({ status: "hit", topComponentId: fixture.pageComponentId });
 
       const page = await service.runTool("kb_get_page", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
       expect(page.result.markdown).toContain("Stamina controls skill usage.");
@@ -117,6 +124,8 @@ describe("KnowledgeQueryService", () => {
       expect(search.result.items[0].matchedFields).toEqual(expect.arrayContaining(["dataDependencies", "tables"]));
       expect(search.result.items[0].why.some((line: string) => line.includes("配置表意图扩展"))).toBe(true);
       expect(search.result.items[0].tableDependencies).toContain("Combat/Skill");
+      expect(search.result.cards[0].tableDependencies).toContain("Combat/Skill");
+      expect(search.result.cards[0].suggestedNextTools).toContain("kb_get_page_tables");
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });

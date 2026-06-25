@@ -259,7 +259,7 @@ export class KnowledgeQueryService {
     const indexItems = await this.kbSearchIndex(release, query, boundedLimit);
     if (indexItems.length > 0) {
       return {
-        result: { query, items: indexItems },
+        result: await this.searchResultPayload(release, query, indexItems),
         componentIds: indexItems.map((item) => item.componentId),
         artifactIds: indexItems.map((item) => item.artifactId),
       };
@@ -301,9 +301,20 @@ export class KnowledgeQueryService {
     items.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
     const limited = await this.alignSearchItemsWithPageTables(release, items.slice(0, limit));
     return {
-      result: { query, items: limited },
+      result: await this.searchResultPayload(release, query, limited),
       componentIds: limited.map((item) => item.componentId),
       artifactIds: limited.map((item) => item.artifactId),
+    };
+  }
+
+  private async searchResultPayload(release: ReleaseRecord, query: string, items: OkfSearchResultItem[]): Promise<Record<string, unknown>> {
+    const evidenceCounts = await this.evidenceCountsForComponents(release, items.map((item) => item.componentId));
+    return {
+      query,
+      total: items.length,
+      items,
+      cards: items.map((item, index) => searchCard(item, index, evidenceCounts.get(item.componentId) ?? 0)),
+      guidance: searchGuidance(query, items, evidenceCounts),
     };
   }
 
@@ -963,6 +974,24 @@ export class KnowledgeQueryService {
     return rows;
   }
 
+  private async evidenceCountsForComponents(release: ReleaseRecord, componentIds: string[]): Promise<Map<string, number>> {
+    const idsByComponent = new Map<string, Set<string>>();
+    if (componentIds.length === 0) return new Map();
+    for (const record of this.okfEvidenceRecordsForComponents(release, componentIds)) {
+      const bucket = idsByComponent.get(record.componentId) ?? new Set<string>();
+      bucket.add(record.evidenceId);
+      idsByComponent.set(record.componentId, bucket);
+    }
+    for (const record of await this.evidenceRecordsForComponents(componentIds)) {
+      const componentId = String(record.component_id ?? "");
+      if (!componentId) continue;
+      const bucket = idsByComponent.get(componentId) ?? new Set<string>();
+      bucket.add(String(record.evidence_id ?? `${componentId}:${bucket.size + 1}`));
+      idsByComponent.set(componentId, bucket);
+    }
+    return new Map([...idsByComponent.entries()].map(([componentId, ids]) => [componentId, ids.size] as const));
+  }
+
   private async artifactIdsForComponents(componentIds: string[]): Promise<string[]> {
     if (componentIds.length === 0) return [];
     const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
@@ -1111,7 +1140,67 @@ function objectArg(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function pageSuggestedTools(item: Record<string, unknown>): string[] {
+function searchCard(item: OkfSearchResultItem, index: number, evidenceCount: number): Record<string, unknown> {
+  const unresolvedDependencies = unresolvedFromWhy(item.why);
+  return {
+    rank: index + 1,
+    title: item.title,
+    componentId: item.componentId,
+    okfPath: item.okfPath,
+    artifactId: item.artifactId,
+    kind: item.kind,
+    type: item.type,
+    snippet: item.snippet,
+    score: item.score,
+    trust: item.trust,
+    evidence: {
+      count: evidenceCount,
+      traceable: evidenceCount > 0,
+      suggestedTool: "kb_get_evidence",
+    },
+    tableDependencies: item.tableDependencies,
+    unresolvedDependencies,
+    qualitySignals: {
+      matchedFields: item.matchedFields,
+      matchedTerms: item.matchedTerms.slice(0, 12),
+      why: item.why,
+    },
+    suggestedNextTools: pageSuggestedTools(item),
+    nextStep: nextStepForSearchItem(item, evidenceCount, unresolvedDependencies),
+  };
+}
+
+function searchGuidance(query: string, items: OkfSearchResultItem[], evidenceCounts: Map<string, number>): Record<string, unknown> {
+  const top = items[0];
+  if (!top) {
+    return {
+      status: "miss",
+      nextStep: `No published knowledge matched "${query}". Report a knowledge gap or import/build source material, then publish again.`,
+      suggestedNextTools: ["kb_resolve_topic"],
+    };
+  }
+  return {
+    status: "hit",
+    topComponentId: top.componentId,
+    nextStep: nextStepForSearchItem(top, evidenceCounts.get(top.componentId) ?? 0, unresolvedFromWhy(top.why)),
+    suggestedNextTools: pageSuggestedTools(top),
+  };
+}
+
+function unresolvedFromWhy(why: string[]): string[] {
+  const prefix = "未解析为具体表：";
+  const line = why.find((item) => item.startsWith(prefix));
+  return line ? line.slice(prefix.length).split(/,\s*/u).map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function nextStepForSearchItem(item: OkfSearchResultItem, evidenceCount: number, unresolvedDependencies: string[]): string {
+  if (unresolvedDependencies.length > 0) return "Call kb_get_page_tables to inspect resolved and unresolved table dependencies before using table data.";
+  if (item.tableDependencies.length > 0) return "Call kb_get_page_tables, then kb_get_table_schema or kb_query_table for structured values.";
+  if (evidenceCount === 0) return "Call kb_get_evidence; if no records return, treat the answer as lower-traceability and report a gap.";
+  return "Call kb_get_page for full context, and kb_get_evidence when citing this knowledge.";
+}
+
+function pageSuggestedTools(item: { matchedFields?: unknown; tableDependencies?: unknown }): string[] {
   const fields = Array.isArray(item.matchedFields) ? item.matchedFields.map(String) : [];
   const tools = ["kb_get_page", "kb_get_evidence", "kb_get_quality"];
   if (fields.includes("tables") || fields.includes("dataDependencies") || (Array.isArray(item.tableDependencies) && item.tableDependencies.length > 0)) {
