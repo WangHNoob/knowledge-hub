@@ -93,6 +93,7 @@ interface OkfPage {
   markdown: string;
   body: string;
   title: string;
+  description: string;
   type: string;
   componentId: string;
   packageId: string;
@@ -220,13 +221,13 @@ export class KnowledgeQueryService {
       case "kb_resolve_topic":
         return this.kbResolveTopic(release, stringArg(payload, "topic", "query", "q"));
       case "kb_get_page":
-        return this.kbGetPage(release, stringArg(payload, "page", "title", "topic", "componentId"));
+        return this.kbGetPage(release, stringArg(payload, "componentId", "page", "title", "topic"));
       case "kb_get_section":
-        return this.kbGetSection(release, stringArg(payload, "page", "title", "topic", "componentId"), stringArg(payload, "section"));
+        return this.kbGetSection(release, stringArg(payload, "componentId", "page", "title", "topic"), stringArg(payload, "section"));
       case "kb_list_pages":
         return this.kbListPages(release);
       case "kb_get_page_tables":
-        return this.kbGetPageTables(release, stringArg(payload, "page", "title", "topic", "componentId"));
+        return this.kbGetPageTables(release, stringArg(payload, "componentId", "page", "title", "topic"));
       case "kb_get_entity":
         return this.kbGetEntity(release, stringArg(payload, "entityId", "id", "name"));
       case "kb_get_neighbors":
@@ -374,7 +375,7 @@ export class KnowledgeQueryService {
   }
 
   private async kbGetPage(release: ReleaseRecord, page: string): Promise<ToolResult> {
-    const okfPage = this.findOkfPage(release, page);
+    const okfPage = await this.findOkfPage(release, page);
     if (!okfPage) return { result: { page, found: false }, componentIds: [] };
     return {
       result: {
@@ -537,12 +538,12 @@ export class KnowledgeQueryService {
     const aliases = new Map<string, TableSchemaEntry[]>();
     for (const row of this.readOkfTableAliases(release)) {
       const table = row.table ?? row.canonical ?? row.canonicalName ?? "";
-      const schema = schemasByName.get(aliasKey(table));
-      if (!schema) continue;
+      const schemas = schemaEntriesForAliasTarget(table, schemasByName);
+      if (schemas.length === 0) continue;
       for (const value of uniqueSorted([table, ...(row.aliases ?? [])])) {
         const key = aliasKey(value);
         if (!key) continue;
-        aliases.set(key, uniqueTableEntries([...(aliases.get(key) ?? []), schema]));
+        aliases.set(key, uniqueTableEntries([...(aliases.get(key) ?? []), ...schemas]));
       }
     }
     return aliases;
@@ -716,7 +717,7 @@ export class KnowledgeQueryService {
     const component = componentId
       ? (await this.releaseComponents(release)).find((item) => item.componentId === componentId)
       : null;
-    const okfPage = !component && page ? this.findOkfPage(release, page) : null;
+    const okfPage = !component && page ? await this.findOkfPage(release, page) : null;
     const componentIds = component
       ? [component.componentId]
       : okfPage ? [okfPage.componentId]
@@ -818,16 +819,16 @@ export class KnowledgeQueryService {
       .filter((page): page is OkfPage => Boolean(page?.componentId));
   }
 
-  private findOkfPage(release: ReleaseRecord, page: string): OkfPage | null {
+  private async findOkfPage(release: ReleaseRecord, page: string): Promise<OkfPage | null> {
     const normalized = normalize(page);
-    return this.readOkfPages(release).find((item) =>
-      normalize(item.componentId) === normalized ||
-      normalize(item.title) === normalized ||
-      normalize(item.artifactId) === normalized ||
-      normalize(item.artifactId.replace(/^wiki\//u, "")) === normalized ||
-      normalize(item.okfPath) === normalized ||
-      normalize(item.okfPath.replace(/^\//u, "")) === normalized
-    ) ?? null;
+    const pages = this.readOkfPages(release);
+    const exact = pages.find((item) => pageLookupKeys(item).some((key) => normalize(key) === normalized));
+    if (exact) return exact;
+    const search = await this.kbSearchIndex(release, page, 1);
+    const hit = search[0];
+    if (!hit) return null;
+    if (hit.score < 1 || hit.why.some((line) => line.startsWith("缺少核心词"))) return null;
+    return pages.find((item) => item.componentId === hit.componentId) ?? null;
   }
 
   private okfEvidenceRecordsForComponents(release: ReleaseRecord, componentIds: string[]): OkfCitation[] {
@@ -1301,6 +1302,7 @@ function parseOkfPage(okfPath: string, markdown: string): OkfPage | null {
     markdown,
     body,
     title: yamlScalar(frontmatter, "title") || okfPath.split("/").pop()?.replace(/\.md$/u, "") || okfPath,
+    description: yamlScalar(frontmatter, "description"),
     type: yamlScalar(frontmatter, "type") || "knowledge_note",
     componentId,
     packageId: yamlScalar(frontmatter, "packageId"),
@@ -1309,6 +1311,33 @@ function parseOkfPage(okfPath: string, markdown: string): OkfPage | null {
     trust: parseOkfTrust(frontmatter),
     citations: parseOkfCitations(body, componentId, okfPath),
   };
+}
+
+function pageLookupKeys(page: OkfPage): string[] {
+  const basename = page.okfPath.split("/").pop() ?? "";
+  return uniqueOrdered([
+    page.componentId,
+    page.title,
+    stripMarkdownExtension(page.title),
+    page.description,
+    firstMarkdownHeading(page.body),
+    page.artifactId,
+    stripMarkdownExtension(page.artifactId),
+    page.artifactId.replace(/^wiki\//u, ""),
+    stripMarkdownExtension(page.artifactId.replace(/^wiki\//u, "")),
+    page.okfPath,
+    page.okfPath.replace(/^\//u, ""),
+    basename,
+    stripMarkdownExtension(basename),
+  ]).filter(Boolean);
+}
+
+function stripMarkdownExtension(value: string): string {
+  return value.replace(/\.md$/iu, "");
+}
+
+function firstMarkdownHeading(markdown: string): string {
+  return /^#\s+(.+?)\s*$/mu.exec(markdown)?.[1]?.trim() ?? "";
 }
 
 function parseOkfTrust(frontmatter: string): TrustScore | null {
@@ -1463,6 +1492,7 @@ function resolveCandidateTables(candidate: string, schemasByName: Map<string, Ta
   if (!key) return [];
   const exact = schemasByName.get(key);
   if (exact) return [exact];
+  if (isGenericDependencyKey(key)) return [];
   const aliased = aliases.get(key);
   if (aliased?.length) return aliased;
   const containedSchemas = [...schemasByName.entries()]
@@ -1470,9 +1500,31 @@ function resolveCandidateTables(candidate: string, schemasByName: Map<string, Ta
     .map(([, entry]) => entry);
   if (containedSchemas.length) return uniqueTableEntries(containedSchemas);
   const containedAliases = [...aliases.entries()]
-    .filter(([alias]) => alias.length >= 4 && key.includes(alias))
+    .filter(([alias]) => actionableAliasKey(alias) && key.includes(alias))
     .flatMap(([, entries]) => entries);
   return uniqueTableEntries(containedAliases);
+}
+
+function schemaEntriesForAliasTarget(value: string, schemasByName: Map<string, TableSchemaEntry>): TableSchemaEntry[] {
+  const key = aliasKey(value);
+  if (!key) return [];
+  const exact = schemasByName.get(key);
+  if (exact) return [exact];
+  if (isGenericDependencyKey(key)) return [];
+  if (!actionableAliasKey(key)) return [];
+  const candidates = [...schemasByName.entries()]
+    .filter(([tableKey]) => tableKey.includes(key))
+    .map(([, entry]) => entry)
+    .sort((a, b) => a.schema.table_name.length - b.schema.table_name.length || a.schema.table_name.localeCompare(b.schema.table_name));
+  return uniqueTableEntries(candidates.slice(0, 12));
+}
+
+function actionableAliasKey(value: string): boolean {
+  return value.length >= 4 || /[\p{Script=Han}]{2,}/u.test(value);
+}
+
+function isGenericDependencyKey(value: string): boolean {
+  return ["config", "配置", "table", "表", "data", "数据", "配置表", "config表"].includes(value);
 }
 
 function looksLikeDependencyToken(value: string): boolean {

@@ -115,6 +115,72 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("resolves pages by business topic, heading, and component id", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    const okfPagePath = join(fixture.dataDir, "releases", fixture.releaseId, "okf_bundle", "systems", "battle.md");
+    writeFileSync(okfPagePath, [
+      "---",
+      'type: "system_rule"',
+      'title: "battle.md"',
+      'description: "Battle System"',
+      'artifactId: "wiki/systems/battle.md"',
+      'tags: ["wiki_page"]',
+      "kh:",
+      `  componentId: "${fixture.pageComponentId}"`,
+      '  packageId: "pkg_query_fixture"',
+      '  artifactId: "wiki/systems/battle.md"',
+      "---",
+      "# Battle System",
+      "",
+      "Business topic lookup should still find this page.",
+      "",
+      "## Data Dependencies",
+      "Uses Combat/Skill.",
+      "",
+      "# Citations",
+      "",
+      "1. source quote (ev_query_page; source src_okf; confidence 0.93)",
+      ""
+    ].join("\n"), "utf8");
+
+    try {
+      const byTopic = await service.runTool("kb_get_page", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(byTopic.result.found).toBe(true);
+      expect(byTopic.result.componentId).toBe(fixture.pageComponentId);
+
+      const byComponent = await service.runTool("kb_get_page", { page: "ignored", componentId: fixture.pageComponentId }, { sessionId: "test", agentRole: "planner" });
+      expect(byComponent.result.found).toBe(true);
+      expect(byComponent.result.title).toBe("battle.md");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("resolves long Chinese dependency text through table aliases and fuzzy schema names", async () => {
+    const fixture = await setupPublishedKnowledgeFixture({
+      dependencyText: "Uses 技能配置表（技能消耗、释放条件）.",
+      withGraphRelation: false,
+    });
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    const aliasPath = join(fixture.dataDir, "releases", fixture.releaseId, "okf_bundle", "tables", "aliases.json");
+    writeFileSync(aliasPath, JSON.stringify({
+      aliases: [
+        { table: "Combat", aliases: ["技能"] }
+      ]
+    }, null, 2), "utf8");
+
+    try {
+      const pageTables = await service.runTool("kb_get_page_tables", { page: "Battle System" }, { sessionId: "test", agentRole: "planner" });
+      expect(pageTables.result.tables.some((table: { table: string }) => table.table === "Combat/Skill")).toBe(true);
+      expect(pageTables.result.unresolvedDependencies).toEqual([]);
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it("uses OKF search index intent expansion and table aliases for explainable hits", async () => {
     const fixture = await setupPublishedKnowledgeFixture({ dependencyText: "Uses 技能表." });
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
