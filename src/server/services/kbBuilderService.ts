@@ -35,6 +35,14 @@ import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelC
 import type { DiagnosticLogger } from "./diagnosticService";
 import { computeTrustScore } from "./trustScore";
 
+/**
+ * 生成 runId / packageId 里嵌入的紧凑时间戳，按东八区（Asia/Shanghai）墙钟时间。
+ * 仅用于人类可读的标识符；DB 的 created_at 仍存 UTC（TIMESTAMPTZ）。
+ */
+function shanghaiStamp(): string {
+  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().replace(/[-:.TZ]/g, "");
+}
+
 const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "viz"];
 const TRACKED_STAGES: ReadonlySet<string> = new Set<string>(STAGE_ORDER);
 const AUTO_EVIDENCE_COMPONENT_KINDS = new Set(["wiki_page"]);
@@ -95,7 +103,7 @@ export class KbBuilderPipelineService {
     const ruleProfile = await createLegislationService(this.db).getActiveProfile();
     const modelConfig = normalizeModelConfig(options.modelConfig, options.model);
     const sourceChanges = await sourceService.diff(options.versionId);
-    const runId = `run_${new Date().toISOString().replace(/[-:.TZ]/g, "")}_${nanoid(6)}`;
+    const runId = `run_${shanghaiStamp()}_${nanoid(6)}`;
     const stages = STAGE_ORDER.filter((stage) => options.stages.includes(stage));
     const workspaceRoot = join(this.dataDir, "kb-build-runs");
     const now = new Date().toISOString();
