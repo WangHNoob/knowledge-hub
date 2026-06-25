@@ -1,0 +1,59 @@
+# 生产部署：应用 + 它自己的 PostgreSQL，都在本编排内。
+#
+# 为什么自带 PG：服务器上已有的 PG 是别的项目（langfuse）的 postgres:17 容器，
+# 既有版本不兼容（本项目种子是 PG18），也不应混用它的库。这里起一个独立 postgres:18：
+#   - 不映射宿主端口 → 不占用、也不冲突宿主已被占用的 5432
+#   - 应用通过 compose 内网用服务名 postgres:5432 访问（容器内端口，与宿主无关）
+#   - 首次启动自动恢复随包携带的全库种子（scripts/pg-init/02-restore-seed.sh）
+#
+# 用法见 docs/DEPLOY-DOCKER.md
+services:
+  postgres:
+    image: postgres:18
+    container_name: kh-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 配置 POSTGRES_PASSWORD}
+      POSTGRES_DB: knowledge_hub
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    volumes:
+      - kh-pgdata:/var/lib/postgresql
+      # 首次初始化时建测试库并自动恢复种子 dump（仅数据卷为空时执行一次）
+      - ./scripts/pg-init:/docker-entrypoint-initdb.d:ro
+      - ./seed/db:/seed:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d knowledge_hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+    # 故意不写 ports：只在 compose 内网可见，不占用宿主 5432。
+    # 如需从宿主调试，可临时加： ports: ["15432:5432"]
+
+  app:
+    build: .
+    image: knowledge-hub:latest
+    container_name: kh-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4174"
+      KH_DATA_DIR: /app/data
+      TZ: Asia/Shanghai
+      # 连本编排内的 PG（容器内端口 5432，不暴露到宿主）
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?请在 .env 配置 POSTGRES_PASSWORD}@postgres:5432/knowledge_hub
+      KH_JWT_SECRET: ${KH_JWT_SECRET:?请在 .env 配置 KH_JWT_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+    ports:
+      - "${APP_HOST_PORT:-4174}:4174"
+    volumes:
+      # 原始资料 blob、OKF 发布物、构建产物随包解压在 ./data，挂载给应用
+      - ./data:/app/data
+
+volumes:
+  kh-pgdata:

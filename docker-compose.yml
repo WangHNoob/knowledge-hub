@@ -1,0 +1,28 @@
+# Knowledge Hub 本地 PostgreSQL（供同事一键起库 + 功能测试）
+# 用法见 docs/QUICKSTART.md；密码与 .env.example 保持一致。
+services:
+  postgres:
+    image: postgres:18
+    container_name: kh-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: khpw
+      POSTGRES_DB: knowledge_hub
+      # 让容器内时间与东八区一致，便于核对时间戳
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - kh-pgdata:/var/lib/postgresql
+      # 首次初始化时自动创建测试库（仅在数据卷为空时执行一次）
+      - ./scripts/pg-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d knowledge_hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  kh-pgdata:

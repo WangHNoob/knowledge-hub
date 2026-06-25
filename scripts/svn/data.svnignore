@@ -1,0 +1,11 @@
+kb-build-runs
+logs
+web-imports
+.kh-cache
+knowledge-hub.db
+*.db
+*.log
+*.pid
+*.json
+*.err.log
+*.out.log

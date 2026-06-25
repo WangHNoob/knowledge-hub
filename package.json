@@ -12,6 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:restore": "node scripts/restore-seed.mjs",
     "mcp:stdio": "tsx src/server/mcpStdio.ts",
     "okf:scan": "tsx src/server/services/okf/cli.ts"
   },

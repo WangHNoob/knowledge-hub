@@ -1,0 +1,20 @@
+# 需要随 SVN 版本化的 data/ 子路径（其余 data/ 内容为可再生运行产物，已被 svn:ignore 排除）。
+# 由 scripts/svn-bootstrap.ps1 读取，逐条 `svn add --parents --no-ignore`。
+# 说明：
+#   - storage/blobs   原始资料本体（内容寻址，不可变）
+#   - releases        已发布版本的 OKF bundle（MCP kb_* 工具直接读取）
+#   - kb-build-runs/<被引用的 run>/data/{wiki,table_schemas,processed,table_aliases.json}
+#                     当前资产包组件正文的来源；同一 run 下 gamedata/gamedocs 与 blobs 重复，已排除
+data/storage/blobs
+data/releases
+data/kb-build-runs/run_20260618092927533_rx4DWg/data/wiki
+data/kb-build-runs/run_20260618092927533_rx4DWg/data/table_schemas
+data/kb-build-runs/run_20260618092927533_rx4DWg/data/processed
+data/kb-build-runs/run_20260618092927533_rx4DWg/data/table_aliases.json
+data/kb-build-runs/run_20260622035703001_9qyKKC/data/wiki
+data/kb-build-runs/run_20260622035703001_9qyKKC/data/table_schemas
+data/kb-build-runs/run_20260622035703001_9qyKKC/data/processed
+data/kb-build-runs/run_20260622035703001_9qyKKC/data/table_aliases.json
+data/kb-build-runs/run_20260618041621187_Ut3gez/data/wiki
+data/kb-build-runs/run_20260618041621187_Ut3gez/data/table_schemas
+data/kb-build-runs/run_20260618041621187_Ut3gez/data/processed

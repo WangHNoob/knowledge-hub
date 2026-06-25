@@ -1,0 +1,21 @@
+# 构建应用镜像时无需带入的内容（数据/依赖/产物由挂载卷或镜像内构建提供）
+node_modules
+dist
+.git
+.svn
+.worktrees
+.superpowers
+.superpowers-state
+.codegraph
+.vscode
+.idea
+.env
+*.log
+
+# 运行期数据：通过 docker-compose 的卷挂载提供，不打进镜像
+data
+source_data
+knowledge
+
+# 种子 dump：只挂载给 postgres 容器，应用镜像不需要
+seed
