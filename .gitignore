@@ -4,6 +4,7 @@ source_data
 dist/
 data/
 storage/
+logs/
 *.html
 *.log
 .env

@@ -7,7 +7,7 @@ TypeScript 全栈知识资产中枢，用于团队协作式的知识治理。
 - Fastify API（JWT / CORS / multipart）
 - React 19 + Vite SPA + React Query
 - PostgreSQL，经 `pg` 连接（Node 22+）
-- MCP 服务器（HTTP `/api/mcp/query` 与 stdio 两种入口），对当前发布版本暴露 `kb_*` 工具
+- MCP 服务器（Streamable HTTP `/mcp`、兼容调试 API `/api/mcp/query` 与 stdio），对当前发布版本暴露 `kb_*` 工具
 - Vitest 测试
 
 ## 首次启动
@@ -68,7 +68,24 @@ http://127.0.0.1:4174
 - 按资产组件统计的证据记录与覆盖率。
 - 由质量发现衍生的审核任务（blocking / warning / info）。
 - 发布流程：冻结 manifest hash 并导出 OKF bundle；通过 release channel 回滚。
-- MCP `kb_*` 工具（HTTP 与 stdio）服务当前发布版本，附带 MCP 审计与 Agent 反馈跟踪。
+- MCP `kb_*` 工具（Streamable HTTP 与 stdio）服务当前发布版本，附带 MCP 审计与 Agent 反馈跟踪。
+
+## Agent / MCP 接入
+
+标准 MCP 客户端优先使用 Streamable HTTP：
+
+```json
+{
+  "name": "knowledge-hub",
+  "transport": "http",
+  "url": "http://127.0.0.1:4174/mcp",
+  "headers": {
+    "Authorization": "Bearer <login-token>"
+  }
+}
+```
+
+`/mcp` 使用与 Web API 相同的 JWT 权限边界；先调用 `/api/auth/login` 获取 token。仅本机或开发场景也可以继续使用 `npm run mcp:stdio`。
 - 结构化诊断，按请求记录 trace/span。
 
 ## 后续里程碑

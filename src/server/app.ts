@@ -20,6 +20,7 @@ import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerDiagnosticsRoutes } from "./routes/diagnostics";
 import { registerLegacyRoutes } from "./routes/legacy";
 import { registerLegislationRoutes } from "./routes/legislation";
+import { registerMcpRoutes } from "./routes/mcp";
 import { registerPackageRoutes } from "./routes/packages";
 import { registerQualityRoutes } from "./routes/quality";
 import { registerReleaseRoutes } from "./routes/releases";
@@ -89,6 +90,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerQualityRoutes(app, ctx);
   registerLegislationRoutes(app, ctx);
   registerReleaseRoutes(app, ctx);
+  registerMcpRoutes(app, ctx);
   registerAgentRoutes(app, ctx);
   registerDiagnosticsRoutes(app, ctx);
   registerLegacyRoutes(app, ctx);
