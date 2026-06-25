@@ -70,9 +70,6 @@ export function Review() {
     }
   });
 
-  if (isLoading) return <Loading title="正在整理审核任务" />;
-  if (error) return <ErrorState error={error} />;
-
   const tasks = useMemo(
     () => (data ?? []).filter((task) => !params.packageId || task.packageId === params.packageId),
     [data, params.packageId]
@@ -100,6 +97,9 @@ export function Review() {
       transition.mutate({ taskIds: tasks.map((t) => t.taskId), next });
     }
   }, [tasks, transition]);
+
+  if (isLoading) return <Loading title="正在整理审核任务" />;
+  if (error) return <ErrorState error={error} />;
 
   return (
     <Page title="审核中心" subtitle="把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。">
