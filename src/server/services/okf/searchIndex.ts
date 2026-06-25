@@ -118,7 +118,9 @@ export function buildOkfSearchIndex(input: {
 export function searchOkfIndex(index: OkfSearchIndex, query: string, limit = 10): OkfSearchResultItem[] {
   const normalizedQuery = normalizeText(query);
   const expanded = expandQuery(query);
-  const queryTerms = unique([...tokenizeSearchText(query), ...expanded.terms]);
+  const originalTerms = tokenizeSearchText(query);
+  const queryTerms = unique([...originalTerms, ...expanded.terms]);
+  const anchors = queryAnchors(query);
   if (queryTerms.length === 0) return [];
 
   const items: OkfSearchResultItem[] = [];
@@ -147,6 +149,21 @@ export function searchOkfIndex(index: OkfSearchIndex, query: string, limit = 10)
       page.fields.dataDependencies,
       page.fields.tables.join(" "),
     ].join("\n"));
+    const anchorMatches = anchors.filter((anchor) => pageText.includes(anchor));
+    const titlePathText = normalizeText(`${page.fields.title}\n${page.fields.path}`);
+    const anchorTitleMatches = anchorMatches.filter((anchor) => titlePathText.includes(anchor));
+    if (anchors.length > 0) {
+      if (anchorMatches.length > 0) {
+        anchorMatches.forEach((term) => matchedTerms.add(term));
+        score += anchorTitleMatches.length * 90 + (anchorMatches.length - anchorTitleMatches.length) * 35;
+        why.unshift(anchorTitleMatches.length > 0
+          ? `核心词命中标题/路径：${anchorTitleMatches.slice(0, 3).join(", ")}`
+          : `核心词命中正文：${anchorMatches.slice(0, 3).join(", ")}`);
+      } else {
+        score *= 0.35;
+        why.push(`缺少核心词：${anchors.slice(0, 3).join(", ")}`);
+      }
+    }
     if (normalizedQuery && pageText.includes(normalizedQuery)) {
       score += 6;
       matchedFields.add("body");
@@ -358,6 +375,18 @@ function expandQuery(query: string): { terms: string[]; reasons: Array<{ reason:
     reasons.push({ reason: intent.reason, expansions });
   }
   return { terms: [...terms], reasons };
+}
+
+function queryAnchors(query: string): string[] {
+  const intentTriggers = new Set(INTENT_TERMS.flatMap((intent) => intent.triggers.map(normalizeText)));
+  const anchors: string[] = [];
+  for (const token of normalizeText(query).match(/[a-z0-9]+|[\p{Script=Han}]+/gu) ?? []) {
+    if (intentTriggers.has(token)) continue;
+    if (/^[\p{Script=Han}]+$/u.test(token) && token.length < 3) continue;
+    if (/^[a-z0-9]+$/u.test(token) && token.length < 3) continue;
+    anchors.push(token);
+  }
+  return unique(anchors);
 }
 
 function stripUtilitySections(body: string): string {

@@ -433,6 +433,7 @@ export class KnowledgeQueryService {
           trust: component.trust ?? null,
         })),
         unresolvedDependencies: resolved.unresolved,
+        unresolvedDependencyHints: resolved.unresolved.map(dependencyHint),
       },
       componentIds: uniqueSorted([...pageResult.componentIds, ...resolved.tables.map((table) => table.component.componentId)]),
     };
@@ -465,7 +466,7 @@ export class KnowledgeQueryService {
         matchedFields,
         tableDependencies,
         why: resolved.unresolved.length
-          ? uniqueSorted([...whyBase, `未解析为具体表：${resolved.unresolved.slice(0, 5).join(", ")}`]).slice(0, 9)
+          ? uniqueOrdered([...whyBase, `未解析为具体表：${resolved.unresolved.slice(0, 5).join(", ")}`]).slice(0, 9)
           : whyBase,
       });
     }
@@ -1307,12 +1308,12 @@ function dependencyLines(text: string): string[] {
   if (!text.trim()) return [];
   const out: string[] = [];
   for (const line of text.split(/\r?\n/u)) {
-    const cleanedLine = line
-      .replace(/^[-*+]\s*/u, "")
-      .replace(/^\d+[.)、]\s*/u, "")
-      .replace(/\|/gu, " ")
-      .trim();
+    let cleanedLine = line.replace(/\|/gu, " ").trim();
+    while (/^(?:[-*+]|\d+[.)、])\s+/u.test(cleanedLine)) {
+      cleanedLine = cleanedLine.replace(/^(?:[-*+]|\d+[.)、])\s+/u, "").trim();
+    }
     if (!cleanedLine || /^无[。.]?$/u.test(cleanedLine)) continue;
+    if (/^\d+\s*[-~–—]\s*\d+.*[:：]/u.test(cleanedLine)) continue;
     out.push(cleanedLine);
   }
   return uniqueSorted(out);
@@ -1340,6 +1341,43 @@ function looksLikeDependencyToken(value: string): boolean {
   if (!trimmed || /^无[。.]?$/u.test(trimmed)) return false;
   if (trimmed.length > 80) return false;
   return /[A-Za-z\p{Script=Han}]/u.test(trimmed);
+}
+
+function dependencyHint(dependency: string): { dependency: string; kind: string; suggestedAction: string } {
+  const key = aliasKey(dependency);
+  if (key.includes("config") || key.includes("配置")) {
+    return {
+      dependency,
+      kind: "generic_config",
+      suggestedAction: "补充具体配置表名或维护别名映射后重新构建发布。",
+    };
+  }
+  if (key.includes("fight") || key.includes("战斗")) {
+    return {
+      dependency,
+      kind: "runtime_or_domain_data",
+      suggestedAction: "确认这是运行时数据、图谱实体还是具体表；如需查表请补具体 schema 名。",
+    };
+  }
+  if (key.includes("task") || key.includes("任务")) {
+    return {
+      dependency,
+      kind: "generic_task",
+      suggestedAction: "补充具体任务配置表名或维护任务类表别名。",
+    };
+  }
+  if (/^[a-z][a-z0-9_/.-]*$/iu.test(dependency.trim())) {
+    return {
+      dependency,
+      kind: "missing_schema_or_alias",
+      suggestedAction: "该名称未解析到当前发布的表 schema；检查表是否进入 OKF bundle 或补充别名。",
+    };
+  }
+  return {
+    dependency,
+    kind: "concept_dependency",
+    suggestedAction: "作为概念依赖使用；需要 Agent 查表时应补充具体表名。",
+  };
 }
 
 function uniqueTableEntries(values: TableSchemaEntry[]): TableSchemaEntry[] {
@@ -1385,4 +1423,8 @@ function round(value: number): number {
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
+}
+
+function uniqueOrdered(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }
