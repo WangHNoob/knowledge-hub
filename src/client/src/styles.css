@@ -1923,6 +1923,71 @@ code {
   min-width: 820px;
 }
 
+.trust-policy-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.trust-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.trust-policy-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--surface-raised);
+}
+
+.trust-policy-card > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trust-policy-card p {
+  margin: 0;
+  color: var(--ink);
+}
+
+.trust-policy-card dl {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 6px 10px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.trust-policy-card dt {
+  color: var(--ink-faint);
+  font-weight: 700;
+}
+
+.trust-policy-card dd {
+  margin: 0;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.trust-status-table .rule-table-row,
+.trust-cap-table .rule-table-row,
+.trust-audit-table .rule-table-row {
+  grid-template-columns: minmax(160px, 0.75fr) minmax(90px, 0.35fr) minmax(320px, 1.4fr);
+  min-width: 720px;
+}
+
+.trust-audit-table code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .rule-table input,
 .rule-table select {
   width: 100%;

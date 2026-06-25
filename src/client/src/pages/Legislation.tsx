@@ -1,10 +1,11 @@
-import { Boxes, Braces, FileText, LayoutDashboard, Plus, Save, Share2, ShieldAlert, ShieldCheck, Table, Trash2 } from "lucide-react";
+import { Boxes, Braces, FileText, Gauge, LayoutDashboard, Plus, Save, Share2, ShieldAlert, ShieldCheck, Table, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { activateLegislationProfile, createLegislationProfile, getLegislationProfile } from "../api";
-import type { KnowledgeRuleConfig, RelationTypeSpec } from "../api/types";
+import { activateLegislationProfile, createLegislationProfile, getLegislationProfile, getTrustPolicy } from "../api";
+import type { KnowledgeRuleConfig, RelationTypeSpec, TrustPolicy } from "../api/types";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
+import { formatPercent } from "../utils/format";
 import {
   addDocumentType,
   addEntityType,
@@ -27,11 +28,12 @@ import {
   updateTableRuleTags
 } from "./legislationEditor";
 
-type LegislationTab = "documents" | "entities" | "relations" | "tables" | "quality" | "overview" | "advanced";
+type LegislationTab = "documents" | "entities" | "relations" | "tables" | "quality" | "trust" | "overview" | "advanced";
 
 export function Legislation() {
   const queryClient = useQueryClient();
   const profiles = useQuery({ queryKey: ["legislation-profile"], queryFn: getLegislationProfile });
+  const trustPolicy = useQuery({ queryKey: ["trust-policy"], queryFn: getTrustPolicy });
   const [tab, setTab] = useState<LegislationTab>("documents");
   const [name, setName] = useState("策划立法规则");
   const [activate, setActivate] = useState(true);
@@ -92,6 +94,7 @@ export function Legislation() {
     { id: "relations", label: "对象关系", icon: Share2, count: config?.relationTypes.length ?? 0 },
     { id: "tables", label: "表字段", icon: Table },
     { id: "quality", label: "质量红线", icon: ShieldAlert, count: config ? Object.keys(config.qualityRules).length : 0 },
+    { id: "trust", label: "可信度", icon: Gauge, count: trustPolicy.data?.dimensions.length ?? 0 },
     { id: "overview", label: "概览 / 历史", icon: LayoutDashboard, count: history.length },
     { id: "advanced", label: "高级规则", icon: Braces }
   ];
@@ -136,6 +139,11 @@ export function Legislation() {
         {config && tab === "relations" && <RelationTypeSection config={config} onChange={setConfig} />}
         {config && tab === "tables" && <TableRuleSection config={config} onChange={setConfig} />}
         {config && tab === "quality" && <QualityRuleSection config={config} onChange={setConfig} />}
+        {tab === "trust" && (
+          trustPolicy.isLoading ? <Loading title="正在读取可信度规则" /> :
+          trustPolicy.error ? <ErrorState error={trustPolicy.error} /> :
+          trustPolicy.data ? <TrustPolicySection policy={trustPolicy.data} /> : null
+        )}
 
         {tab === "overview" && (
           <section className="legislation-workbench">
@@ -202,6 +210,110 @@ export function Legislation() {
         )}
       </div>
     </Page>
+  );
+}
+
+function TrustPolicySection({ policy }: { policy: TrustPolicy }) {
+  return (
+    <section className="legislation-workbench">
+      <section className="release-panel rule-section">
+        <div className="detail-head">
+          <div>
+            <h2>知识可信度规则</h2>
+            <p>{policy.position}</p>
+          </div>
+          <div className="trust-policy-badges">
+            <Badge label={policy.version} tone="ok" />
+            <Badge label={policy.editable ? "可编辑" : "只读审议"} tone={policy.editable ? "warn" : undefined} />
+          </div>
+        </div>
+        <div className="metrics compact">
+          <Metric label="维度" value={policy.dimensions.length} hint="参与加权" />
+          <Metric label="证据权重" value={formatPercent(policy.dimensions.find((item) => item.key === "evidence")?.weight ?? 0)} hint="追溯优先" tone="ok" />
+          <Metric label="可信阈值" value={formatPercent(policy.statusBands.find((item) => item.status === "trusted")?.minScore ?? 0.85)} hint="trusted" />
+          <Metric label="封顶规则" value={policy.caps.length} hint="硬性风险" tone={policy.caps.length ? "warn" : "ok"} />
+        </div>
+        <div className="rule-hint">
+          <strong>治理口径</strong>
+          <span>这套规则属于“发布知识能否被 Agent 放心消费”的立法内容。当前先随系统版本固定，避免策划误改权重导致可信度不可比；后续可以把权重和封顶提升为受控 Profile。</span>
+        </div>
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="分数计算" caption="最终分数 = 四个维度加权求和，再按硬性风险封顶。" />
+        <div className="trust-policy-grid">
+          {policy.dimensions.map((dimension) => (
+            <article className="trust-policy-card" key={dimension.key}>
+              <div>
+                <strong>{dimension.label}</strong>
+                <Badge label={formatPercent(dimension.weight)} tone={dimension.weight >= 0.3 ? "ok" : undefined} />
+              </div>
+              <p>{dimension.intent}</p>
+              <dl>
+                <dt>数据来源</dt>
+                <dd>{dimension.source}</dd>
+                <dt>计算方式</dt>
+                <dd>{dimension.formula}</dd>
+              </dl>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="状态分段" caption="Agent 端会随命中知识输出 Trust Score 与状态，调用方可据此决定是否直接引用。" />
+        <div className="rule-table trust-status-table">
+          <div className="rule-table-row head">
+            <span>状态</span>
+            <span>最低分</span>
+            <span>消费口径</span>
+          </div>
+          {policy.statusBands.map((band) => (
+            <div className="rule-table-row" key={band.status}>
+              <strong>{band.label}</strong>
+              <span>{formatPercent(band.minScore)}</span>
+              <span>{band.description}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="封顶规则" caption="封顶比加权分更硬；只要触发，就算其它维度很高也不能超过对应上限。" />
+        <div className="rule-table trust-cap-table">
+          <div className="rule-table-row head">
+            <span>规则</span>
+            <span>上限</span>
+            <span>触发条件</span>
+          </div>
+          {policy.caps.map((cap) => (
+            <div className="rule-table-row" key={cap.id}>
+              <strong>{cap.label}</strong>
+              <span>{formatPercent(cap.maxScore)}</span>
+              <span>{cap.trigger}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="审计时效" caption="时效性来自飞轮审计结果，不是新导入资料天然更可信。" />
+        <div className="rule-table trust-audit-table">
+          <div className="rule-table-row head">
+            <span>知识类型</span>
+            <span>半衰期</span>
+            <span>匹配规则</span>
+          </div>
+          {policy.auditHalfLifeDays.map((entry) => (
+            <div className="rule-table-row" key={`${entry.matcher}-${entry.days}`}>
+              <strong>{entry.label}</strong>
+              <span>{entry.days} 天</span>
+              <code>{entry.matcher}</code>
+            </div>
+          ))}
+        </div>
+      </section>
+    </section>
   );
 }
 

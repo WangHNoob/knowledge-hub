@@ -2,11 +2,16 @@ import type { FastifyInstance } from "fastify";
 
 import { requireRole } from "../middleware/auth";
 import { qualityProfileUpdateSchema } from "../schemas";
+import { getTrustPolicy } from "../services/trustScore";
 import type { RouteContext } from "./context";
 
 export function registerQualityRoutes(app: FastifyInstance, ctx: RouteContext) {
   app.get("/api/quality-gate/profile", { preHandler: app.authenticate }, async () => ({
     profile: await ctx.kbBuilderService.getActiveQualityProfile()
+  }));
+
+  app.get("/api/quality-gate/trust-policy", { preHandler: app.authenticate }, async () => ({
+    policy: getTrustPolicy()
   }));
 
   app.put("/api/quality-gate/profile", {

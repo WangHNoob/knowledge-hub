@@ -25,7 +25,7 @@ export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
 export { searchAll } from "./search";
 export { listTableAliases, saveTableAliases, importTableAliases, pruneTableAliases } from "./tableAliases";
 export { listReviewTasks, transitionReviewTasks } from "./review";
-export { getQualityProfile, updateQualityProfile } from "./quality";
+export { getQualityProfile, getTrustPolicy, updateQualityProfile } from "./quality";
 export {
   activateLegislationProfile,
   createLegislationProfile,

@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { computeTrustScore } from "../src/server/services/trustScore";
+import { computeTrustScore, getTrustPolicy } from "../src/server/services/trustScore";
 
 describe("computeTrustScore", () => {
+  it("exposes the same trust policy used by score calculation", () => {
+    const policy = getTrustPolicy();
+
+    expect(policy.version).toBe("v2-lite");
+    expect(policy.editable).toBe(false);
+    expect(policy.dimensions.map((dimension) => dimension.key)).toEqual(["evidence", "completeness", "auditFreshness", "consistency"]);
+    expect(policy.dimensions.reduce((sum, dimension) => sum + dimension.weight, 0)).toBeCloseTo(1);
+    expect(policy.caps.map((cap) => cap.id)).toContain("pending_audit");
+  });
+
   it("keeps newly ingested but unaudited knowledge below the audit cap", () => {
     const trust = computeTrustScore({
       component: {

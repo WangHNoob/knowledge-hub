@@ -547,6 +547,15 @@ describe("knowledge hub api", () => {
     });
     expect(read.statusCode).toBe(200);
     expect(read.json().profile.config.minPackageScore).toBe(0.8);
+
+    const trustPolicy = await app.inject({
+      method: "GET",
+      url: "/api/quality-gate/trust-policy",
+      headers: { authorization: `Bearer ${adminToken}` }
+    });
+    expect(trustPolicy.statusCode).toBe(200);
+    expect(trustPolicy.json().policy.version).toBe("v2-lite");
+    expect(trustPolicy.json().policy.dimensions.map((dimension: { key: string }) => dimension.key)).toContain("evidence");
   });
 
   it("creates, publishes, reads current, and rolls back immutable releases through the api", async () => {

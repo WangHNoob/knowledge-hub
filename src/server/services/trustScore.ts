@@ -15,12 +15,77 @@ export interface ComputeTrustScoreInput {
 }
 
 const TRUST_VERSION = "v2-lite" as const;
-const WEIGHTS = {
-  evidence: 0.35,
-  completeness: 0.25,
-  auditFreshness: 0.2,
-  consistency: 0.2,
-};
+const TRUST_POLICY = {
+  version: TRUST_VERSION,
+  editable: false,
+  owner: "system",
+  position: "可信度是发布知识的消费准入规则，目前随系统版本固定；策划可在立法页审议口径，暂不直接改权重。",
+  dimensions: [
+    {
+      key: "evidence",
+      label: "证据可靠性",
+      weight: 0.35,
+      source: "evidence_records + source_refs",
+      formula: "有证据记录 35% + 有 source refs 25% + 引文具体度 25% + 证据置信度 15%",
+      intent: "回答必须能追溯到资料版本，不能只靠生成正文。"
+    },
+    {
+      key: "completeness",
+      label: "规格全面性",
+      weight: 0.25,
+      source: "wikiSpecScore / completenessScore / quality score",
+      formula: "优先读取构建阶段的 wiki spec 完整度；表、图谱、索引使用保守默认值。",
+      intent: "知识是否覆盖该类型 Wiki 应有的章节和事实。"
+    },
+    {
+      key: "auditFreshness",
+      label: "飞轮审计时效",
+      weight: 0.2,
+      source: "lastTrustedAuditAt",
+      formula: "通过飞轮审计后按半衰期衰减；未审计默认 45%。",
+      intent: "新鲜不是新导入，而是最后一次可信审计越近越可靠。"
+    },
+    {
+      key: "consistency",
+      label: "一致性风险",
+      weight: 0.2,
+      source: "open review_tasks + consistencyScore",
+      formula: "无相关未处理任务为 100%；blocking/warning/info 分别扣 45%/18%/8%。",
+      intent: "结构、表依赖、图谱关系、source trace 等未解决问题会降低可信度。"
+    },
+  ],
+  statusBands: [
+    { status: "trusted", label: "可信", minScore: 0.85, description: "可直接作为 Agent 回答依据。" },
+    { status: "usable_with_risk", label: "可用有风险", minScore: 0.7, description: "可消费，但 Agent 应携带风险提示或引用证据。" },
+    { status: "needs_review", label: "需复核", minScore: 0.55, description: "适合人工复核后再引用。" },
+    { status: "blocked", label: "阻塞", minScore: 0, description: "低于 55% 或存在 blocking 审核任务，不应作为可靠结论。" },
+  ],
+  caps: [
+    { id: "blocking_review", label: "存在阻塞审核任务，最高 50%", maxScore: 0.5, trigger: "有 open blocking review_task" },
+    { id: "warning_review", label: "存在 warning 审核任务，最高 85%", maxScore: 0.85, trigger: "有 open warning review_task" },
+    { id: "missing_evidence", label: "缺少证据和 source refs，最高 55%", maxScore: 0.55, trigger: "需要证据但 evidence_records/source_refs 均为空" },
+    { id: "missing_evidence_records", label: "缺少证据记录，最高 70%", maxScore: 0.7, trigger: "需要证据但没有 evidence_records" },
+    { id: "pending_audit", label: "尚未通过飞轮审计，最高 70%", maxScore: 0.7, trigger: "lastTrustedAuditAt 为空" },
+    { id: "very_incomplete", label: "规格完整度严重不足，最高 55%", maxScore: 0.55, trigger: "全面性低于 35%" },
+    { id: "incomplete_spec", label: "规格完整度不足，最高 65%", maxScore: 0.65, trigger: "全面性低于 50%" },
+    { id: "unresolved_consistency", label: "存在未解决一致性风险，最高 65%", maxScore: 0.65, trigger: "一致性低于 60%" },
+  ],
+  auditHalfLifeDays: [
+    { matcher: "/activities/", days: 120, label: "活动玩法" },
+    { matcher: "/tables/、/fields/、table kind", days: 90, label: "配置表 / 字段 / 数值" },
+    { matcher: "/numeric_rules/", days: 90, label: "数值规则" },
+    { matcher: "/systems/、/ui_flows/", days: 180, label: "系统规则 / UI 流程" },
+    { matcher: "/concepts/", days: 365, label: "概念说明" },
+    { matcher: "graph_snapshot", days: 120, label: "知识图谱" },
+    { matcher: "default", days: 180, label: "默认" },
+  ],
+} as const;
+
+const WEIGHTS = Object.fromEntries(TRUST_POLICY.dimensions.map((dimension) => [dimension.key, dimension.weight])) as Record<keyof TrustScore["breakdown"], number>;
+
+export function getTrustPolicy() {
+  return TRUST_POLICY;
+}
 
 export function computeTrustScore(input: ComputeTrustScoreInput): TrustScore {
   const now = typeof input.now === "string" ? new Date(input.now) : input.now;

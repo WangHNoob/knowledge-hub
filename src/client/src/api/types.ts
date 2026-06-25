@@ -124,6 +124,43 @@ export interface TrustScore {
   evidenceRequired: boolean;
 }
 
+export interface TrustPolicyDimension {
+  key: keyof TrustScoreBreakdown;
+  label: string;
+  weight: number;
+  source: string;
+  formula: string;
+  intent: string;
+}
+
+export interface TrustPolicyStatusBand {
+  status: TrustScore["status"];
+  label: string;
+  minScore: number;
+  description: string;
+}
+
+export interface TrustPolicyCap extends TrustScoreCap {
+  trigger: string;
+}
+
+export interface TrustPolicyAuditHalfLife {
+  matcher: string;
+  days: number;
+  label: string;
+}
+
+export interface TrustPolicy {
+  version: TrustScore["version"];
+  editable: boolean;
+  owner: string;
+  position: string;
+  dimensions: TrustPolicyDimension[];
+  statusBands: TrustPolicyStatusBand[];
+  caps: TrustPolicyCap[];
+  auditHalfLifeDays: TrustPolicyAuditHalfLife[];
+}
+
 export interface PackageDetail {
   package: AssetPackage;
   components: AssetComponent[];
