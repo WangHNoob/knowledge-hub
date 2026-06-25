@@ -144,6 +144,33 @@ describe("native table and graph stages", () => {
     }
   });
 
+  it("detects technical field rows after table metadata rows", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-table-header-detect-"));
+    try {
+      mkdirSync(join(dataDir, "gamedata", "Combat"), { recursive: true });
+      const workbook = xlsx.utils.book_new();
+      xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet([
+        [7, 1, 9999, 4],
+        ["装备id", "装备类型", "名字文本", "装备使用等级"],
+        ["int", "int", "string(intern)", "int"],
+        ["primary", "none", "none", "none"],
+        ["equipId", "equipType", "nameIndex", "useLevel"],
+        [600010, 1200, "木质长剑", 1]
+      ]), "Skill");
+      xlsx.writeFile(workbook, join(dataDir, "gamedata", "Combat", "Skill.xlsx"));
+
+      await runTableStage({ dataDir, force: false });
+
+      const schema = JSON.parse(readFileSync(join(dataDir, "table_schemas", "Combat__Skill.json"), "utf8"));
+      expect(schema.schema_version).toBe(2);
+      expect(schema.fields).toEqual(["equipId", "equipType", "nameIndex", "useLevel"]);
+      expect(schema.fields).not.toContain("7");
+      expect(schema.row_count).toBe(1);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("reuses unchanged table schemas during incremental table rebuilds", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-table-incremental-"));
     try {
@@ -185,12 +212,13 @@ describe("native table and graph stages", () => {
       const tableContent = "not,a,real,workbook\n";
       writeFileSync(join(dataDir, "gamedata", "Combat", "Skill.csv"), tableContent);
       const cacheKey = createHash("sha256")
-        .update("table-schema-v1\0")
+        .update("table-schema-v2\0")
         .update("Combat/Skill")
         .update("\0")
         .update(Buffer.from(tableContent))
         .digest("hex");
       writeFileSync(join(cacheRoot, `${cacheKey}.json`), JSON.stringify({
+        schema_version: 2,
         table_name: "Combat/Skill",
         rel_path: "gamedata/Combat/Skill.csv",
         fields: ["Id", "Name", "Power"],

@@ -7,12 +7,36 @@ import { renderTableAliasTemplate } from "./tableAliases";
 import type { StageResult } from "./types";
 
 interface TableSchema {
+  schema_version?: number;
   table_name: string;
   rel_path: string;
   fields: string[];
   row_count: number;
   sheets: string[];
 }
+
+const TABLE_SCHEMA_VERSION = 2;
+const HEADER_SCAN_ROWS = 12;
+const FIELD_META_TOKENS = new Set([
+  "int",
+  "long",
+  "float",
+  "double",
+  "number",
+  "string",
+  "string(intern)",
+  "bool",
+  "boolean",
+  "json",
+  "array",
+  "primary",
+  "none",
+  "null",
+  "client",
+  "server",
+  "all",
+  "both",
+]);
 
 interface ForeignKeyEdge {
   source: string;
@@ -72,7 +96,8 @@ function readExistingSchemas(dataDir: string): Record<string, TableSchema> {
   const file = join(dataDir, "wiki", "_tables", "schemas.json");
   if (!existsSync(file)) return {};
   try {
-    return JSON.parse(readFileSync(file, "utf8")) as Record<string, TableSchema>;
+    const schemas = JSON.parse(readFileSync(file, "utf8")) as Record<string, TableSchema>;
+    return Object.fromEntries(Object.entries(schemas).filter(([, schema]) => schema.schema_version === TABLE_SCHEMA_VERSION));
   } catch {
     return {};
   }
@@ -131,9 +156,9 @@ export function detectFkEdges(schemas: Record<string, { fields: string[] }>, rul
 }
 
 function readTableSchema(file: string, tableName: string, relPath: string): TableSchema {
-  // Only the header row + row count are needed. Materializing every row via
+  // Only the header rows + row count are needed. Materializing every row via
   // sheet_to_json blows the heap on large workbooks (e.g. a 53MB xlsx expands
-  // to millions of JS objects), so read just the header cells and derive the
+  // to millions of JS objects), so read just the first few rows and derive the
   // row count from the sheet's reference range instead. Disable formula/HTML/
   // rich-text parsing to cut per-cell memory further.
   const workbook = xlsx.readFile(file, { cellFormula: false, cellHTML: false, cellText: false, cellStyles: false });
@@ -144,16 +169,13 @@ function readTableSchema(file: string, tableName: string, relPath: string): Tabl
     if (!sheet) continue;
     const range = sheet["!ref"] ? xlsx.utils.decode_range(sheet["!ref"] as string) : null;
     if (range) {
-      // Total data rows across the sheet = all rows minus the header row.
-      rowCount += Math.max(0, range.e.r - range.s.r);
-      for (let col = range.s.c; col <= range.e.c; col += 1) {
-        const cell = sheet[xlsx.utils.encode_cell({ r: range.s.r, c: col })] as { v?: unknown } | undefined;
-        const value = cell?.v;
-        if (value !== undefined && String(value).trim()) fields.add(String(value).trim());
-      }
+      const header = detectHeaderRows(sheet, range);
+      rowCount += Math.max(0, range.e.r - header.lastHeaderRow);
+      for (const field of header.fields) fields.add(field);
     }
   }
   return {
+    schema_version: TABLE_SCHEMA_VERSION,
     table_name: tableName,
     rel_path: relPath,
     fields: [...fields],
@@ -165,7 +187,7 @@ function readTableSchema(file: string, tableName: string, relPath: string): Tabl
 function readTableSchemaWithCache(file: string, tableName: string, relPath: string, cacheRoot: string): TableSchema {
   const content = readFileSync(file);
   const cacheKey = createHash("sha256")
-    .update("table-schema-v1\0")
+    .update(`table-schema-v${TABLE_SCHEMA_VERSION}\0`)
     .update(tableName)
     .update("\0")
     .update(content)
@@ -182,6 +204,78 @@ function readTableSchemaWithCache(file: string, tableName: string, relPath: stri
   mkdirSync(cacheRoot, { recursive: true });
   writeFileSync(cacheFile, `${JSON.stringify(schema, null, 2)}\n`);
   return schema;
+}
+
+function detectHeaderRows(sheet: xlsx.WorkSheet, range: xlsx.Range): { fields: string[]; lastHeaderRow: number } {
+  const scanEnd = Math.min(range.e.r, range.s.r + HEADER_SCAN_ROWS - 1);
+  const candidates: Array<{ row: number; fields: string[]; score: number; technical: boolean }> = [];
+  for (let row = range.s.r; row <= scanEnd; row += 1) {
+    const values = rowValues(sheet, range, row);
+    const nonEmpty = values.filter(Boolean);
+    if (nonEmpty.length === 0) continue;
+    const technicalFields = nonEmpty.filter(isTechnicalFieldName);
+    const labelFields = nonEmpty.filter(isReadableHeaderLabel);
+    const metaCount = nonEmpty.filter(isFieldMetaToken).length;
+    const numericCount = nonEmpty.filter(isNumericLike).length;
+    const technicalRatio = technicalFields.length / nonEmpty.length;
+    const metaRatio = metaCount / nonEmpty.length;
+    if (technicalFields.length >= 2 && technicalRatio >= 0.45 && metaRatio < 0.6) {
+      candidates.push({ row, fields: technicalFields, score: technicalFields.length * 3 - numericCount - metaCount, technical: true });
+    } else if (labelFields.length >= 2 && numericCount / nonEmpty.length < 0.5 && metaRatio < 0.5) {
+      candidates.push({ row, fields: labelFields, score: labelFields.length - numericCount - metaCount, technical: false });
+    }
+  }
+
+  const technical = candidates.filter((candidate) => candidate.technical);
+  if (technical.length > 0) {
+    return {
+      fields: uniqueInOrder(technical.flatMap((candidate) => candidate.fields)),
+      lastHeaderRow: Math.max(...technical.map((candidate) => candidate.row)),
+    };
+  }
+  const best = candidates.sort((a, b) => b.score - a.score || a.row - b.row)[0];
+  if (best) return { fields: uniqueInOrder(best.fields), lastHeaderRow: best.row };
+
+  const fallback = rowValues(sheet, range, range.s.r).filter((value) => value && !isNumericLike(value));
+  return { fields: uniqueInOrder(fallback), lastHeaderRow: range.s.r };
+}
+
+function rowValues(sheet: xlsx.WorkSheet, range: xlsx.Range, row: number): string[] {
+  const values: string[] = [];
+  for (let col = range.s.c; col <= range.e.c; col += 1) {
+    const cell = sheet[xlsx.utils.encode_cell({ r: row, c: col })] as { v?: unknown } | undefined;
+    const value = normalizeFieldValue(cell?.v);
+    if (value) values.push(value);
+  }
+  return values;
+}
+
+function normalizeFieldValue(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
+}
+
+function isTechnicalFieldName(value: string): boolean {
+  if (isFieldMetaToken(value) || isNumericLike(value)) return false;
+  return /^[A-Za-z_][A-Za-z0-9_]*$/u.test(value);
+}
+
+function isReadableHeaderLabel(value: string): boolean {
+  if (isFieldMetaToken(value) || isNumericLike(value)) return false;
+  if (value.length > 80) return false;
+  return !/[=;{}<>]/u.test(value);
+}
+
+function isFieldMetaToken(value: string): boolean {
+  return FIELD_META_TOKENS.has(value.trim().toLowerCase());
+}
+
+function isNumericLike(value: string): boolean {
+  return /^[-+]?\d+(?:\.\d+)?$/u.test(value.trim());
+}
+
+function uniqueInOrder(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function writeTableOutputs(
