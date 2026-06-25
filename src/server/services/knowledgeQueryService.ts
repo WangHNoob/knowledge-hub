@@ -63,6 +63,8 @@ interface KnowledgeAssetRef {
   trust?: TrustScore | null;
 }
 
+type TableSchemaEntry = { component: KnowledgeAssetRef; schema: TableSchema; sourceVersionIds?: string[] };
+
 interface OkfGraphAsset {
   componentId: string;
   artifactId: string;
@@ -214,7 +216,7 @@ export class KnowledgeQueryService {
       case "kb_get_release":
         return { result: release, componentIds: [], forceHit: true };
       case "kb_search":
-        return this.kbSearch(release, stringArg(payload, "query", "q"));
+        return this.kbSearch(release, stringArg(payload, "query", "q"), numberArg(payload, 10, "limit", "topK", "top_k"));
       case "kb_resolve_topic":
         return this.kbResolveTopic(release, stringArg(payload, "topic", "query", "q"));
       case "kb_get_page":
@@ -234,7 +236,7 @@ export class KnowledgeQueryService {
       case "kb_get_relations":
         return this.kbGetRelations(release, optionalString(payload, "source"), optionalString(payload, "target"), optionalString(payload, "relation"));
       case "kb_list_tables":
-        return this.kbListTables(release);
+        return this.kbListTables(release, optionalString(payload, "query", "q", "group"), numberArg(payload, 50, "limit", "topK", "top_k"));
       case "kb_get_table_schema":
         return this.kbGetTableSchema(release, stringArg(payload, "table", "tableName", "name"));
       case "kb_query_table":
@@ -252,8 +254,9 @@ export class KnowledgeQueryService {
     }
   }
 
-  private async kbSearch(release: ReleaseRecord, query: string): Promise<ToolResult> {
-    const indexItems = this.kbSearchIndex(release, query);
+  private async kbSearch(release: ReleaseRecord, query: string, limit = 10): Promise<ToolResult> {
+    const boundedLimit = boundedLimitArg(limit, 10, 50);
+    const indexItems = await this.kbSearchIndex(release, query, boundedLimit);
     if (indexItems.length > 0) {
       return {
         result: { query, items: indexItems },
@@ -261,18 +264,19 @@ export class KnowledgeQueryService {
         artifactIds: indexItems.map((item) => item.artifactId),
       };
     }
-    return this.kbSearchMarkdownFallback(release, query);
+    return this.kbSearchMarkdownFallback(release, query, boundedLimit);
   }
 
-  private kbSearchIndex(release: ReleaseRecord, query: string): OkfSearchResultItem[] {
+  private async kbSearchIndex(release: ReleaseRecord, query: string, limit: number): Promise<OkfSearchResultItem[]> {
     const index = this.readOkfSearchIndex(release);
-    return index ? searchOkfIndex(index, query, 10) : [];
+    if (!index) return [];
+    return this.alignSearchItemsWithPageTables(release, searchOkfIndex(index, query, limit));
   }
 
-  private async kbSearchMarkdownFallback(release: ReleaseRecord, query: string): Promise<ToolResult> {
+  private async kbSearchMarkdownFallback(release: ReleaseRecord, query: string, limit: number): Promise<ToolResult> {
     const needle = query.toLowerCase();
     const pages = this.readOkfPages(release);
-    const items = [];
+    const items: OkfSearchResultItem[] = [];
     for (const page of pages) {
       const haystack = `${page.title}\n${page.okfPath}\n${page.artifactId}\n${page.markdown}`.toLowerCase();
       if (!needle || !haystack.includes(needle.split(/\s+/u)[0])) continue;
@@ -295,10 +299,11 @@ export class KnowledgeQueryService {
       });
     }
     items.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+    const limited = await this.alignSearchItemsWithPageTables(release, items.slice(0, limit));
     return {
-      result: { query, items: items.slice(0, 10) },
-      componentIds: items.slice(0, 10).map((item) => item.componentId),
-      artifactIds: items.slice(0, 10).map((item) => item.artifactId),
+      result: { query, items: limited },
+      componentIds: limited.map((item) => item.componentId),
+      artifactIds: limited.map((item) => item.artifactId),
     };
   }
 
@@ -404,30 +409,138 @@ export class KnowledgeQueryService {
 
   private async kbGetPageTables(release: ReleaseRecord, page: string): Promise<ToolResult> {
     const pageResult = await this.kbGetPage(release, page);
-    const title = String((pageResult.result as Record<string, unknown>).title ?? page);
+    const foundPage = pageResult.componentIds.length > 0;
     const schemas = await this.tableSchemas(release);
-    const markdown = String((pageResult.result as Record<string, unknown>).markdown ?? "");
-    const graphTables = await this.pageConfiguredTables(release, title);
-    const aliasTables = this.tablesMentionedByAlias(release, markdown);
-    const tables = schemas
-      .filter(({ schema }) =>
-        markdown.includes(schema.table_name) ||
-        graphTables.has(schema.table_name) ||
-        graphTables.has(`table:${schema.table_name}`) ||
-        aliasTables.has(schema.table_name)
-      )
-      .map(({ schema, component }) => ({ table: schema.table_name, componentId: component.componentId, fields: schema.fields, trust: component.trust ?? null }));
+    const pageInfo = pageResult.result as Record<string, unknown>;
+    const resolved = foundPage
+      ? await this.resolvePageTables(release, {
+        pageTitle: String(pageInfo.title ?? page),
+        artifactId: String(pageInfo.artifactId ?? ""),
+        markdown: String(pageInfo.markdown ?? ""),
+        schemas,
+      })
+      : { tables: [], unresolved: [], source: "not_found" as const };
     return {
-      result: { page, tables },
-      componentIds: uniqueSorted([...pageResult.componentIds, ...tables.map((table) => table.componentId)]),
+      result: {
+        page,
+        found: foundPage,
+        source: resolved.source,
+        tables: resolved.tables.map(({ schema, component }) => ({
+          table: schema.table_name,
+          componentId: component.componentId,
+          fields: schema.fields,
+          rowCount: schema.row_count,
+          trust: component.trust ?? null,
+        })),
+        unresolvedDependencies: resolved.unresolved,
+      },
+      componentIds: uniqueSorted([...pageResult.componentIds, ...resolved.tables.map((table) => table.component.componentId)]),
     };
   }
 
-  private async pageConfiguredTables(release: ReleaseRecord, pageTitle: string): Promise<Set<string>> {
+  private async alignSearchItemsWithPageTables(release: ReleaseRecord, items: OkfSearchResultItem[]): Promise<OkfSearchResultItem[]> {
+    if (items.length === 0) return items;
+    const schemas = await this.tableSchemas(release);
+    const pagesByComponent = new Map(this.readOkfPages(release).map((page) => [page.componentId, page] as const));
+    const aligned: OkfSearchResultItem[] = [];
+    for (const item of items) {
+      const page = pagesByComponent.get(item.componentId);
+      if (!page) {
+        aligned.push(item);
+        continue;
+      }
+      const resolved = await this.resolvePageTables(release, {
+        pageTitle: page.title,
+        artifactId: page.artifactId,
+        markdown: page.markdown,
+        schemas,
+      });
+      const tableDependencies = resolved.tables.map(({ schema }) => schema.table_name);
+      const matchedFields = tableDependencies.length > 0 ? item.matchedFields : item.matchedFields.filter((field) => field !== "tables");
+      const whyBase = tableDependencies.length > 0
+        ? item.why
+        : item.why.filter((line) => !line.startsWith("tables 命中") && !line.startsWith("配置表意图命中结构化表依赖"));
+      aligned.push({
+        ...item,
+        matchedFields,
+        tableDependencies,
+        why: resolved.unresolved.length
+          ? uniqueSorted([...whyBase, `未解析为具体表：${resolved.unresolved.slice(0, 5).join(", ")}`]).slice(0, 9)
+          : whyBase,
+      });
+    }
+    return aligned;
+  }
+
+  private async resolvePageTables(
+    release: ReleaseRecord,
+    input: {
+      pageTitle: string;
+      artifactId: string;
+      markdown: string;
+      schemas: TableSchemaEntry[];
+    },
+  ): Promise<{
+    tables: TableSchemaEntry[];
+    unresolved: string[];
+    source: "explicit_dependencies" | "graph" | "not_found";
+  }> {
+    const schemasByName = new Map(input.schemas.map((entry) => [aliasKey(entry.schema.table_name), entry] as const));
+    const aliases = this.actionableTableAliases(release, schemasByName);
+    const explicit = extractDependencyText(input.markdown);
+    const explicitLines = dependencyLines(explicit.text);
+    const candidates = dependencyCandidates(explicit.text);
+    const explicitTables = candidates.flatMap((candidate) => resolveCandidateTables(candidate, schemasByName, aliases));
+    const unresolved = uniqueSorted(explicitLines.filter((candidate) =>
+      looksLikeDependencyToken(candidate) &&
+      dependencyCandidates(candidate).every((part) => resolveCandidateTables(part, schemasByName, aliases).length === 0)
+    ));
+    if (explicit.hasDependencySection) {
+      return {
+        tables: uniqueTableEntries(explicitTables),
+        unresolved,
+        source: "explicit_dependencies",
+      };
+    }
+
+    const graphTables = await this.pageConfiguredTables(release, input.pageTitle, input.artifactId);
+    const tables = [...graphTables].flatMap((table) => resolveCandidateTables(table, schemasByName, aliases));
+    return {
+      tables: uniqueTableEntries(tables),
+      unresolved: [],
+      source: tables.length ? "graph" : "not_found",
+    };
+  }
+
+  private actionableTableAliases(
+    release: ReleaseRecord,
+    schemasByName: Map<string, TableSchemaEntry>,
+  ): Map<string, TableSchemaEntry[]> {
+    const aliases = new Map<string, TableSchemaEntry[]>();
+    for (const row of this.readOkfTableAliases(release)) {
+      const table = row.table ?? row.canonical ?? row.canonicalName ?? "";
+      const schema = schemasByName.get(aliasKey(table));
+      if (!schema) continue;
+      for (const value of uniqueSorted([table, ...(row.aliases ?? [])])) {
+        const key = aliasKey(value);
+        if (!key) continue;
+        aliases.set(key, uniqueTableEntries([...(aliases.get(key) ?? []), schema]));
+      }
+    }
+    return aliases;
+  }
+
+  private async pageConfiguredTables(release: ReleaseRecord, pageTitle: string, artifactId?: string): Promise<Set<string>> {
     try {
       const graph = await this.graph(release);
-      const pageNode = graph.nodes.find((node) => same(node.label, pageTitle) || same(node.id, pageTitle));
-      const sourceIds = new Set([pageTitle, pageNode?.id].filter((value): value is string => Boolean(value)));
+      const artifactWithoutWiki = artifactId?.replace(/^wiki\//u, "");
+      const pageNode = graph.nodes.find((node) =>
+        same(node.label, pageTitle) ||
+        same(node.id, pageTitle) ||
+        same(node.wiki_page, artifactId) ||
+        same(node.wiki_page, artifactWithoutWiki)
+      );
+      const sourceIds = new Set([pageTitle, artifactId, artifactWithoutWiki, pageNode?.id].filter((value): value is string => Boolean(value)));
       return new Set(graph.edges
         .filter((edge) => sourceIds.has(edge.source) && edge.relation === "configured_in")
         .flatMap((edge) => [edge.target, edge.target.replace(/^table:/u, "")]));
@@ -483,11 +596,27 @@ export class KnowledgeQueryService {
     return { result: { edges, trust: edges.length ? graph.component.trust ?? null : null }, componentIds: edges.length ? [graph.component.componentId] : [], artifactIds: edges.length ? [graph.component.artifactId] : [] };
   }
 
-  private async kbListTables(release: ReleaseRecord): Promise<ToolResult> {
+  private async kbListTables(release: ReleaseRecord, query?: string, limit = 50): Promise<ToolResult> {
     const schemas = await this.tableSchemas(release);
+    const normalizedQuery = query ? aliasKey(query) : "";
+    const schemasByName = new Map(schemas.map((entry) => [aliasKey(entry.schema.table_name), entry] as const));
+    const aliases = normalizedQuery ? this.actionableTableAliases(release, schemasByName) : new Map<string, TableSchemaEntry[]>();
+    const matched = schemas
+      .filter(({ schema }) =>
+        !normalizedQuery ||
+        [schema.table_name, schema.rel_path, ...(schema.fields ?? [])].some((value) => aliasKey(String(value)).includes(normalizedQuery)) ||
+        [...aliases.entries()].some(([alias, entries]) =>
+          entries.some((entry) => entry.schema.table_name === schema.table_name) &&
+          (alias.includes(normalizedQuery) || normalizedQuery.includes(alias))
+        )
+      )
+      .sort((a, b) => a.schema.table_name.localeCompare(b.schema.table_name));
+    const rows = matched.slice(0, boundedLimitArg(limit, 50, 200));
     return {
       result: {
-        tables: schemas.map(({ schema, component }) => ({
+        query: query ?? null,
+        totalMatched: matched.length,
+        tables: rows.map(({ schema, component }) => ({
           table: schema.table_name,
           componentId: component.componentId,
           relPath: schema.rel_path,
@@ -496,7 +625,7 @@ export class KnowledgeQueryService {
           trust: component.trust ?? null,
         })),
       },
-      componentIds: schemas.map(({ component }) => component.componentId),
+      componentIds: rows.map(({ component }) => component.componentId),
     };
   }
 
@@ -699,20 +828,6 @@ export class KnowledgeQueryService {
     return schemas.find(({ schema, component }) =>
       same(schema.table_name, canonical) || same(component.title, canonical) || same(component.artifactId, canonical)
     ) ?? null;
-  }
-
-  private tablesMentionedByAlias(release: ReleaseRecord, text: string): Set<string> {
-    const haystack = aliasKey(text);
-    const out = new Set<string>();
-    for (const row of this.readOkfTableAliases(release)) {
-      const table = row.table ?? row.canonical ?? row.canonicalName ?? "";
-      if (!table) continue;
-      if (haystack.includes(aliasKey(table))) out.add(table);
-      for (const alias of row.aliases ?? []) {
-        if (alias && haystack.includes(aliasKey(alias))) out.add(table);
-      }
-    }
-    return out;
   }
 
   private resolveTableAlias(release: ReleaseRecord, value: string): string | null {
@@ -977,6 +1092,20 @@ function optionalString(payload: Record<string, unknown>, ...keys: string[]): st
   return undefined;
 }
 
+function numberArg(payload: Record<string, unknown>, fallback: number, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = payload[key];
+    const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
+}
+
+function boundedLimitArg(value: number, fallback: number, max: number): number {
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.max(1, Math.min(Math.floor(value), max));
+}
+
 function objectArg(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -1130,6 +1259,98 @@ function snippet(markdown: string, query: string): string {
   const tokens = query.toLowerCase().split(/\s+/u).filter(Boolean);
   const lines = markdown.split(/\r?\n/u);
   return lines.find((line) => tokens.some((token) => line.toLowerCase().includes(token)))?.slice(0, 240) ?? lines.find(Boolean)?.slice(0, 240) ?? "";
+}
+
+function extractDependencyText(markdown: string): { text: string; hasDependencySection: boolean } {
+  const sections = parseMarkdownSections(markdown);
+  const dependencySections = sections.filter((section) => dependencyHeading(section.heading));
+  return {
+    text: dependencySections.map((section) => section.content).join("\n"),
+    hasDependencySection: dependencySections.length > 0,
+  };
+}
+
+function parseMarkdownSections(markdown: string): Array<{ heading: string; content: string }> {
+  const lines = markdown.split(/\r?\n/u);
+  const out: Array<{ heading: string; content: string }> = [];
+  let current: { heading: string; lines: string[] } | null = null;
+  for (const line of lines) {
+    const heading = /^(#{1,6})\s+(.+)$/u.exec(line);
+    if (heading) {
+      if (current) out.push({ heading: current.heading, content: current.lines.join("\n").trim() });
+      current = { heading: heading[2].trim(), lines: [] };
+      continue;
+    }
+    current?.lines.push(line);
+  }
+  if (current) out.push({ heading: current.heading, content: current.lines.join("\n").trim() });
+  return out;
+}
+
+function dependencyHeading(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "data dependencies" || ["配置表依赖", "关联配置表", "数据依赖", "表依赖"].includes(normalized);
+}
+
+function dependencyCandidates(text: string): string[] {
+  const out = new Set<string>();
+  for (const cleanedLine of dependencyLines(text)) {
+    out.add(cleanedLine);
+    for (const match of cleanedLine.matchAll(/[A-Za-z][A-Za-z0-9_/-]*/gu)) out.add(match[0]);
+    for (const match of cleanedLine.matchAll(/[\p{Script=Han}]{2,}/gu)) out.add(match[0]);
+    for (const match of cleanedLine.matchAll(/[（(]([A-Za-z][A-Za-z0-9_/-]*)[）)]/gu)) out.add(match[1]);
+  }
+  return uniqueSorted([...out]);
+}
+
+function dependencyLines(text: string): string[] {
+  if (!text.trim()) return [];
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/u)) {
+    const cleanedLine = line
+      .replace(/^[-*+]\s*/u, "")
+      .replace(/^\d+[.)、]\s*/u, "")
+      .replace(/\|/gu, " ")
+      .trim();
+    if (!cleanedLine || /^无[。.]?$/u.test(cleanedLine)) continue;
+    out.push(cleanedLine);
+  }
+  return uniqueSorted(out);
+}
+
+function resolveCandidateTables(candidate: string, schemasByName: Map<string, TableSchemaEntry>, aliases: Map<string, TableSchemaEntry[]>): TableSchemaEntry[] {
+  const key = aliasKey(candidate);
+  if (!key) return [];
+  const exact = schemasByName.get(key);
+  if (exact) return [exact];
+  const aliased = aliases.get(key);
+  if (aliased?.length) return aliased;
+  const containedSchemas = [...schemasByName.entries()]
+    .filter(([tableKey]) => tableKey.length >= 4 && key.includes(tableKey))
+    .map(([, entry]) => entry);
+  if (containedSchemas.length) return uniqueTableEntries(containedSchemas);
+  const containedAliases = [...aliases.entries()]
+    .filter(([alias]) => alias.length >= 4 && key.includes(alias))
+    .flatMap(([, entries]) => entries);
+  return uniqueTableEntries(containedAliases);
+}
+
+function looksLikeDependencyToken(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed || /^无[。.]?$/u.test(trimmed)) return false;
+  if (trimmed.length > 80) return false;
+  return /[A-Za-z\p{Script=Han}]/u.test(trimmed);
+}
+
+function uniqueTableEntries(values: TableSchemaEntry[]): TableSchemaEntry[] {
+  const seen = new Set<string>();
+  const out: TableSchemaEntry[] = [];
+  for (const value of values) {
+    if (seen.has(value.schema.table_name)) continue;
+    seen.add(value.schema.table_name);
+    out.push(value);
+  }
+  return out.sort((a, b) => a.schema.table_name.localeCompare(b.schema.table_name));
 }
 
 function extractSection(markdown: string, section: string): string | null {

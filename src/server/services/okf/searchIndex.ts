@@ -63,6 +63,10 @@ interface TableAliasManifest {
   aliases?: Array<{ table?: string; canonical?: string; canonicalName?: string; aliases?: string[] }>;
 }
 
+interface TableSchemaManifest {
+  tables?: Array<{ schema?: { table_name?: string } }>;
+}
+
 const FIELD_WEIGHTS: Record<SearchField, number> = {
   title: 8,
   path: 5,
@@ -99,12 +103,13 @@ export function buildOkfSearchIndex(input: {
 }): OkfSearchIndex {
   const graphTablesByPage = graphTablesByPageTitle(input.bundleDir);
   const aliasTermsByTable = tableAliasTermsByCanonical(input.bundleDir);
+  const schemaTables = tableSchemaNames(input.bundleDir);
   return {
     okfAssetType: "search_index",
     version: "v1",
     generatedAt: input.generatedAt,
     pages: input.pages
-      .map(({ okfPath, markdown }) => pageFromMarkdown(okfPath, markdown, graphTablesByPage, aliasTermsByTable))
+      .map(({ okfPath, markdown }) => pageFromMarkdown(okfPath, markdown, graphTablesByPage, aliasTermsByTable, schemaTables))
       .filter((page): page is OkfSearchPage => page !== null)
       .sort((a, b) => a.okfPath.localeCompare(b.okfPath)),
   };
@@ -212,6 +217,7 @@ function pageFromMarkdown(
   markdown: string,
   graphTablesByTitle: Map<string, string[]>,
   aliasTermsByTable: Map<string, string[]>,
+  schemaTables: Set<string>,
 ): OkfSearchPage | null {
   const parsed = parseOkfPage(markdown);
   if (!parsed.componentId) return null;
@@ -222,8 +228,10 @@ function pageFromMarkdown(
     .map((section) => section.content)
     .join("\n");
   const graphTables = graphTablesByTitle.get(parsed.title) ?? graphTablesByTitle.get(parsed.artifactId) ?? [];
-  const textTables = tableNamesMentioned(`${parsed.body}\n${parsed.artifactId}`, aliasTermsByTable);
-  const tables = unique([...graphTables, ...textTables]).sort();
+  const textTables = tableNamesMentioned(dataDependencies, aliasTermsByTable, schemaTables);
+  const tables = unique([...(dataDependencies.trim() ? [] : graphTables), ...textTables])
+    .filter((table) => schemaTables.has(table))
+    .sort();
   const citations = extractCitationLines(parsed.body);
 
   const fields: OkfSearchPage["fields"] = {
@@ -324,10 +332,16 @@ function tableAliasTermsByCanonical(bundleDir: string): Map<string, string[]> {
   return out;
 }
 
-function tableNamesMentioned(text: string, aliasTermsByTable: Map<string, string[]>): string[] {
+function tableSchemaNames(bundleDir: string): Set<string> {
+  const manifest = readJson<TableSchemaManifest>(join(bundleDir, "tables", "schemas.json"));
+  return new Set((manifest?.tables ?? []).map((entry) => entry.schema?.table_name ?? "").filter(Boolean));
+}
+
+function tableNamesMentioned(text: string, aliasTermsByTable: Map<string, string[]>, schemaTables: Set<string>): string[] {
   const haystack = aliasKey(text);
   const out: string[] = [];
   for (const [table, terms] of aliasTermsByTable.entries()) {
+    if (!schemaTables.has(table)) continue;
     if (terms.some((term) => haystack.includes(aliasKey(term)))) out.push(table);
   }
   return out;
