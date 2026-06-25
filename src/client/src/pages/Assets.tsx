@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
 import { Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,6 +7,7 @@ import { deletePackage, getComponentContent, getComponentOwner, getPackage, list
 import { Badge, Metric, Page } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
 import { formatPercent } from "../utils/format";
+import { useDebouncedValue } from "../utils/react";
 import { TRUST_DIMENSIONS, trustFromQuality, trustLabel, trustStatusLabel } from "../utils/trust";
 import { IdChip, useNav } from "../ui/navigation";
 
@@ -64,7 +65,12 @@ export function Assets() {
   const [deleteError, setDeleteError] = useState("");
   const [openFile, setOpenFile] = useState<{ componentId: string } | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const packages = useQuery({ queryKey: ["packages", { q, status }], queryFn: () => listPackages({ q, status }) });
+  const packageQuery = useDebouncedValue(useDeferredValue(q.trim()), 250);
+  const packages = useQuery({
+    queryKey: ["packages", { q: packageQuery, status }],
+    queryFn: () => listPackages({ q: packageQuery, status }),
+    placeholderData: (previous) => previous
+  });
 
   // Honor cross-navigation (e.g. from global search, builder, release, review).
   useEffect(() => {

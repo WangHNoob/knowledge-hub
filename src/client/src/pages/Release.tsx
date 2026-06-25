@@ -1,6 +1,6 @@
 import { CheckCircle2, GitBranch, RotateCcw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   createRelease,
@@ -33,9 +33,31 @@ export function Release() {
   const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
 
-  const blockers = (tasks.data ?? []).filter((task) => task.status === "open" && task.severity === "blocking" && selectedPackageIds.includes(task.packageId));
-  const selectedPackages = (packages.data ?? []).filter((pkg) => selectedPackageIds.includes(pkg.packageId));
-  const selectedComponents = selectedPackages.reduce((sum, pkg) => sum + Number(pkg.qualitySummary.componentCount ?? 0), 0);
+  const selectedPackageIdSet = useMemo(() => new Set(selectedPackageIds), [selectedPackageIds]);
+  const blockersByPackage = useMemo(() => {
+    const byPackage = new Map<string, NonNullable<typeof tasks.data>>();
+    for (const task of tasks.data ?? []) {
+      if (task.status !== "open" || task.severity !== "blocking") continue;
+      const bucket = byPackage.get(task.packageId) ?? [];
+      bucket.push(task);
+      byPackage.set(task.packageId, bucket);
+    }
+    return byPackage;
+  }, [tasks.data]);
+  const blockers = useMemo(
+    () => [...blockersByPackage.entries()]
+      .filter(([packageId]) => selectedPackageIdSet.has(packageId))
+      .flatMap(([, packageTasks]) => packageTasks ?? []),
+    [blockersByPackage, selectedPackageIdSet]
+  );
+  const selectedPackages = useMemo(
+    () => (packages.data ?? []).filter((pkg) => selectedPackageIdSet.has(pkg.packageId)),
+    [packages.data, selectedPackageIdSet]
+  );
+  const selectedComponents = useMemo(
+    () => selectedPackages.reduce((sum, pkg) => sum + Number(pkg.qualitySummary.componentCount ?? 0), 0),
+    [selectedPackages]
+  );
   const createMutation = useMutation({
     mutationFn: () => createRelease(version.trim(), selectedPackageIds),
     onSuccess: async (release) => {
@@ -115,7 +137,7 @@ export function Release() {
           <div className="package-picker">
             {(packages.data ?? []).map((pkg) => {
               const selected = selectedPackageIds.includes(pkg.packageId);
-              const pkgBlockers = (tasks.data ?? []).filter((task) => task.status === "open" && task.packageId === pkg.packageId && task.severity === "blocking");
+              const pkgBlockers = blockersByPackage.get(pkg.packageId) ?? [];
               return (
                 <button
                   key={pkg.packageId}

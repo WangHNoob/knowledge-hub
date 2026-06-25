@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { listReviewTasks, transitionReviewTasks, type ReviewTask } from "../api";
@@ -73,19 +73,33 @@ export function Review() {
   if (isLoading) return <Loading title="正在整理审核任务" />;
   if (error) return <ErrorState error={error} />;
 
-  const tasks = (data ?? []).filter((task) => !params.packageId || task.packageId === params.packageId);
-  const openTasks = tasks.filter((task) => task.status === "open");
-  const blockingTasks = openTasks.filter((task) => task.severity === "blocking");
-  const warningTasks = openTasks.filter((task) => task.severity === "warning");
-  const agentTasks = openTasks.filter((task) => /agent|命中|反馈|miss|mcp/i.test(`${task.title} ${task.description} ${task.suggestedAction}`));
-  const act = (task: ReviewTask, next: "open" | "resolved" | "dismissed") =>
+  const tasks = useMemo(
+    () => (data ?? []).filter((task) => !params.packageId || task.packageId === params.packageId),
+    [data, params.packageId]
+  );
+  const taskStats = useMemo(() => {
+    let open = 0;
+    let blocking = 0;
+    let warning = 0;
+    let agent = 0;
+    for (const task of tasks) {
+      if (task.status !== "open") continue;
+      open += 1;
+      if (task.severity === "blocking") blocking += 1;
+      if (task.severity === "warning") warning += 1;
+      if (/agent|命中|反馈|miss|mcp/i.test(`${task.title} ${task.description} ${task.suggestedAction}`)) agent += 1;
+    }
+    return { open, blocking, warning, agent };
+  }, [tasks]);
+  const act = useCallback((task: ReviewTask, next: "open" | "resolved" | "dismissed") => {
     transition.mutate({ taskIds: [task.taskId], next, note: notes[task.taskId] });
-  const bulk = (next: "resolved" | "dismissed") => {
+  }, [notes, transition]);
+  const bulk = useCallback((next: "resolved" | "dismissed") => {
     if (tasks.length === 0) return;
     if (window.confirm(`确认把当前列出的 ${tasks.length} 个任务全部标记为「${STATUS_LABEL[next]}」？`)) {
       transition.mutate({ taskIds: tasks.map((t) => t.taskId), next });
     }
-  };
+  }, [tasks, transition]);
 
   return (
     <Page title="审核中心" subtitle="把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。">
@@ -116,10 +130,10 @@ export function Review() {
 
       <section className="review-flow">
         <div className="metrics compact">
-          <Metric label="待处理" value={openTasks.length} hint="当前筛选范围" tone={openTasks.length ? "warn" : "ok"} />
-          <Metric label="阻断" value={blockingTasks.length} hint="先处理，影响发布" tone={blockingTasks.length ? "hot" : "ok"} />
-          <Metric label="可后置" value={warningTasks.length} hint="warning 可试发布后迭代" tone={warningTasks.length ? "warn" : "ok"} />
-          <Metric label="Agent 回流" value={agentTasks.length} hint="由消费反馈生成" tone={agentTasks.length ? "warn" : "ok"} />
+          <Metric label="待处理" value={taskStats.open} hint="当前筛选范围" tone={taskStats.open ? "warn" : "ok"} />
+          <Metric label="阻断" value={taskStats.blocking} hint="先处理，影响发布" tone={taskStats.blocking ? "hot" : "ok"} />
+          <Metric label="可后置" value={taskStats.warning} hint="warning 可试发布后迭代" tone={taskStats.warning ? "warn" : "ok"} />
+          <Metric label="Agent 回流" value={taskStats.agent} hint="由消费反馈生成" tone={taskStats.agent ? "warn" : "ok"} />
         </div>
         <div className="flow-cards">
           <button type="button" className="flow-card" onClick={() => navigate("assets", params.packageId ? { packageId: params.packageId } : {})}>
@@ -153,7 +167,7 @@ export function Review() {
   );
 }
 
-function ReviewTaskCard({
+const ReviewTaskCard = memo(function ReviewTaskCard({
   task,
   note,
   isPending,
@@ -237,4 +251,4 @@ function ReviewTaskCard({
       </div>
     </article>
   );
-}
+});

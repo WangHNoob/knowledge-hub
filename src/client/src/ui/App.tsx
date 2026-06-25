@@ -14,25 +14,55 @@ import {
   Search,
   SearchCheck
 } from "lucide-react";
-import { useState } from "react";
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { getToken, searchAll, setToken } from "../api";
 import type { SearchHit } from "../api";
-import { AgentFeedback } from "../pages/AgentFeedback";
-import { Assets } from "../pages/Assets";
-import { Dashboard } from "../pages/Dashboard";
-import { Diagnostics } from "../pages/Diagnostics";
-import { KnowledgeBuilder } from "../pages/KnowledgeBuilder";
-import { Legislation } from "../pages/Legislation";
 import { LoginScreen } from "../pages/Login";
-import { Maintenance } from "../pages/Maintenance";
-import { Release } from "../pages/Release";
-import { Review } from "../pages/Review";
-import { Sources } from "../pages/Sources";
-import { Storage } from "../pages/Storage";
-import { TableAliases } from "../pages/TableAliases";
+import { useDebouncedValue } from "../utils/react";
 import { NavProvider, useNav, type NavParams, type View } from "./navigation";
+
+const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ default: module.Dashboard }));
+const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
+const loadLegislation = () => import("../pages/Legislation").then((module) => ({ default: module.Legislation }));
+const loadKnowledgeBuilder = () => import("../pages/KnowledgeBuilder").then((module) => ({ default: module.KnowledgeBuilder }));
+const loadAssets = () => import("../pages/Assets").then((module) => ({ default: module.Assets }));
+const loadTableAliases = () => import("../pages/TableAliases").then((module) => ({ default: module.TableAliases }));
+const loadReview = () => import("../pages/Review").then((module) => ({ default: module.Review }));
+const loadRelease = () => import("../pages/Release").then((module) => ({ default: module.Release }));
+const loadAgentFeedback = () => import("../pages/AgentFeedback").then((module) => ({ default: module.AgentFeedback }));
+const loadStorage = () => import("../pages/Storage").then((module) => ({ default: module.Storage }));
+const loadDiagnostics = () => import("../pages/Diagnostics").then((module) => ({ default: module.Diagnostics }));
+const loadMaintenance = () => import("../pages/Maintenance").then((module) => ({ default: module.Maintenance }));
+
+const Dashboard = lazy(loadDashboard);
+const Sources = lazy(loadSources);
+const Legislation = lazy(loadLegislation);
+const KnowledgeBuilder = lazy(loadKnowledgeBuilder);
+const Assets = lazy(loadAssets);
+const TableAliases = lazy(loadTableAliases);
+const Review = lazy(loadReview);
+const Release = lazy(loadRelease);
+const AgentFeedback = lazy(loadAgentFeedback);
+const Storage = lazy(loadStorage);
+const Diagnostics = lazy(loadDiagnostics);
+const Maintenance = lazy(loadMaintenance);
+
+const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
+  dashboard: loadDashboard,
+  sources: loadSources,
+  legislation: loadLegislation,
+  builder: loadKnowledgeBuilder,
+  assets: loadAssets,
+  aliases: loadTableAliases,
+  review: loadReview,
+  release: loadRelease,
+  agent: loadAgentFeedback,
+  storage: loadStorage,
+  diagnostics: loadDiagnostics,
+  maintenance: loadMaintenance
+};
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "首页", icon: Activity },
@@ -55,10 +85,13 @@ export function App() {
   const [navParams, setNavParams] = useState<NavParams>({});
   const queryClient = useQueryClient();
 
-  const navigate = (next: View, params: NavParams = {}) => {
-    setNavParams(params);
-    setView(next);
-  };
+  const navigate = useCallback((next: View, params: NavParams = {}) => {
+    startTransition(() => {
+      setNavParams(params);
+      setView(next);
+    });
+  }, []);
+  const navValue = useMemo(() => ({ navigate, params: navParams }), [navigate, navParams]);
 
   if (!token) {
     return <LoginScreen onLogin={(next) => {
@@ -68,7 +101,7 @@ export function App() {
   }
 
   return (
-    <NavProvider value={{ navigate, params: navParams }}>
+    <NavProvider value={navValue}>
       <div className="shell">
         <aside className="sidebar">
           <div className="brand">
@@ -85,6 +118,8 @@ export function App() {
                 <button
                   key={item.id}
                   className={view === item.id ? "nav-item active" : "nav-item"}
+                  onFocus={() => { void PAGE_PRELOADERS[item.id](); }}
+                  onMouseEnter={() => { void PAGE_PRELOADERS[item.id](); }}
                   onClick={() => navigate(item.id)}
                 >
                   <Icon size={18} />
@@ -109,18 +144,20 @@ export function App() {
           <div className="topbar">
             <GlobalSearch />
           </div>
-          {view === "dashboard" && <Dashboard />}
-          {view === "sources" && <Sources />}
-          {view === "builder" && <KnowledgeBuilder onShowPackage={(packageId) => navigate("assets", { packageId })} />}
-          {view === "legislation" && <Legislation />}
-          {view === "assets" && <Assets />}
-          {view === "aliases" && <TableAliases />}
-          {view === "review" && <Review />}
-          {view === "release" && <Release />}
-          {view === "agent" && <AgentFeedback />}
-          {view === "storage" && <Storage />}
-          {view === "diagnostics" && <Diagnostics />}
-          {view === "maintenance" && <Maintenance />}
+          <Suspense fallback={<div className="state">正在加载页面...</div>}>
+            {view === "dashboard" && <Dashboard />}
+            {view === "sources" && <Sources />}
+            {view === "builder" && <KnowledgeBuilder onShowPackage={(packageId) => navigate("assets", { packageId })} />}
+            {view === "legislation" && <Legislation />}
+            {view === "assets" && <Assets />}
+            {view === "aliases" && <TableAliases />}
+            {view === "review" && <Review />}
+            {view === "release" && <Release />}
+            {view === "agent" && <AgentFeedback />}
+            {view === "storage" && <Storage />}
+            {view === "diagnostics" && <Diagnostics />}
+            {view === "maintenance" && <Maintenance />}
+          </Suspense>
         </main>
         <a className="deerflow" href="https://deerflow.tech" target="_blank" rel="noreferrer" title="Created By Deerflow">
           DF
@@ -135,10 +172,13 @@ function GlobalSearch() {
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const trimmed = q.trim();
+  const deferredQuery = useDeferredValue(trimmed);
+  const debouncedQuery = useDebouncedValue(deferredQuery, 250);
   const search = useQuery({
-    queryKey: ["search", trimmed],
-    queryFn: () => searchAll(trimmed),
-    enabled: trimmed.length > 0
+    queryKey: ["search", debouncedQuery],
+    queryFn: () => searchAll(debouncedQuery),
+    enabled: debouncedQuery.length > 0,
+    placeholderData: (previous) => previous
   });
 
   const go = (hit: SearchHit) => {
