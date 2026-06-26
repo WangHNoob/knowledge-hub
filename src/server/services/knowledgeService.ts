@@ -10,6 +10,7 @@ import {
 } from "../db/mappers";
 import type {
   AgentEvent,
+  AnnotationExample,
   AssetComponent,
   AssetGroup,
   AssetPackage,
@@ -26,7 +27,10 @@ import type {
   SearchResult,
   UserRecord
 } from "../types";
+import { createHash } from "node:crypto";
+import { nanoid } from "nanoid";
 import { trustFromQuality } from "./trustScore";
+import { emitKnowledgeEvent } from "./eventService";
 
 export function createKnowledgeService(db: DatabaseHandle) {
   return new KnowledgeService(db);
@@ -275,6 +279,124 @@ export class KnowledgeService {
     return rows.map(mapReviewTask);
   }
 
+  async annotateReviewTask(input: {
+    taskId: string;
+    selectedCandidateId?: string;
+    correctValue?: unknown;
+    note?: string;
+    dismissRule?: boolean;
+    dismissalReason?: string;
+    actor: string;
+  }): Promise<{ task: ReviewTask; example: AnnotationExample | null }> {
+    const task = (await this.listReviewTasks({})).find((item) => item.taskId === input.taskId);
+    if (!task) throw new Error(`Unknown review task: ${input.taskId}`);
+    const selected = input.selectedCandidateId
+      ? task.candidates.find((candidate) => candidate.id === input.selectedCandidateId)
+      : null;
+    const correctValue = normalizeAnnotationValue(input.correctValue ?? selected?.value ?? input.note ?? "");
+    const contextSnapshot = {
+      ...task.contextSnapshot,
+      task: {
+        title: task.title,
+        description: task.description,
+        suggestedAction: task.suggestedAction,
+        ruleId: task.ruleId,
+      },
+      selectedCandidateId: input.selectedCandidateId ?? "",
+    };
+    const contextHash = hashJson(contextSnapshot);
+    const now = new Date().toISOString();
+    const exampleId = `ann_${slug(task.componentId)}_${nanoid(6)}`;
+
+    await this.adapter.query("BEGIN");
+    try {
+      await this.adapter.query(
+        `INSERT INTO annotation_examples
+          (example_id, package_id, component_id, task_id, rule_id, page_type, context_hash, context_snapshot, correct_value, created_by, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          exampleId,
+          task.packageId,
+          task.componentId,
+          task.taskId,
+          task.ruleId,
+          String(task.contextSnapshot.pageType ?? task.contextSnapshot.okfType ?? ""),
+          contextHash,
+          JSON.stringify(contextSnapshot),
+          JSON.stringify(correctValue),
+          input.actor,
+          now,
+        ],
+      );
+      if (input.dismissRule && task.ruleId) {
+        const dismissalId = `dismiss_${slug(task.componentId)}_${slug(task.ruleId)}`;
+        await this.adapter.query(
+          `INSERT INTO rule_dismissals
+            (dismissal_id, package_id, component_id, rule_id, reason, active, created_by, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+           ON CONFLICT (component_id, rule_id)
+           DO UPDATE SET reason = EXCLUDED.reason, active = true, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
+          [
+            dismissalId,
+            task.packageId,
+            task.componentId,
+            task.ruleId,
+            input.dismissalReason ?? input.note ?? "",
+            true,
+            input.actor,
+            now,
+          ],
+        );
+      }
+      await this.adapter.query(
+        `UPDATE review_tasks
+         SET task_kind = 'annotation',
+             status = 'resolved',
+             resolved_by = $2,
+             resolved_at = $3,
+             resolution_note = $4,
+             annotation_value = $5,
+             annotated_by = $2,
+             annotated_at = $3
+         WHERE task_id = $1`,
+        [
+          task.taskId,
+          input.actor,
+          now,
+          input.note ?? "",
+          JSON.stringify(correctValue),
+        ],
+      );
+      await this.adapter.query("COMMIT");
+    } catch (error) {
+      await this.adapter.query("ROLLBACK");
+      throw error;
+    }
+
+    const updated = (await this.listReviewTasks({})).find((item) => item.taskId === input.taskId);
+    if (!updated) throw new Error(`Unknown review task after annotation: ${input.taskId}`);
+    const example: AnnotationExample = {
+      exampleId,
+      packageId: task.packageId,
+      componentId: task.componentId,
+      taskId: task.taskId,
+      ruleId: task.ruleId,
+      pageType: String(task.contextSnapshot.pageType ?? task.contextSnapshot.okfType ?? ""),
+      contextHash,
+      contextSnapshot,
+      correctValue,
+      createdBy: input.actor,
+      createdAt: now,
+    };
+    await emitKnowledgeEvent(this.db, {
+      eventType: "annotation.created",
+      entityType: "review_task",
+      entityId: task.taskId,
+      payload: { componentId: task.componentId, ruleId: task.ruleId, exampleId, dismissRule: Boolean(input.dismissRule && task.ruleId) },
+    });
+    return { task: updated, example };
+  }
+
   async listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): Promise<EvidenceRecord[]> {
     const where: string[] = [];
     const params: unknown[] = [];
@@ -382,3 +504,16 @@ function uniqueSorted(values: string[]): string[] {
 }
 
 const EVIDENCE_COVERAGE_COMPONENT_KINDS = new Set(["wiki_page"]);
+
+function normalizeAnnotationValue(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  return { value };
+}
+
+function hashJson(value: unknown): string {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+function slug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "") || "item";
+}

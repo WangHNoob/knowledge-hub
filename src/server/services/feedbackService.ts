@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import { mapComponent } from "../db/mappers";
 import type { AssetComponent, DatabaseHandle, ReleaseRecord } from "../types";
+import { emitKnowledgeEvent } from "./eventService";
 
 export type FeedbackType =
   | "miss"
@@ -113,8 +114,9 @@ export class FeedbackService {
     const taskId = `task_mcp_${slug(effectiveFeedbackType)}_${nanoid(6)}`;
 
     await this.adapter.query(
-      `INSERT INTO review_tasks (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO review_tasks
+        (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at, task_kind, rule_id, candidates, confidence, context_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         taskId,
         targetComponent.packageId,
@@ -124,7 +126,12 @@ export class FeedbackService {
         title,
         feedbackDescription(toolName, payload, qualityFlags),
         suggestedAction,
-        new Date().toISOString()
+        new Date().toISOString(),
+        "annotation",
+        `agent_feedback.${effectiveFeedbackType}`,
+        JSON.stringify(feedbackCandidates(effectiveFeedbackType, payload, qualityFlags)),
+        feedbackConfidence(effectiveFeedbackType, qualityFlags),
+        JSON.stringify({ releaseId: release.releaseId, toolName, payload, qualityFlags, hitComponentIds }),
       ]
     );
     await this.adapter.query(
@@ -144,6 +151,12 @@ export class FeedbackService {
         new Date().toISOString()
       ]
     );
+    await emitKnowledgeEvent(this.db, {
+      eventType: "agent.feedback.received",
+      entityType: "component",
+      entityId: targetComponent.componentId,
+      payload: { releaseId: release.releaseId, feedbackType: effectiveFeedbackType, query, taskId, qualityFlags },
+    });
     return {
       recorded: true,
       taskId,
@@ -172,6 +185,31 @@ export class FeedbackService {
     );
     return rows.length ? mapComponent(rows[0]) : null;
   }
+}
+
+function feedbackCandidates(feedbackType: FeedbackType, payload: Record<string, unknown>, qualityFlags: string[]) {
+  return [
+    {
+      id: "accept_feedback",
+      label: "反馈成立，修正知识",
+      value: { action: "accept_feedback", feedbackType, payload, qualityFlags },
+      confidence: feedbackType === "repeated_query" ? 0.85 : 0.72,
+      rationale: "Agent 消费侧已经给出负面反馈，应优先转为修正样例。"
+    },
+    {
+      id: "feedback_not_applicable",
+      label: "反馈不适用，记录豁免",
+      value: { action: "dismiss_feedback", feedbackType, payload },
+      confidence: 0.35,
+      rationale: "查询可能超出当前知识库范围，或该组件不是正确修正对象。"
+    }
+  ];
+}
+
+function feedbackConfidence(feedbackType: FeedbackType, qualityFlags: string[]): number {
+  if (feedbackType === "repeated_query") return 0.85;
+  if (qualityFlags.length > 0) return 0.75;
+  return 0.6;
 }
 
 function feedbackQueryKey(toolName: string, payload: Record<string, unknown>): string {

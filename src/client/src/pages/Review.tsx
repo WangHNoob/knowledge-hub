@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { listReviewTasks, transitionReviewTasks, type ReviewTask } from "../api";
+import { annotateReviewTask, listReviewTasks, transitionReviewTasks, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
@@ -57,6 +57,9 @@ export function Review() {
   const [severity, setSeverity] = useState("");
   const [status, setStatus] = useState("open");
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [selectedCandidates, setSelectedCandidates] = useState<Record<string, string>>({});
+  const [dismissRules, setDismissRules] = useState<Record<string, boolean>>({});
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["review", severity || "all", status || "all"],
@@ -66,6 +69,25 @@ export function Review() {
   const transition = useMutation({
     mutationFn: (input: { taskIds: string[]; next: "open" | "resolved" | "dismissed"; note?: string }) =>
       transitionReviewTasks(input.taskIds, input.next, input.note),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["review"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases"] })
+      ]);
+    }
+  });
+  const annotate = useMutation({
+    mutationFn: (input: { task: ReviewTask; note?: string; answer?: string; selectedCandidateId?: string; dismissRule?: boolean }) =>
+      annotateReviewTask({
+        taskId: input.task.taskId,
+        selectedCandidateId: input.selectedCandidateId || undefined,
+        correctValue: input.answer?.trim() ? { value: input.answer.trim() } : undefined,
+        note: input.note,
+        dismissRule: input.dismissRule,
+        dismissalReason: input.dismissRule ? input.note : undefined
+      }),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["review"] }),
@@ -97,6 +119,15 @@ export function Review() {
   const act = useCallback((task: ReviewTask, next: "open" | "resolved" | "dismissed") => {
     transition.mutate({ taskIds: [task.taskId], next, note: notes[task.taskId] });
   }, [notes, transition]);
+  const annotateTask = useCallback((task: ReviewTask) => {
+    annotate.mutate({
+      task,
+      note: notes[task.taskId],
+      answer: answers[task.taskId],
+      selectedCandidateId: selectedCandidates[task.taskId],
+      dismissRule: dismissRules[task.taskId]
+    });
+  }, [annotate, answers, dismissRules, notes, selectedCandidates]);
   const bulk = useCallback((next: "resolved" | "dismissed") => {
     if (tasks.length === 0) return;
     if (window.confirm(`确认把当前列出的 ${tasks.length} 个任务全部标记为「${STATUS_LABEL[next]}」？`)) {
@@ -132,7 +163,15 @@ export function Review() {
         </div>
       </div>
 
-      {transition.error && <p className="error">{transition.error instanceof Error ? transition.error.message : String(transition.error)}</p>}
+      {(transition.error || annotate.error) && (
+        <p className="error">
+          {transition.error instanceof Error
+            ? transition.error.message
+            : annotate.error instanceof Error
+              ? annotate.error.message
+              : String(transition.error ?? annotate.error)}
+        </p>
+      )}
 
       <section className="review-flow">
         <div className="metrics compact">
@@ -159,8 +198,15 @@ export function Review() {
             key={task.taskId}
             task={task}
             note={notes[task.taskId] ?? ""}
-            isPending={transition.isPending}
+            answer={answers[task.taskId] ?? ""}
+            selectedCandidateId={selectedCandidates[task.taskId] ?? ""}
+            dismissRule={Boolean(dismissRules[task.taskId])}
+            isPending={transition.isPending || annotate.isPending}
             onNote={(note) => setNotes((prev) => ({ ...prev, [task.taskId]: note }))}
+            onAnswer={(answer) => setAnswers((prev) => ({ ...prev, [task.taskId]: answer }))}
+            onCandidate={(candidateId) => setSelectedCandidates((prev) => ({ ...prev, [task.taskId]: candidateId }))}
+            onDismissRule={(checked) => setDismissRules((prev) => ({ ...prev, [task.taskId]: checked }))}
+            onAnnotate={() => annotateTask(task)}
             onTransition={(next) => act(task, next)}
             onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
             onNavigateAsset={(componentId) => navigate("assets", { packageId: task.packageId, componentId })}
@@ -176,8 +222,15 @@ export function Review() {
 const ReviewTaskCard = memo(function ReviewTaskCard({
   task,
   note,
+  answer,
+  selectedCandidateId,
+  dismissRule,
   isPending,
   onNote,
+  onAnswer,
+  onCandidate,
+  onDismissRule,
+  onAnnotate,
   onTransition,
   onNavigatePackage,
   onNavigateAsset,
@@ -185,8 +238,15 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
 }: {
   task: ReviewTask;
   note: string;
+  answer: string;
+  selectedCandidateId: string;
+  dismissRule: boolean;
   isPending: boolean;
   onNote: (note: string) => void;
+  onAnswer: (answer: string) => void;
+  onCandidate: (candidateId: string) => void;
+  onDismissRule: (checked: boolean) => void;
+  onAnnotate: () => void;
   onTransition: (next: "open" | "resolved" | "dismissed") => void;
   onNavigatePackage: () => void;
   onNavigateAsset: (componentId: string) => void;
@@ -243,6 +303,42 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
             由 {task.resolvedBy} 于 {formatTime(task.resolvedAt ?? "")} {STATUS_LABEL[task.status]}
             {task.resolutionNote ? `：${task.resolutionNote}` : ""}
           </small>
+        )}
+        {task.status === "open" && task.taskKind === "annotation" && (
+          <div className="annotation-panel">
+            <div className="annotation-head">
+              <strong>标注任务</strong>
+              <span>confidence {Math.round(task.confidence * 100)}%</span>
+            </div>
+            {task.candidates.length > 0 && (
+              <div className="annotation-candidates">
+                {task.candidates.map((candidate) => (
+                  <label key={candidate.id} className={selectedCandidateId === candidate.id ? "candidate selected" : "candidate"}>
+                    <input type="radio" name={`candidate-${task.taskId}`} checked={selectedCandidateId === candidate.id} onChange={() => onCandidate(candidate.id)} />
+                    <span>
+                      <strong>{candidate.label}</strong>
+                      {candidate.rationale && <small>{candidate.rationale}</small>}
+                    </span>
+                    {typeof candidate.confidence === "number" && <b>{Math.round(candidate.confidence * 100)}%</b>}
+                  </label>
+                ))}
+              </div>
+            )}
+            <textarea
+              className="task-note annotation-answer"
+              placeholder="填写正确答案或补充标注说明；留空时采用所选候选。"
+              value={answer}
+              onChange={(event) => onAnswer(event.target.value)}
+              rows={3}
+            />
+            {task.ruleId && (
+              <label className="switch-field compact">
+                <input type="checkbox" checked={dismissRule} onChange={(event) => onDismissRule(event.target.checked)} />
+                <span>此规则对此组件不适用，后续跳过</span>
+              </label>
+            )}
+            <button className="primary-action" type="button" disabled={isPending || (!answer.trim() && !selectedCandidateId)} onClick={onAnnotate}>提交标注并沉淀样例</button>
+          </div>
         )}
         {task.status === "open" ? (
           <div className="task-actions split-actions">

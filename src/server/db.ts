@@ -190,6 +190,41 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       resolution_note TEXT NOT NULL DEFAULT ''
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}annotation_examples (
+      example_id TEXT PRIMARY KEY,
+      package_id TEXT NOT NULL REFERENCES ${p}asset_packages(package_id) ON DELETE CASCADE,
+      component_id TEXT NOT NULL REFERENCES ${p}asset_components(component_id) ON DELETE CASCADE,
+      task_id TEXT NOT NULL DEFAULT '',
+      rule_id TEXT NOT NULL DEFAULT '',
+      page_type TEXT NOT NULL DEFAULT '',
+      context_hash TEXT NOT NULL,
+      context_snapshot JSONB NOT NULL DEFAULT '{}',
+      correct_value JSONB NOT NULL DEFAULT '{}',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS ${p}rule_dismissals (
+      dismissal_id TEXT PRIMARY KEY,
+      package_id TEXT NOT NULL REFERENCES ${p}asset_packages(package_id) ON DELETE CASCADE,
+      component_id TEXT NOT NULL REFERENCES ${p}asset_components(component_id) ON DELETE CASCADE,
+      rule_id TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (component_id, rule_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${p}knowledge_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      entity_type TEXT NOT NULL DEFAULT '',
+      entity_id TEXT NOT NULL DEFAULT '',
+      payload_json JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}table_aliases (
       canonical TEXT PRIMARY KEY,
       aliases JSONB NOT NULL DEFAULT '[]',
@@ -284,6 +319,10 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_diag_filters ON ${p}diagnostic_logs(category, level, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_diag_run_created ON ${p}diagnostic_logs(run_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_diag_release_created ON ${p}diagnostic_logs(release_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_annotation_examples_page_rule ON ${p}annotation_examples(page_type, rule_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_annotation_examples_component ON ${p}annotation_examples(component_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_rule_dismissals_component ON ${p}rule_dismissals(component_id, active);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_events_type_created ON ${p}knowledge_events(event_type, created_at DESC);
   `);
 
   await adapter.exec(`
@@ -302,6 +341,14 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS resolved_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS resolution_note TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS task_kind TEXT NOT NULL DEFAULT 'review';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS rule_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS candidates JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS confidence REAL NOT NULL DEFAULT 0;
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS context_snapshot JSONB NOT NULL DEFAULT '{}';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotation_value JSONB NOT NULL DEFAULT '{}';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_by TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_at TIMESTAMPTZ;
   `);
 
   // 默认资料集

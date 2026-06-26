@@ -200,6 +200,15 @@ export const reviewTransitionSchema = z.object({
   note: z.string().max(1024).optional()
 });
 
+export const reviewAnnotationSchema = z.object({
+  taskId: z.string().min(1),
+  selectedCandidateId: z.string().min(1).optional(),
+  correctValue: z.unknown().optional(),
+  note: z.string().max(1024).optional(),
+  dismissRule: z.boolean().default(false),
+  dismissalReason: z.string().max(1024).optional()
+});
+
 export const tableAliasUpdateSchema = z.object({
   entries: z.array(z.object({
     canonical: z.string().min(1),

@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, ReleaseRecord, ReviewTask } from "../types";
-import { mapComponent, mapPackage, mapRelease } from "../db/mappers";
+import { mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
@@ -419,20 +419,7 @@ export class ReleaseService {
     );
     const out = new Map<string, ReviewTask[]>();
     for (const row of rows) {
-      const task: ReviewTask = {
-        taskId: String(row.task_id),
-        packageId: String(row.package_id),
-        componentId: String(row.component_id),
-        severity: row.severity as ReviewTask["severity"],
-        status: row.status as ReviewTask["status"],
-        title: String(row.title ?? ""),
-        description: String(row.description ?? ""),
-        suggestedAction: String(row.suggested_action ?? ""),
-        createdAt: String(row.created_at ?? ""),
-        resolvedBy: String(row.resolved_by ?? ""),
-        resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
-        resolutionNote: String(row.resolution_note ?? ""),
-      };
+      const task = mapReviewTask(row);
       out.set(task.componentId, [...(out.get(task.componentId) ?? []), task]);
     }
     return out;

@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 
 import { denyRole } from "../middleware/auth";
-import { reviewTransitionSchema } from "../schemas";
+import { reviewAnnotationSchema, reviewTransitionSchema } from "../schemas";
 import type { ReviewStatus } from "../types";
 import type { RouteContext } from "./context";
 
@@ -34,6 +34,23 @@ export function registerReviewRoutes(app: FastifyInstance, ctx: RouteContext) {
         parsed.data.note ?? ""
       );
       return { tasks };
+    }
+  );
+
+  app.post<{ Body: z.infer<typeof reviewAnnotationSchema> }>(
+    "/api/review/tasks/annotate",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = reviewAnnotationSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid review annotation payload." });
+      try {
+        return await ctx.service.annotateReviewTask({
+          ...parsed.data,
+          actor: request.user.username,
+        });
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "提交标注失败。" });
+      }
     }
   );
 }

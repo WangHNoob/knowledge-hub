@@ -81,6 +81,75 @@ describe("review task transitions", () => {
     expect(task.resolutionNote).toBe("");
   });
 
+  it("records annotation examples and rule dismissals", async () => {
+    await db.adapter.query(
+      `INSERT INTO review_tasks (
+         task_id, package_id, component_id, severity, status, task_kind, rule_id,
+         title, description, suggested_action, candidates, confidence, context_snapshot, created_at
+       )
+       VALUES (
+         'task_annotation','pkg_rev','cmp_rev','warning','open','annotation','wiki.required_fact',
+         '字段候选不确定','LLM 对字段归类不确定','请选择正确字段',
+         $1,$2,$3,NOW()
+       )`,
+      [
+        JSON.stringify([
+          {
+            id: "cand_activity",
+            label: "活动结构",
+            value: { field: "activity_structure", source: "candidate" },
+            confidence: 0.72,
+            rationale: "正文出现了阶段和奖励配置"
+          },
+          {
+            id: "cand_rule",
+            label: "规则说明",
+            value: { field: "rule_note", source: "candidate" },
+            confidence: 0.21
+          }
+        ]),
+        0.72,
+        JSON.stringify({ pageType: "activity", sourceFile: "gamedocs/pvp.md" })
+      ]
+    );
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/review/tasks/annotate",
+      headers: auth,
+      payload: {
+        taskId: "task_annotation",
+        selectedCandidateId: "cand_activity",
+        note: "策划确认活动结构字段",
+        dismissRule: true,
+        dismissalReason: "这个组件不需要该必填字段规则"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const task = response.json().task;
+    expect(task.status).toBe("resolved");
+    expect(task.taskKind).toBe("annotation");
+    expect(task.annotatedBy).toBe("admin");
+    expect(task.annotationValue).toEqual({ field: "activity_structure", source: "candidate" });
+
+    const examples = await db.adapter.query("SELECT * FROM annotation_examples WHERE task_id = $1", ["task_annotation"]);
+    expect(examples.rows).toHaveLength(1);
+    expect(examples.rows[0].context_hash).toMatch(/^sha256:/);
+    expect(examples.rows[0].correct_value).toEqual({ field: "activity_structure", source: "candidate" });
+
+    const dismissals = await db.adapter.query(
+      "SELECT * FROM rule_dismissals WHERE component_id = $1 AND rule_id = $2",
+      ["cmp_rev", "wiki.required_fact"]
+    );
+    expect(dismissals.rows).toHaveLength(1);
+    expect(dismissals.rows[0].active).toBe(true);
+
+    const events = await db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = $1", ["annotation.created"]);
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0].payload_json).toMatchObject({ componentId: "cmp_rev", ruleId: "wiki.required_fact" });
+  });
+
   it("rejects viewers", async () => {
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "viewer", password: "viewpw" } });
     const viewerToken = login.json<{ token: string }>().token;

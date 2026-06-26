@@ -66,14 +66,47 @@ export function mapReviewTask(row: Record<string, unknown>): ReviewTask {
     componentId: row.component_id as string,
     severity: row.severity as ReviewTask["severity"],
     status: row.status as ReviewTask["status"],
+    taskKind: String(row.task_kind ?? "review") === "annotation" ? "annotation" : "review",
+    ruleId: String(row.rule_id ?? ""),
     title: row.title as string,
     description: row.description as string,
     suggestedAction: row.suggested_action as string,
+    candidates: jsonCandidateArray(row.candidates),
+    confidence: Number(row.confidence ?? 0),
+    contextSnapshot: jsonObject(row.context_snapshot),
+    annotationValue: jsonObject(row.annotation_value),
+    annotatedBy: String(row.annotated_by ?? ""),
+    annotatedAt: row.annotated_at ? String(row.annotated_at) : null,
     createdAt: String(row.created_at),
     resolvedBy: (row.resolved_by as string) ?? "",
     resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
     resolutionNote: (row.resolution_note as string) ?? ""
   };
+}
+
+function jsonCandidateArray(value: unknown): ReviewTask["candidates"] {
+  let raw: unknown = [];
+  if (Array.isArray(value)) {
+    raw = value;
+  } else if (typeof value === "string" && value.length > 0) {
+    try {
+      raw = JSON.parse(value) as unknown;
+    } catch {
+      raw = [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry, index) => {
+    const item = jsonObject(entry);
+    if (Object.keys(item).length === 0) return [];
+    return [{
+      id: String(item.id ?? `candidate_${index + 1}`),
+      label: String(item.label ?? item.id ?? `候选 ${index + 1}`),
+      value: item.value ?? item,
+      confidence: typeof item.confidence === "number" ? item.confidence : undefined,
+      rationale: typeof item.rationale === "string" ? item.rationale : undefined
+    }];
+  });
 }
 
 export function mapEvidenceRecord(row: Record<string, unknown>): EvidenceRecord {

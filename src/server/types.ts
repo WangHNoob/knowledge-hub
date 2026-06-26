@@ -156,13 +156,46 @@ export interface ReviewTask {
   componentId: string;
   severity: ReviewSeverity;
   status: ReviewStatus;
+  taskKind: "review" | "annotation";
+  ruleId: string;
   title: string;
   description: string;
   suggestedAction: string;
+  candidates: Array<{ id: string; label: string; value: unknown; confidence?: number; rationale?: string }>;
+  confidence: number;
+  contextSnapshot: Record<string, unknown>;
+  annotationValue: Record<string, unknown>;
+  annotatedBy: string;
+  annotatedAt: string | null;
   createdAt: string;
   resolvedBy: string;
   resolvedAt: string | null;
   resolutionNote: string;
+}
+
+export interface AnnotationExample {
+  exampleId: string;
+  packageId: string;
+  componentId: string;
+  taskId: string;
+  ruleId: string;
+  pageType: string;
+  contextHash: string;
+  contextSnapshot: Record<string, unknown>;
+  correctValue: Record<string, unknown>;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface RuleDismissal {
+  dismissalId: string;
+  packageId: string;
+  componentId: string;
+  ruleId: string;
+  reason: string;
+  active: boolean;
+  createdBy: string;
+  createdAt: string;
 }
 
 export interface ReleaseRecord {

@@ -16,3 +16,14 @@ export async function transitionReviewTasks(
 ): Promise<ReviewTask[]> {
   return (await postJson<{ tasks: ReviewTask[] }>("/api/review/tasks/transition", { taskIds, status, note })).tasks;
 }
+
+export async function annotateReviewTask(input: {
+  taskId: string;
+  selectedCandidateId?: string;
+  correctValue?: unknown;
+  note?: string;
+  dismissRule?: boolean;
+  dismissalReason?: string;
+}): Promise<{ task: ReviewTask }> {
+  return postJson<{ task: ReviewTask }>("/api/review/tasks/annotate", input);
+}

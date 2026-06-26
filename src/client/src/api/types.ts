@@ -203,9 +203,17 @@ export interface ReviewTask {
   componentId: string;
   severity: "blocking" | "warning" | "info";
   status: string;
+  taskKind: "review" | "annotation";
+  ruleId: string;
   title: string;
   description: string;
   suggestedAction: string;
+  candidates: Array<{ id: string; label: string; value: unknown; confidence?: number; rationale?: string }>;
+  confidence: number;
+  contextSnapshot: Record<string, unknown>;
+  annotationValue: Record<string, unknown>;
+  annotatedBy: string;
+  annotatedAt: string | null;
   createdAt: string;
   resolvedBy: string;
   resolvedAt: string | null;
