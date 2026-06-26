@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { annotateReviewTask, listReviewTasks, transitionReviewTasks, type ReviewTask } from "../api";
+import { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
@@ -97,6 +97,17 @@ export function Review() {
       ]);
     }
   });
+  const rebuild = useMutation({
+    mutationFn: (task: ReviewTask) => startReviewTaskRebuild(task.taskId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["review"] }),
+        queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+      navigate("builder");
+    }
+  });
 
   const tasks = useMemo(
     () => (data ?? []).filter((task) => !params.packageId || task.packageId === params.packageId),
@@ -163,13 +174,15 @@ export function Review() {
         </div>
       </div>
 
-      {(transition.error || annotate.error) && (
+      {(transition.error || annotate.error || rebuild.error) && (
         <p className="error">
           {transition.error instanceof Error
             ? transition.error.message
             : annotate.error instanceof Error
               ? annotate.error.message
-              : String(transition.error ?? annotate.error)}
+              : rebuild.error instanceof Error
+                ? rebuild.error.message
+                : String(transition.error ?? annotate.error ?? rebuild.error)}
         </p>
       )}
 
@@ -201,12 +214,13 @@ export function Review() {
             answer={answers[task.taskId] ?? ""}
             selectedCandidateId={selectedCandidates[task.taskId] ?? ""}
             dismissRule={Boolean(dismissRules[task.taskId])}
-            isPending={transition.isPending || annotate.isPending}
+            isPending={transition.isPending || annotate.isPending || rebuild.isPending}
             onNote={(note) => setNotes((prev) => ({ ...prev, [task.taskId]: note }))}
             onAnswer={(answer) => setAnswers((prev) => ({ ...prev, [task.taskId]: answer }))}
             onCandidate={(candidateId) => setSelectedCandidates((prev) => ({ ...prev, [task.taskId]: candidateId }))}
             onDismissRule={(checked) => setDismissRules((prev) => ({ ...prev, [task.taskId]: checked }))}
             onAnnotate={() => annotateTask(task)}
+            onStartRebuild={() => rebuild.mutate(task)}
             onTransition={(next) => act(task, next)}
             onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
             onNavigateAsset={(componentId) => navigate("assets", { packageId: task.packageId, componentId })}
@@ -231,6 +245,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onCandidate,
   onDismissRule,
   onAnnotate,
+  onStartRebuild,
   onTransition,
   onNavigatePackage,
   onNavigateAsset,
@@ -247,6 +262,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onCandidate: (candidateId: string) => void;
   onDismissRule: (checked: boolean) => void;
   onAnnotate: () => void;
+  onStartRebuild: () => void;
   onTransition: (next: "open" | "resolved" | "dismissed") => void;
   onNavigatePackage: () => void;
   onNavigateAsset: (componentId: string) => void;
@@ -255,6 +271,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   const isAgentTask = isAgentFeedbackTask(task);
   const insight = isAgentTask ? insightFromTask(task) : null;
   const componentIds = insight?.componentIds.length ? insight.componentIds : task.componentId ? [task.componentId] : [];
+  const isRebuildCandidate = task.ruleId === "agent_feedback.rebuild_candidate";
   return (
     <article className="task actionable-task">
       <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />
@@ -345,6 +362,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
             <div className="task-primary-actions">
               {componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(componentIds[0])}>查看命中资产</button>}
               {insight && <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>}
+              {isRebuildCandidate && <button className="primary-action" type="button" disabled={isPending} onClick={onStartRebuild}>启动 scoped build</button>}
               <button className="primary-action" type="button" disabled={isPending} onClick={() => onTransition("resolved")}>{insight ? resolutionLabel(insight) : "标记已处理"}</button>
               <button className="secondary-action" type="button" disabled={isPending} onClick={() => onTransition("dismissed")}>不影响本版</button>
             </div>

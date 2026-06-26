@@ -327,6 +327,59 @@ export class KbBuilderPipelineService {
     return true;
   }
 
+  async startRebuildFromReviewTask(taskId: string, requestedBy: string, traceId?: string): Promise<KnowledgeBuildRun> {
+    const { rows } = await this.adapter.query(
+      `SELECT
+         t.task_id,
+         t.rule_id,
+         t.status,
+         c.component_id,
+         c.source_refs,
+         c.legacy_path,
+         p.source_version_ids
+       FROM review_tasks t
+       JOIN asset_components c ON c.component_id = t.component_id
+       JOIN asset_packages p ON p.package_id = t.package_id
+       WHERE t.task_id = $1`,
+      [taskId],
+    );
+    if (rows.length === 0) throw new Error(`Unknown review task: ${taskId}`);
+    const row = rows[0];
+    if (String(row.rule_id) !== "agent_feedback.rebuild_candidate") {
+      throw new Error("Only agent feedback rebuild candidate tasks can start scoped rebuilds.");
+    }
+    if (String(row.status) !== "open") throw new Error("Only open rebuild candidate tasks can start scoped rebuilds.");
+
+    const sourceVersionIds = jsonValue<string[]>(row.source_version_ids, []);
+    const versionId = sourceVersionIds[0];
+    if (!versionId) throw new Error("The owning package has no source version to rebuild from.");
+    const version = await createSourceBundleService(this.db, this.dataDir).getVersion(versionId);
+    if (!version) throw new Error(`Unknown source version: ${versionId}`);
+
+    const sourceRefs = jsonValue<string[]>(row.source_refs, []);
+    const only = scopedOnlyFilter(sourceRefs, String(row.legacy_path ?? ""));
+    const run = await this.startBuild({
+      bundleId: version.bundleId,
+      versionId,
+      requestedBy,
+      stages: STAGE_ORDER,
+      model: "deterministic",
+      modelConfig: { provider: "deterministic", model: "deterministic" },
+      force: true,
+      only,
+      qualityProfileId: "default",
+      traceId,
+      generateAliases: false,
+    });
+    await this.adapter.query(
+      `UPDATE review_tasks
+       SET resolution_note = $2
+       WHERE task_id = $1`,
+      [taskId, `已启动 scoped rebuild: ${run.runId}${only ? ` (${only})` : ""}`],
+    );
+    return run;
+  }
+
   async getActiveQualityProfile(): Promise<QualityGateProfile> {
     const { rows } = await this.adapter.query("SELECT * FROM quality_gate_profiles WHERE active = true ORDER BY updated_at DESC LIMIT 1");
     if (!rows.length) throw new Error("No active quality gate profile.");
@@ -806,6 +859,13 @@ function buildFlywheelSummary(
     newAnnotationTasks: quality.findings.length,
     dismissedRules: quality.dismissedRules ?? [],
   };
+}
+
+function scopedOnlyFilter(sourceRefs: string[], legacyPath: string): string | null {
+  const sourceRef = sourceRefs.find((ref) => ref.startsWith("gamedocs/") || ref.startsWith("gamedata/"));
+  if (sourceRef) return sourceRef;
+  if (legacyPath.startsWith("gamedocs/") || legacyPath.startsWith("gamedata/")) return legacyPath;
+  return null;
 }
 
 function slug(value: string): string {

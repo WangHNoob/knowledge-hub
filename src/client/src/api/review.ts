@@ -1,5 +1,5 @@
 import { getJson, postJson } from "./http";
-import type { ReviewTask } from "./types";
+import type { BuildResponse, ReviewTask } from "./types";
 
 export async function listReviewTasks(severity?: string, status?: string): Promise<ReviewTask[]> {
   const params = new URLSearchParams();
@@ -26,4 +26,8 @@ export async function annotateReviewTask(input: {
   dismissalReason?: string;
 }): Promise<{ task: ReviewTask }> {
   return postJson<{ task: ReviewTask }>("/api/review/tasks/annotate", input);
+}
+
+export async function startReviewTaskRebuild(taskId: string): Promise<BuildResponse> {
+  return postJson<BuildResponse>(`/api/review/tasks/${encodeURIComponent(taskId)}/rebuild`, {});
 }

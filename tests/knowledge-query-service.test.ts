@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { createKnowledgeQueryService } from "../src/server/services/knowledgeQueryService";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
+import { createKbBuilderPipelineService } from "../src/server/services/kbBuilderService";
 import { createReleaseService } from "../src/server/services/releaseService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
 import { createTestDb, type TestDbHandle } from "./helpers/testDb";
@@ -402,12 +403,30 @@ describe("KnowledgeQueryService", () => {
         "SELECT * FROM knowledge_events WHERE event_type = 'agent.feedback.rebuild_proposed'"
       );
       expect(rebuildEvents).toHaveLength(1);
+
+      const builder = createKbBuilderPipelineService(fixture.db, fixture.dataDir);
+      const run = await builder.startRebuildFromReviewTask(String(rebuildTasks[0].task_id), "admin");
+      expect(run.config.only).toBe("gamedocs/battle.md");
+      await waitForBuildRun(builder, run.runId);
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   }, 15000);
 });
+
+async function waitForBuildRun(builder: ReturnType<typeof createKbBuilderPipelineService>, runId: string) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const run = await builder.getRun(runId);
+    if (run?.status === "completed" || run?.status === "failed") {
+      expect(run.status).toBe("completed");
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for build run ${runId}`);
+}
 
 async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string; withGraphRelation?: boolean } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; graphComponentId: string; tableSchemaComponentId: string; sourceVersionId: string; cleanup: () => Promise<void> }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kh-query-"));

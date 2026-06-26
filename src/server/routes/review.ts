@@ -53,4 +53,17 @@ export function registerReviewRoutes(app: FastifyInstance, ctx: RouteContext) {
       }
     }
   );
+
+  app.post<{ Params: { taskId: string } }>(
+    "/api/review/tasks/:taskId/rebuild",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      try {
+        const run = await ctx.kbBuilderService.startRebuildFromReviewTask(request.params.taskId, request.user.username, request.traceId);
+        return reply.code(202).send({ run });
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "启动增量重建失败。" });
+      }
+    }
+  );
 }
