@@ -47,6 +47,14 @@ const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "
 const TRACKED_STAGES: ReadonlySet<string> = new Set<string>(STAGE_ORDER);
 const AUTO_EVIDENCE_COMPONENT_KINDS = new Set(["wiki_page"]);
 
+interface FlywheelBuildSummary {
+  annotationExamplesInjected: number;
+  activeRuleDismissals: number;
+  appliedRuleDismissals: number;
+  newAnnotationTasks: number;
+  dismissedRules: Array<{ ruleId: string; componentRef: string }>;
+}
+
 export function createKbBuilderPipelineService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
   return new KbBuilderPipelineService(db, dataDir, diagnostics);
 }
@@ -229,13 +237,15 @@ export class KbBuilderPipelineService {
         writeFileSync(join(workspace.dataDir, "wiki", "quality_report.json"), `${JSON.stringify(result, null, 2)}\n`);
         return result;
       });
+      const flywheelSummary = buildFlywheelSummary(annotationExamples, ruleDismissals, quality);
 
       const packageId = `pkg_${runId}`;
       const artifacts = await this.withStage(runId, options, "collect", async () => collectPipelineArtifacts(workspace.dataDir, workspace.workspaceDir, quality.componentQuality));
       const pkg = await this.withStage(runId, options, "persist", async () => {
-        const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality, ruleProfile);
+        const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality, ruleProfile, flywheelSummary);
         await this.completeRun(runId, packageId, specs.hash, workspace.workspaceDir);
-        await this.insertReviewTasks(packageId, artifacts, quality.findings);
+        flywheelSummary.newAnnotationTasks = await this.insertReviewTasks(packageId, artifacts, quality.findings);
+        await this.updateRunFlywheelSummary(runId, flywheelSummary);
         return inserted;
       });
       await runSpan?.complete({ packageId, artifactCount: artifacts.length, overallScore: quality.overallScore });
@@ -456,6 +466,7 @@ export class KbBuilderPipelineService {
     artifacts: CollectedArtifact[],
     quality: QualityGateResult,
     ruleProfile: KnowledgeRuleProfile,
+    flywheelSummary: FlywheelBuildSummary,
   ): Promise<AssetPackage> {
     const now = new Date().toISOString();
     const qualitySummary = {
@@ -466,6 +477,7 @@ export class KbBuilderPipelineService {
         profileId: ruleProfile.profileId,
         hash: ruleProfile.hash,
       },
+      flywheel: flywheelSummary,
     };
 
     await this.adapter.query("BEGIN");
@@ -570,8 +582,9 @@ export class KbBuilderPipelineService {
     }
   }
 
-  private async insertReviewTasks(packageId: string, artifacts: CollectedArtifact[], findings: QualityFinding[]): Promise<void> {
+  private async insertReviewTasks(packageId: string, artifacts: CollectedArtifact[], findings: QualityFinding[]): Promise<number> {
     const qualityReport = artifacts.find((artifact) => artifact.kind === "quality_report") ?? artifacts[0];
+    let inserted = 0;
     for (const finding of findings) {
       const artifact = artifacts.find((item) => item.legacyPath === finding.componentId) ?? qualityReport;
       if (!artifact) continue;
@@ -604,7 +617,9 @@ export class KbBuilderPipelineService {
           new Date().toISOString(),
         ],
       );
+      inserted += 1;
     }
+    return inserted;
   }
 
   private async loadAnnotationExamplesForPrompt(limit = 12): Promise<PromptAnnotationExample[]> {
@@ -634,6 +649,14 @@ export class KbBuilderPipelineService {
       componentRef: String(row.component_ref ?? ""),
       ruleId: String(row.rule_id ?? ""),
     }));
+  }
+
+  private async updateRunFlywheelSummary(runId: string, flywheelSummary: FlywheelBuildSummary): Promise<void> {
+    const run = await this.requireRun(runId);
+    await this.adapter.query(
+      "UPDATE knowledge_build_runs SET config_json = $2 WHERE run_id = $1",
+      [runId, JSON.stringify({ ...run.config, flywheel: flywheelSummary })],
+    );
   }
 
   private async requireRun(runId: string): Promise<KnowledgeBuildRun> {
@@ -769,6 +792,20 @@ function reviewTaskCandidates(finding: QualityFinding): Array<{ id: string; labe
     confidence: Math.max(0, Math.min(1, 1 - finding.scoreImpact)),
     rationale: finding.description,
   }];
+}
+
+function buildFlywheelSummary(
+  annotationExamples: PromptAnnotationExample[],
+  ruleDismissals: QualityRuleDismissal[],
+  quality: QualityGateResult,
+): FlywheelBuildSummary {
+  return {
+    annotationExamplesInjected: annotationExamples.length,
+    activeRuleDismissals: ruleDismissals.length,
+    appliedRuleDismissals: quality.dismissedRules?.length ?? 0,
+    newAnnotationTasks: quality.findings.length,
+    dismissedRules: quality.dismissedRules ?? [],
+  };
 }
 
 function slug(value: string): string {

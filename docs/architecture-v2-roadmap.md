@@ -106,9 +106,18 @@
 
 ## 6. 下一阶段建议
 
-下一步建议做“飞轮收敛可视化 + Agent 反馈自动触发重建”：
+第三阶段先完成了“飞轮收敛可视化”的最小闭环：
 
-1. 构建完成后统计 examples 命中数、被 dismissal 跳过数、新增 annotation task 数。
+| 能力 | 状态 |
+| --- | --- |
+| 记录构建注入的标注样例数 | 已写入 build run `config.flywheel` |
+| 记录 active / applied rule dismissals | 已写入 build run `config.flywheel` |
+| 记录本次新增 annotation task 数 | 已写入 build run `config.flywheel` |
+| 构建进度页展示飞轮摘要 | 已在运行卡片展示 |
+
+后续继续做“Agent 反馈自动触发重建”：
+
+1. 进一步统计 examples 的精确命中来源，而不是只展示注入数量。
 2. 审核中心展示“这个问题是否复发、上次人工标注是什么、这次是否被样例影响”。
 3. Agent 负反馈按 component 聚合，达到阈值后创建增量重建 proposal。
 4. 再进入单组件增量重建和 release revision。

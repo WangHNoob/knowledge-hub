@@ -295,6 +295,10 @@ describe("evaluateQualityGate", () => {
 
       expect(result.findings.some((finding) => finding.ruleId === "wikiSpecCompleteness")).toBe(false);
       expect(result.findings.some((finding) => finding.ruleId === "requiredFacts")).toBe(false);
+      expect(result.dismissedRules).toEqual([
+        { ruleId: "wikiSpecCompleteness", componentRef: "wiki/systems/battle.md" },
+        { ruleId: "requiredFacts", componentRef: "wiki/systems/battle.md" }
+      ]);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

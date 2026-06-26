@@ -47,4 +47,5 @@ export interface QualityGateResult {
   warningCount: number;
   findings: QualityFinding[];
   componentQuality: Record<string, Record<string, unknown>>;
+  dismissedRules?: Array<{ ruleId: string; componentRef: string }>;
 }

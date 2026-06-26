@@ -19,6 +19,7 @@ export function BuildRunCard({
 }) {
   const traceId = typeof run.config.traceId === "string" ? run.config.traceId : "";
   const completed = new Set(run.completedStages ?? []);
+  const flywheel = parseFlywheelSummary(run.config.flywheel);
   const totalStages = run.stages.length || 1;
   const doneCount = run.stages.filter((stage) => completed.has(stage)).length;
   const progress = run.status === "completed"
@@ -76,8 +77,36 @@ export function BuildRunCard({
           )}
         </p>
       )}
+      {flywheel && (
+        <div className="flywheel-summary">
+          <span><strong>{flywheel.annotationExamplesInjected}</strong> 标注样例</span>
+          <span><strong>{flywheel.activeRuleDismissals}</strong> 条豁免</span>
+          <span><strong>{flywheel.appliedRuleDismissals}</strong> 次命中</span>
+          <span><strong>{flywheel.newAnnotationTasks}</strong> 个新任务</span>
+        </div>
+      )}
       {run.error && <p className="error">{run.error}</p>}
       <small>{formatTime(run.startedAt)}{run.finishedAt ? ` → ${formatTime(run.finishedAt)}` : ""}</small>
     </article>
   );
+}
+
+function parseFlywheelSummary(value: unknown): {
+  annotationExamplesInjected: number;
+  activeRuleDismissals: number;
+  appliedRuleDismissals: number;
+  newAnnotationTasks: number;
+} | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data = value as Record<string, unknown>;
+  return {
+    annotationExamplesInjected: numberValue(data.annotationExamplesInjected),
+    activeRuleDismissals: numberValue(data.activeRuleDismissals),
+    appliedRuleDismissals: numberValue(data.appliedRuleDismissals),
+    newAnnotationTasks: numberValue(data.newAnnotationTasks),
+  };
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }

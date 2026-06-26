@@ -1,6 +1,6 @@
 import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
@@ -65,9 +65,11 @@ export function AgentFeedback() {
     setPayload(JSON.stringify({ query: insight.queryText }, null, 2));
     setTab("simulate");
   };
+  const eventRows = events.data ?? [];
+  const pressureRows = useMemo(() => buildFeedbackPressure(eventRows), [eventRows]);
+  const rebuildCandidates = pressureRows.filter((row) => row.negativeCount >= 2).length;
   if (events.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
   if (events.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? audit.error ?? outputAudits.error} />;
-  const eventRows = events.data ?? [];
   const auditRows = audit.data ?? [];
   const missCount = eventRows.filter((event) => event.status === "miss").length;
   const flaggedCount = eventRows.filter((event) => event.qualityFlags.length > 0).length;
@@ -99,6 +101,7 @@ export function AgentFeedback() {
           <Metric label="查询审计" value={auditRows.length} hint="最近 100 条" />
           <Metric label="未命中" value={missCount} hint="会生成补资产任务" tone={missCount ? "hot" : "ok"} />
           <Metric label="质量反馈" value={flaggedCount} hint={latestFlag || "clean"} tone={flaggedCount ? "warn" : "ok"} />
+          <Metric label="重建候选" value={rebuildCandidates} hint="负反馈 >= 2" tone={rebuildCandidates ? "warn" : "ok"} />
         </div>
         <div className="flow-cards">
           <button type="button" className="flow-card" onClick={() => setTab("simulate")}>
@@ -232,6 +235,22 @@ export function AgentFeedback() {
         {tab === "feedback" && (
           <section className="mcp-panel">
             <h2>反馈回流</h2>
+            {pressureRows.length > 0 && (
+              <div className="feedback-pressure-grid">
+                {pressureRows.slice(0, 6).map((row) => (
+                  <button key={row.componentId} type="button" className="feedback-pressure" onClick={() => navigate("assets", { componentId: row.componentId })}>
+                    <span>
+                      <strong>{row.title}</strong>
+                      <code>{row.componentId}</code>
+                    </span>
+                    <span className="component-quality">
+                      <Badge label={`${row.negativeCount} 次负反馈`} tone={row.negativeCount >= 2 ? "warn" : "ok"} />
+                      {row.negativeCount >= 2 && <Badge label="建议重建" tone="hot" />}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="event-list">
               {(events.data ?? []).map((event) => (
                 <AgentFeedbackCard
@@ -271,6 +290,25 @@ export function AgentFeedback() {
       </div>
     </Page>
   );
+}
+
+function buildFeedbackPressure(events: AgentEvent[]): Array<{ componentId: string; title: string; negativeCount: number }> {
+  const rows = new Map<string, { componentId: string; title: string; negativeCount: number }>();
+  for (const event of events) {
+    const negative = event.status === "miss" || event.feedbackType !== "hit" || event.qualityFlags.length > 0;
+    if (!negative) continue;
+    const componentIds = event.components.length
+      ? event.components.map((component) => component.componentId)
+      : event.hitComponentIds;
+    for (const componentId of componentIds) {
+      const component = event.components.find((item) => item.componentId === componentId);
+      const current = rows.get(componentId) ?? { componentId, title: component?.title || componentId, negativeCount: 0 };
+      current.negativeCount += 1;
+      if (component?.title) current.title = component.title;
+      rows.set(componentId, current);
+    }
+  }
+  return [...rows.values()].sort((a, b) => b.negativeCount - a.negativeCount || a.title.localeCompare(b.title));
 }
 
 function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: string; body: string }> {

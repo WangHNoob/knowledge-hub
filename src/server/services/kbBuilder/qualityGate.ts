@@ -14,6 +14,12 @@ export function evaluateQualityGate(options: {
   const findings: QualityFinding[] = [];
   const componentQuality: Record<string, Record<string, unknown>> = {};
   const pageScores: number[] = [];
+  const dismissedRules: Array<{ ruleId: string; componentRef: string }> = [];
+  const isRuleDismissed = (ruleId: string, componentRef: string) => {
+    const dismissed = isDismissed(options.ruleDismissals, ruleId, componentRef);
+    if (dismissed) dismissedRules.push({ ruleId, componentRef });
+    return dismissed;
+  };
 
   for (const [type, pageType] of Object.entries(options.specs.manifest.pageTypes)) {
     const dir = join(options.dataDir, "wiki", pageType.dir);
@@ -39,7 +45,7 @@ export function evaluateQualityGate(options: {
 
       const wikiRule = rule(options.profile, "wikiSpecCompleteness");
       const minWikiScore = numberValue(wikiRule.minScore, 0.75);
-      if (ruleEnabled(wikiRule) && !isDismissed(options.ruleDismissals, "wikiSpecCompleteness", rel) && quality.wikiSpecScore < minWikiScore) {
+      if (ruleEnabled(wikiRule) && !isRuleDismissed("wikiSpecCompleteness", rel) && quality.wikiSpecScore < minWikiScore) {
         findings.push(finding(
           "wikiSpecCompleteness",
           severity(wikiRule, "blocking"),
@@ -53,7 +59,7 @@ export function evaluateQualityGate(options: {
 
       const factsRule = rule(options.profile, "requiredFacts");
       const minFactsScore = numberValue(factsRule.minScore, 0.7);
-      if (ruleEnabled(factsRule) && !isDismissed(options.ruleDismissals, "requiredFacts", rel) && quality.factsScore < minFactsScore) {
+      if (ruleEnabled(factsRule) && !isRuleDismissed("requiredFacts", rel) && quality.factsScore < minFactsScore) {
         findings.push(finding(
           "requiredFacts",
           severity(factsRule, "warning"),
@@ -66,7 +72,7 @@ export function evaluateQualityGate(options: {
       }
 
       const sourceRule = rule(options.profile, "frontmatterSource");
-      if (ruleEnabled(sourceRule) && !isDismissed(options.ruleDismissals, "frontmatterSource", rel) && !generatedTablePage) {
+      if (ruleEnabled(sourceRule) && !isRuleDismissed("frontmatterSource", rel) && !generatedTablePage) {
         const frontmatterSource = frontmatter.source;
         const metaSource = stringValue((meta as Record<string, unknown>).source);
         const source = metaSource || frontmatterSource;
@@ -86,13 +92,13 @@ export function evaluateQualityGate(options: {
     }
   }
 
-  const graphFinding = evaluateGraph(options.dataDir, options.specs, options.profile, options.ruleDismissals);
+  const graphFinding = evaluateGraph(options.dataDir, options.specs, options.profile, options.ruleDismissals, isRuleDismissed);
   if (graphFinding) findings.push(graphFinding);
 
-  findings.push(...evaluateCandidateRelationships(options.dataDir, options.profile, options.ruleDismissals));
-  findings.push(...evaluateTableRelationCandidates(options.dataDir, options.profile, options.ruleDismissals));
+  findings.push(...evaluateCandidateRelationships(options.dataDir, options.profile, options.ruleDismissals, isRuleDismissed));
+  findings.push(...evaluateTableRelationCandidates(options.dataDir, options.profile, options.ruleDismissals, isRuleDismissed));
 
-  const conceptFindings = evaluateConceptOveruse(options.dataDir, options.profile, options.ruleDismissals);
+  const conceptFindings = evaluateConceptOveruse(options.dataDir, options.profile, options.ruleDismissals, isRuleDismissed);
   findings.push(...conceptFindings);
 
   const overallScore = round(pageScores.length ? pageScores.reduce((sum, value) => sum + value, 0) / pageScores.length : 0);
@@ -102,6 +108,7 @@ export function evaluateQualityGate(options: {
     warningCount: findings.filter((item) => item.severity === "warning").length,
     findings,
     componentQuality,
+    dismissedRules,
   };
 }
 
@@ -111,10 +118,15 @@ export interface QualityRuleDismissal {
   componentRef?: string;
 }
 
-function evaluateCandidateRelationships(dataDir: string, profile: QualityGateConfig, dismissals?: QualityRuleDismissal[]): QualityFinding[] {
+function evaluateCandidateRelationships(
+  dataDir: string,
+  profile: QualityGateConfig,
+  dismissals?: QualityRuleDismissal[],
+  isRuleDismissed?: (ruleId: string, componentRef: string) => boolean,
+): QualityFinding[] {
   const candidateRule = rule(profile, "candidateRelationships");
   if (!ruleEnabled(candidateRule)) return [];
-  if (isDismissed(dismissals, "candidateRelationships", "wiki/graph.json")) return [];
+  if (isRuleDismissed?.("candidateRelationships", "wiki/graph.json") ?? isDismissed(dismissals, "candidateRelationships", "wiki/graph.json")) return [];
   const graphPath = join(dataDir, "wiki", "graph.json");
   if (!existsSync(graphPath)) return [];
   const graph = readJson<{ edges?: any[] }>(graphPath, {});
@@ -131,10 +143,15 @@ function evaluateCandidateRelationships(dataDir: string, profile: QualityGateCon
   )];
 }
 
-function evaluateTableRelationCandidates(dataDir: string, profile: QualityGateConfig, dismissals?: QualityRuleDismissal[]): QualityFinding[] {
+function evaluateTableRelationCandidates(
+  dataDir: string,
+  profile: QualityGateConfig,
+  dismissals?: QualityRuleDismissal[],
+  isRuleDismissed?: (ruleId: string, componentRef: string) => boolean,
+): QualityFinding[] {
   const tableRule = rule(profile, "tableRelationCandidates");
   if (!ruleEnabled(tableRule)) return [];
-  if (isDismissed(dismissals, "tableRelationCandidates", "wiki/_tables/table_relation_candidates.json")) return [];
+  if (isRuleDismissed?.("tableRelationCandidates", "wiki/_tables/table_relation_candidates.json") ?? isDismissed(dismissals, "tableRelationCandidates", "wiki/_tables/table_relation_candidates.json")) return [];
   const candidatePath = join(dataDir, "wiki", "_tables", "table_relation_candidates.json");
   if (!existsSync(candidatePath)) return [];
   const candidates = readJson<any[]>(candidatePath, []);
@@ -168,10 +185,16 @@ function evaluateWikiPage(
   return { structureScore, factsScore, emptySectionScore, wikiSpecScore, missingSections, missingFacts };
 }
 
-function evaluateGraph(dataDir: string, specs: WikiSpecSet, profile: QualityGateConfig, dismissals?: QualityRuleDismissal[]): QualityFinding | null {
+function evaluateGraph(
+  dataDir: string,
+  specs: WikiSpecSet,
+  profile: QualityGateConfig,
+  dismissals?: QualityRuleDismissal[],
+  isRuleDismissed?: (ruleId: string, componentRef: string) => boolean,
+): QualityFinding | null {
   const graphRule = rule(profile, "graphIntegrity");
   if (!ruleEnabled(graphRule)) return null;
-  if (isDismissed(dismissals, "graphIntegrity", "wiki/graph.json")) return null;
+  if (isRuleDismissed?.("graphIntegrity", "wiki/graph.json") ?? isDismissed(dismissals, "graphIntegrity", "wiki/graph.json")) return null;
   const graphPath = join(dataDir, "wiki", "graph.json");
   if (!existsSync(graphPath)) {
     return finding("graphIntegrity", severity(graphRule, "blocking"), "wiki/graph.json", "Graph missing", "wiki/graph.json does not exist.", "重新运行 graph 阶段。", 1);
@@ -206,10 +229,15 @@ function stripExtension(value: string): string {
   return value.replace(/\.[^/.]+$/u, "");
 }
 
-function evaluateConceptOveruse(dataDir: string, profile: QualityGateConfig, dismissals?: QualityRuleDismissal[]): QualityFinding[] {
+function evaluateConceptOveruse(
+  dataDir: string,
+  profile: QualityGateConfig,
+  dismissals?: QualityRuleDismissal[],
+  isRuleDismissed?: (ruleId: string, componentRef: string) => boolean,
+): QualityFinding[] {
   const conceptRule = rule(profile, "conceptOveruse");
   if (!ruleEnabled(conceptRule)) return [];
-  if (isDismissed(dismissals, "conceptOveruse", "wiki/graph.json")) return [];
+  if (isRuleDismissed?.("conceptOveruse", "wiki/graph.json") ?? isDismissed(dismissals, "conceptOveruse", "wiki/graph.json")) return [];
   const graphPath = join(dataDir, "wiki", "graph.json");
   if (!existsSync(graphPath)) return [];
   const graph = readJson<{ nodes?: any[]; edges?: any[] }>(graphPath, {});
