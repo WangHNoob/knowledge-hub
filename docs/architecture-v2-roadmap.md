@@ -114,10 +114,11 @@
 | 记录 active / applied rule dismissals | 已写入 build run `config.flywheel` |
 | 记录本次新增 annotation task 数 | 已写入 build run `config.flywheel` |
 | 构建进度页展示飞轮摘要 | 已在运行卡片展示 |
+| Agent 负反馈触发重建提案 | 已在同组件负反馈达到 2 次时生成 `agent_feedback.rebuild_candidate` 标注任务 |
 
-后续继续做“Agent 反馈自动触发重建”：
+后续继续做“Agent 反馈驱动增量重建执行”：
 
 1. 进一步统计 examples 的精确命中来源，而不是只展示注入数量。
 2. 审核中心展示“这个问题是否复发、上次人工标注是什么、这次是否被样例影响”。
-3. Agent 负反馈按 component 聚合，达到阈值后创建增量重建 proposal。
-4. 再进入单组件增量重建和 release revision。
+3. 为 `agent_feedback.rebuild_candidate` 增加一键执行单组件增量重建。
+4. 再进入 release revision 和自动发布条件判断。

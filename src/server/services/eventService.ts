@@ -10,6 +10,7 @@ export type KnowledgeEventType =
   | "annotation.created"
   | "component.trust_changed"
   | "agent.feedback.received"
+  | "agent.feedback.rebuild_proposed"
   | "release.published";
 
 export interface KnowledgeEvent {

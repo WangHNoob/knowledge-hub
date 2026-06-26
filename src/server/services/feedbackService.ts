@@ -4,6 +4,8 @@ import { mapComponent } from "../db/mappers";
 import type { AssetComponent, DatabaseHandle, ReleaseRecord } from "../types";
 import { emitKnowledgeEvent } from "./eventService";
 
+const REBUILD_PROPOSAL_THRESHOLD = 2;
+
 export type FeedbackType =
   | "miss"
   | "low_quality_hit"
@@ -151,11 +153,18 @@ export class FeedbackService {
         new Date().toISOString()
       ]
     );
+    const rebuildProposalTaskId = await this.maybeCreateRebuildProposal({
+      release,
+      component: targetComponent,
+      query,
+      feedbackType: effectiveFeedbackType,
+      negativeFeedbackTaskId: taskId,
+    });
     await emitKnowledgeEvent(this.db, {
       eventType: "agent.feedback.received",
       entityType: "component",
       entityId: targetComponent.componentId,
-      payload: { releaseId: release.releaseId, feedbackType: effectiveFeedbackType, query, taskId, qualityFlags },
+      payload: { releaseId: release.releaseId, feedbackType: effectiveFeedbackType, query, taskId, qualityFlags, rebuildProposalTaskId },
     });
     return {
       recorded: true,
@@ -184,6 +193,97 @@ export class FeedbackService {
       release.packageIds
     );
     return rows.length ? mapComponent(rows[0]) : null;
+  }
+
+  private async maybeCreateRebuildProposal(input: {
+    release: ReleaseRecord;
+    component: AssetComponent;
+    query: string;
+    feedbackType: FeedbackType;
+    negativeFeedbackTaskId: string;
+  }): Promise<string | null> {
+    const { release, component, query, feedbackType, negativeFeedbackTaskId } = input;
+    const negativeCount = await this.negativeFeedbackCount(release.releaseId, component.componentId);
+    if (negativeCount < REBUILD_PROPOSAL_THRESHOLD) return null;
+
+    const { rows: existingRows } = await this.adapter.query(
+      `SELECT task_id
+       FROM review_tasks
+       WHERE component_id = $1
+         AND status = 'open'
+         AND rule_id = 'agent_feedback.rebuild_candidate'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [component.componentId],
+    );
+    if (existingRows.length > 0) return String(existingRows[0].task_id);
+
+    const taskId = `task_rebuild_${slug(component.componentId)}_${nanoid(6)}`;
+    const now = new Date().toISOString();
+    await this.adapter.query(
+      `INSERT INTO review_tasks
+        (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at, task_kind, rule_id, candidates, confidence, context_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        taskId,
+        component.packageId,
+        component.componentId,
+        "warning",
+        "open",
+        `重建候选：${component.title}`,
+        `组件 ${component.title} 已累计 ${negativeCount} 次 Agent 负反馈，最近一次为 ${feedbackType}：${query}。`,
+        "确认反馈成立后，优先做单组件增量重建；如暂不重建，请补充标注说明或关闭提案。",
+        now,
+        "annotation",
+        "agent_feedback.rebuild_candidate",
+        JSON.stringify([
+          {
+            id: "trigger_incremental_rebuild",
+            label: "确认需要增量重建",
+            value: { action: "trigger_incremental_rebuild", componentId: component.componentId, releaseId: release.releaseId },
+            confidence: 0.8,
+            rationale: `该组件负反馈已达到阈值 ${REBUILD_PROPOSAL_THRESHOLD}。`,
+          },
+          {
+            id: "defer_rebuild",
+            label: "暂不重建，记录原因",
+            value: { action: "defer_rebuild", componentId: component.componentId, releaseId: release.releaseId },
+            confidence: 0.4,
+            rationale: "反馈可能来自查询误用，或需要先补资料/标注再重建。",
+          }
+        ]),
+        0.8,
+        JSON.stringify({
+          releaseId: release.releaseId,
+          componentId: component.componentId,
+          artifactId: component.artifactId,
+          negativeFeedbackCount: negativeCount,
+          threshold: REBUILD_PROPOSAL_THRESHOLD,
+          latestFeedbackType: feedbackType,
+          latestQuery: query,
+          negativeFeedbackTaskId,
+        }),
+      ],
+    );
+    await emitKnowledgeEvent(this.db, {
+      eventType: "agent.feedback.rebuild_proposed",
+      entityType: "component",
+      entityId: component.componentId,
+      payload: { releaseId: release.releaseId, taskId, negativeFeedbackCount: negativeCount, threshold: REBUILD_PROPOSAL_THRESHOLD },
+    });
+    return taskId;
+  }
+
+  private async negativeFeedbackCount(releaseId: string, componentId: string): Promise<number> {
+    const { rows } = await this.adapter.query(
+      `SELECT COUNT(*)::int AS count
+       FROM agent_events
+       WHERE release_id = $1
+         AND feedback_type <> 'hit'
+         AND hit_component_ids ? $2`,
+      [releaseId, componentId],
+    );
+    return Number(rows[0]?.count ?? 0);
   }
 }
 

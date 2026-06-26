@@ -370,6 +370,13 @@ describe("KnowledgeQueryService", () => {
       expect(badHit.result.feedbackType).toBe("bad_hit");
       expect(badHit.result.taskId).toMatch(/^task_mcp_bad_hit_/);
       expect(badHit.trace.componentIds).toContain(fixture.pageComponentId);
+      const secondBadHit = await service.runTool("kb_report_bad_hit", {
+        query: "Battle stamina again",
+        componentId: fixture.pageComponentId,
+        reason: "A second Agent run found the same component misleading.",
+        expected: "A page about stamina recovery rules."
+      }, { sessionId: "test", agentRole: "planner" });
+      expect(secondBadHit.result.recorded).toBe(true);
 
       const gap = await service.runTool("kb_report_gap", {
         query: "missing resurrection economy",
@@ -385,6 +392,16 @@ describe("KnowledgeQueryService", () => {
       expect(tasks.some((task) => String(task.title).includes("错命中"))).toBe(true);
       expect(tasks.some((task) => String(task.title).includes("知识缺口"))).toBe(true);
       expect(tasks.some((task) => String(task.description).includes("stamina recovery rules"))).toBe(true);
+      const { rows: rebuildTasks } = await fixture.db.adapter.query(
+        "SELECT * FROM review_tasks WHERE rule_id = 'agent_feedback.rebuild_candidate'"
+      );
+      expect(rebuildTasks).toHaveLength(1);
+      expect(rebuildTasks[0].component_id).toBe(fixture.pageComponentId);
+      expect(rebuildTasks[0].context_snapshot).toMatchObject({ negativeFeedbackCount: 2, threshold: 2 });
+      const { rows: rebuildEvents } = await fixture.db.adapter.query(
+        "SELECT * FROM knowledge_events WHERE event_type = 'agent.feedback.rebuild_proposed'"
+      );
+      expect(rebuildEvents).toHaveLength(1);
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
