@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { nanoid } from "nanoid";
 
-import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord, ReviewTask } from "../types";
+import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, ReleaseRecord, ReviewTask } from "../types";
 import { mapComponent, mapPackage, mapRelease } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
@@ -138,6 +138,7 @@ export class ReleaseService {
         publishedAt,
         publishedBy,
         activeRuleProfileHash: activeRuleProfile.hash,
+        activeRuleProfileConfig: activeRuleProfile.config,
         okf: okfExport.manifest,
         auditSummary: okfExport.manifest.auditSummary,
       });
@@ -455,6 +456,7 @@ function buildManifest(input: {
   publishedAt: string;
   publishedBy: string;
   activeRuleProfileHash: string;
+  activeRuleProfileConfig: KnowledgeRuleConfig;
   okf: OkfExportManifest;
   auditSummary: ReleaseAuditSummary;
 }) {
@@ -468,6 +470,7 @@ function buildManifest(input: {
     sourceVersionIds,
     legislationProfile: {
       activeHash: input.activeRuleProfileHash,
+      governanceRules: input.activeRuleProfileConfig.governanceRules,
       packageProfiles: uniqueObjects(input.packages.map((pkg) => profileFromQuality(pkg.qualitySummary)).filter(Boolean)),
     },
     packages: input.packages.map((pkg) => ({

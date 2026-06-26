@@ -556,6 +556,42 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       candidate_relation_unconfirmed: { enabled: true, severity: "warning", description: "候选关系尚未被人工确认，试发布可先带风险放行。" },
       field_relation_unconfirmed: { enabled: true, severity: "info", description: "表字段推断关系先作为提示，不阻断试发布。" },
       stale_rule_profile: { enabled: true, severity: "warning", description: "资产包使用的规则 Profile 已不是当前启用版本，需要复审。" }
+    },
+    governanceRules: {
+      schema: {
+        requireFrontmatter: true,
+        requireOkfType: true,
+        requireDescription: true,
+        requireTags: true,
+        allowObsidianLinks: false,
+        linkMode: "okf_absolute"
+      },
+      evidence: {
+        requiredComponentKinds: ["wiki_page", "table_wiki_page"],
+        citationRequiredOkfTypes: ["system_rule", "activity_template", "table_schema", "ui_flow", "numerical_convention"],
+        autoBackfillOnPublish: true,
+        missingEvidenceSeverity: "blocking"
+      },
+      trust: {
+        policyVersion: "v2-lite",
+        trustedMinScore: 0.85,
+        usableMinScore: 0.7,
+        reviewMinScore: 0.55,
+        blockBelowScore: 0.55,
+        warnBelowScore: 0.75,
+        blockOnLowTrust: false
+      },
+      lint: {
+        enabledDomains: ["links", "evidence", "graph", "trust", "table_dependencies", "mcp_feedback"],
+        blockingDomains: ["evidence", "trust", "table_dependencies", "mcp_feedback"],
+        failPublishOnBlocking: false
+      },
+      agent: {
+        includeTrustInMcp: true,
+        includeEvidenceInMcp: true,
+        recordUnresolvedQueries: true,
+        repeatedMissBlockingThreshold: 3
+      }
     }
   };
   await adapter.query(

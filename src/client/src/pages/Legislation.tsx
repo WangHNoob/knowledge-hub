@@ -22,19 +22,21 @@ import {
   setPageTypeTags,
   updateDocumentType,
   updateEntityType,
+  updateGovernanceRule,
+  updateGovernanceTags,
   updatePageType,
   updateQualityRule,
   updateRelationType,
   updateTableRuleTags
 } from "./legislationEditor";
 
-type LegislationTab = "documents" | "entities" | "relations" | "tables" | "quality" | "trust" | "overview" | "advanced";
+type LegislationTab = "governance" | "documents" | "entities" | "relations" | "tables" | "quality" | "trust" | "overview" | "advanced";
 
 export function Legislation() {
   const queryClient = useQueryClient();
   const profiles = useQuery({ queryKey: ["legislation-profile"], queryFn: getLegislationProfile });
   const trustPolicy = useQuery({ queryKey: ["trust-policy"], queryFn: getTrustPolicy });
-  const [tab, setTab] = useState<LegislationTab>("documents");
+  const [tab, setTab] = useState<LegislationTab>("governance");
   const [name, setName] = useState("策划立法规则");
   const [activate, setActivate] = useState(true);
   const [config, setConfig] = useState<KnowledgeRuleConfig | null>(null);
@@ -89,6 +91,7 @@ export function Legislation() {
   const history = profiles.data?.profiles ?? [];
 
   const tabs: ReadonlyArray<TabItem<LegislationTab>> = [
+    { id: "governance", label: "治理总则", icon: ShieldCheck },
     { id: "documents", label: "文档类型", icon: FileText, count: config ? Object.keys(config.documentTypes).length : 0 },
     { id: "entities", label: "业务对象", icon: Boxes, count: config?.entityTypes.length ?? 0 },
     { id: "relations", label: "对象关系", icon: Share2, count: config?.relationTypes.length ?? 0 },
@@ -134,6 +137,7 @@ export function Legislation() {
           <Loading title="正在加载规则草稿" />
         ) : null}
 
+        {config && tab === "governance" && <GovernanceRuleSection config={config} onChange={setConfig} trustPolicy={trustPolicy.data ?? null} />}
         {config && tab === "documents" && <DocumentTypeSection config={config} onChange={setConfig} />}
         {config && tab === "entities" && <EntityTypeSection config={config} onChange={setConfig} />}
         {config && tab === "relations" && <RelationTypeSection config={config} onChange={setConfig} />}
@@ -210,6 +214,97 @@ export function Legislation() {
         )}
       </div>
     </Page>
+  );
+}
+
+function GovernanceRuleSection({ config, onChange, trustPolicy }: EditorSectionProps & { trustPolicy: TrustPolicy | null }) {
+  const rules = config.governanceRules;
+  const evidencePageTypes = Object.values(config.pageTypes).filter((page) => page.evidenceRequired !== false).length;
+  const publishablePageTypes = Object.values(config.pageTypes).filter((page) => page.publishable !== false).length;
+  return (
+    <section className="legislation-workbench">
+      <section className="release-panel rule-section">
+        <div className="detail-head">
+          <div>
+            <h2>知识治理总则</h2>
+            <p>把 Schema、证据、可信度、健康检查和 Agent 消费口径统一写入规则 Profile，后续发布会记录对应 hash。</p>
+          </div>
+          <div className="trust-policy-badges">
+            <Badge label={rules.trust.policyVersion} tone="ok" />
+            <Badge label={rules.lint.failPublishOnBlocking ? "Lint 阻断发布" : "Lint 先预警"} tone={rules.lint.failPublishOnBlocking ? "hot" : "warn"} />
+          </div>
+        </div>
+        <div className="metrics compact governance-metrics">
+          <Metric label="可发布页面" value={publishablePageTypes} hint={`${Object.keys(config.pageTypes).length} 类页面`} />
+          <Metric label="强证据页面" value={evidencePageTypes} hint="pageTypes evidenceRequired" tone="ok" />
+          <Metric label="Lint 域" value={rules.lint.enabledDomains.length} hint={`${rules.lint.blockingDomains.length} 类可阻断`} />
+          <Metric label="低可信预警" value={formatPercent(rules.trust.warnBelowScore)} hint={`阻断线 ${formatPercent(rules.trust.blockBelowScore)}`} tone="warn" />
+        </div>
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="OKF Schema 契约" caption="定义发布给 Agent 的 Markdown 页面最低结构要求。" />
+        <div className="governance-grid">
+          <SwitchField label="必须有 frontmatter" checked={rules.schema.requireFrontmatter} onChange={(checked) => onChange(updateGovernanceRule(config, "schema", { requireFrontmatter: checked }))} />
+          <SwitchField label="必须有 OKF type" checked={rules.schema.requireOkfType} onChange={(checked) => onChange(updateGovernanceRule(config, "schema", { requireOkfType: checked }))} />
+          <SwitchField label="必须有 description" checked={rules.schema.requireDescription} onChange={(checked) => onChange(updateGovernanceRule(config, "schema", { requireDescription: checked }))} />
+          <SwitchField label="必须有 tags" checked={rules.schema.requireTags} onChange={(checked) => onChange(updateGovernanceRule(config, "schema", { requireTags: checked }))} />
+          <SwitchField label="允许 Obsidian 链接" checked={rules.schema.allowObsidianLinks} onChange={(checked) => onChange(updateGovernanceRule(config, "schema", { allowObsidianLinks: checked }))} />
+          <label className="field-label">
+            链接规范
+            <input value={rules.schema.linkMode} disabled />
+          </label>
+        </div>
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="证据与引用规则" caption="定义哪些知识必须能追溯，缺证据时进入什么等级。" />
+        <div className="rule-grid two">
+          <TagField label="必须有证据的组件 kind" value={rules.evidence.requiredComponentKinds} onChange={(value) => onChange(updateGovernanceTags(config, "evidence", "requiredComponentKinds", value))} />
+          <TagField label="必须有 Citations 的 OKF type" value={rules.evidence.citationRequiredOkfTypes} onChange={(value) => onChange(updateGovernanceTags(config, "evidence", "citationRequiredOkfTypes", value))} />
+          <label className="field-label">
+            缺证据等级
+            <select value={rules.evidence.missingEvidenceSeverity} onChange={(event) => onChange(updateGovernanceRule(config, "evidence", { missingEvidenceSeverity: event.target.value as typeof rules.evidence.missingEvidenceSeverity }))}>
+              <option value="blocking">阻断发布</option>
+              <option value="warning">需要关注</option>
+              <option value="info">仅记录</option>
+            </select>
+          </label>
+          <SwitchField label="发布时自动补基础证据" checked={rules.evidence.autoBackfillOnPublish} onChange={(checked) => onChange(updateGovernanceRule(config, "evidence", { autoBackfillOnPublish: checked }))} />
+        </div>
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="可信度消费口径" caption="当前计算公式仍由系统实现；这里记录策划立法层面的阈值和发布口径。" />
+        <div className="governance-score-grid">
+          <NumberField label="可信阈值" value={rules.trust.trustedMinScore} onChange={(value) => onChange(updateGovernanceRule(config, "trust", { trustedMinScore: value }))} />
+          <NumberField label="可用阈值" value={rules.trust.usableMinScore} onChange={(value) => onChange(updateGovernanceRule(config, "trust", { usableMinScore: value }))} />
+          <NumberField label="复核阈值" value={rules.trust.reviewMinScore} onChange={(value) => onChange(updateGovernanceRule(config, "trust", { reviewMinScore: value }))} />
+          <NumberField label="阻断线" value={rules.trust.blockBelowScore} onChange={(value) => onChange(updateGovernanceRule(config, "trust", { blockBelowScore: value }))} />
+          <NumberField label="预警线" value={rules.trust.warnBelowScore} onChange={(value) => onChange(updateGovernanceRule(config, "trust", { warnBelowScore: value }))} />
+          <SwitchField label="低可信直接阻断发布" checked={rules.trust.blockOnLowTrust} onChange={(checked) => onChange(updateGovernanceRule(config, "trust", { blockOnLowTrust: checked }))} />
+        </div>
+        {trustPolicy && (
+          <div className="rule-hint">
+            <strong>当前算法</strong>
+            <span>{trustPolicy.dimensions.map((item) => `${item.label} ${formatPercent(item.weight)}`).join(" / ")}</span>
+          </div>
+        )}
+      </section>
+
+      <section className="release-panel rule-section">
+        <SectionHead title="Knowledge Lint 与 Agent 反馈" caption="定义健康检查覆盖哪些域，以及 Agent 消费知识时必须带回哪些质量信息。" />
+        <div className="rule-grid two">
+          <TagField label="启用的 Lint 域" value={rules.lint.enabledDomains} onChange={(value) => onChange(updateGovernanceTags(config, "lint", "enabledDomains", value))} />
+          <TagField label="可升级阻断的 Lint 域" value={rules.lint.blockingDomains} onChange={(value) => onChange(updateGovernanceTags(config, "lint", "blockingDomains", value))} />
+          <SwitchField label="Lint blocking 阻断发布" checked={rules.lint.failPublishOnBlocking} onChange={(checked) => onChange(updateGovernanceRule(config, "lint", { failPublishOnBlocking: checked }))} />
+          <SwitchField label="MCP 返回可信度" checked={rules.agent.includeTrustInMcp} onChange={(checked) => onChange(updateGovernanceRule(config, "agent", { includeTrustInMcp: checked }))} />
+          <SwitchField label="MCP 返回证据链" checked={rules.agent.includeEvidenceInMcp} onChange={(checked) => onChange(updateGovernanceRule(config, "agent", { includeEvidenceInMcp: checked }))} />
+          <SwitchField label="记录未解析查询" checked={rules.agent.recordUnresolvedQueries} onChange={(checked) => onChange(updateGovernanceRule(config, "agent", { recordUnresolvedQueries: checked }))} />
+          <NumberField label="重复 miss 阻断阈值" value={rules.agent.repeatedMissBlockingThreshold} min={1} max={20} step={1} onChange={(value) => onChange(updateGovernanceRule(config, "agent", { repeatedMissBlockingThreshold: value }))} />
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -611,6 +706,39 @@ function TextAreaField({ label, value, onChange }: { label: string; value: strin
     <label className="field-label">
       {label}
       <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} />
+    </label>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+  min = 0,
+  max = 1,
+  step = 0.01,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  return (
+    <label className="field-label">
+      {label}
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}
+      />
     </label>
   );
 }

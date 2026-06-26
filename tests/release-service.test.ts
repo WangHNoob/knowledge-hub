@@ -55,6 +55,12 @@ describe("ReleaseService", () => {
         evidence: { requiredComponents: 1, coveredComponents: 1 },
         review: { open: 0 }
       });
+      expect(pub1.manifest.legislationProfile).toMatchObject({
+        governanceRules: {
+          agent: { includeTrustInMcp: true },
+          lint: { enabledDomains: expect.arrayContaining(["mcp_feedback"]) }
+        }
+      });
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"))).toBe(true);
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"), "utf8")).toContain('type: "system_rule"');
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "log.md"), "utf8")).toContain("# Release Audit Log");

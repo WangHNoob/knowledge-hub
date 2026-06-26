@@ -2069,6 +2069,23 @@ code {
   min-width: 820px;
 }
 
+.governance-metrics {
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+.governance-grid,
+.governance-score-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.governance-grid .switch-field,
+.governance-score-grid .switch-field {
+  height: 100%;
+}
+
 .trust-policy-badges {
   display: flex;
   flex-wrap: wrap;
@@ -2835,6 +2852,9 @@ form button:active:not(:disabled) {
   .diagnostics-workbench,
   .diagnostics-metrics,
   .trust-breakdown,
+  .governance-metrics,
+  .governance-grid,
+  .governance-score-grid,
   .audit-metrics,
   .audit-grid {
     grid-template-columns: 1fr;

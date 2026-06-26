@@ -305,6 +305,46 @@ export interface KnowledgeRuleConfig {
     candidateFieldIdSuffixes: string[];
   };
   qualityRules: Record<string, Record<string, unknown>>;
+  governanceRules: KnowledgeGovernanceRules;
+}
+
+export type RuleSeverity = "blocking" | "warning" | "info";
+
+export interface KnowledgeGovernanceRules {
+  schema: {
+    requireFrontmatter: boolean;
+    requireOkfType: boolean;
+    requireDescription: boolean;
+    requireTags: boolean;
+    allowObsidianLinks: boolean;
+    linkMode: "okf_absolute";
+  };
+  evidence: {
+    requiredComponentKinds: string[];
+    citationRequiredOkfTypes: string[];
+    autoBackfillOnPublish: boolean;
+    missingEvidenceSeverity: RuleSeverity;
+  };
+  trust: {
+    policyVersion: TrustScore["version"];
+    trustedMinScore: number;
+    usableMinScore: number;
+    reviewMinScore: number;
+    blockBelowScore: number;
+    warnBelowScore: number;
+    blockOnLowTrust: boolean;
+  };
+  lint: {
+    enabledDomains: string[];
+    blockingDomains: string[];
+    failPublishOnBlocking: boolean;
+  };
+  agent: {
+    includeTrustInMcp: boolean;
+    includeEvidenceInMcp: boolean;
+    recordUnresolvedQueries: boolean;
+    repeatedMissBlockingThreshold: number;
+  };
 }
 
 export interface KnowledgeRuleProfile {

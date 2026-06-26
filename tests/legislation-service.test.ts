@@ -20,6 +20,8 @@ describe("LegislationService", () => {
       expect(first.config.pageTypes.system.requiredSections).toContain("核心规则");
       expect(first.config.entityTypes.some((item) => item.id === "system")).toBe(true);
       expect(first.config.relationTypes.some((item) => item.id === "configured_in")).toBe(true);
+      expect(first.config.governanceRules.evidence.requiredComponentKinds).toContain("wiki_page");
+      expect(first.config.governanceRules.agent.includeTrustInMcp).toBe(true);
 
       const created = await service.createProfile({
         name: "Combat rules",
@@ -71,6 +73,7 @@ describe("LegislationService", () => {
         const profile = await createLegislationService(migrated).getActiveProfile();
         expect(profile.config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("核心规则");
         expect(profile.config.pageTypes.activity.requiredFacts).toContain("reward");
+        expect(profile.config.governanceRules.lint.enabledDomains).toContain("mcp_feedback");
       } finally {
         await migrated.close();
       }

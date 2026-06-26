@@ -7,6 +7,7 @@ import xlsx from "xlsx";
 import { runTableStage } from "../src/server/services/kbBuilder/tableStage";
 import { runGraphStage } from "../src/server/services/kbBuilder/graphStage";
 import { runVizStage } from "../src/server/services/kbBuilder/vizStage";
+import { defaultGovernanceRules } from "../src/server/services/legislationService";
 import type { KnowledgeRuleConfig } from "../src/server/types";
 
 describe("native table and graph stages", () => {
@@ -76,7 +77,8 @@ describe("native table and graph stages", () => {
           autoConfirmFieldIdSuffixes: [],
           candidateFieldIdSuffixes: ["Id"]
         },
-        qualityRules: {}
+        qualityRules: {},
+        governanceRules: defaultGovernanceRules()
       };
       mkdirSync(join(dataDir, "gamedata", "Combat"), { recursive: true });
       mkdirSync(join(dataDir, "wiki", "_meta"), { recursive: true });

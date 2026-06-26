@@ -6,6 +6,7 @@ import {
   addPageType,
   addRelationType,
   createRuleDraft,
+  defaultGovernanceRules,
   parseTagText,
   renamePageType,
   setDocumentTypeTags,
@@ -49,7 +50,8 @@ const baseConfig: KnowledgeRuleConfig = {
     autoConfirmFieldIdSuffixes: ["Id"],
     candidateFieldIdSuffixes: []
   },
-  qualityRules: {}
+  qualityRules: {},
+  governanceRules: defaultGovernanceRules()
 };
 
 describe("legislation editor model", () => {
@@ -118,5 +120,12 @@ describe("legislation editor model", () => {
     const next = updateTableRuleTags(baseConfig, "candidateFieldIdSuffixes", "Ref、Link, Related");
 
     expect(next.tableRules.candidateFieldIdSuffixes).toEqual(["Ref", "Link", "Related"]);
+  });
+
+  it("keeps governance rules in editable drafts", () => {
+    const next = createRuleDraft(baseConfig);
+
+    expect(next.governanceRules.evidence.requiredComponentKinds).toContain("wiki_page");
+    expect(next.governanceRules.agent.includeTrustInMcp).toBe(true);
   });
 });

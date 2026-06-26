@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 
-import type { DatabaseHandle, KnowledgeRuleConfig, KnowledgeRuleProfile } from "../types";
+import type { DatabaseHandle, KnowledgeGovernanceRules, KnowledgeRuleConfig, KnowledgeRuleProfile } from "../types";
 
-type KnowledgeRuleConfigInput = Omit<KnowledgeRuleConfig, "documentTypes"> & Partial<Pick<KnowledgeRuleConfig, "documentTypes">>;
+type KnowledgeRuleConfigInput = Partial<KnowledgeRuleConfig>;
 
 export function createLegislationService(db: DatabaseHandle): LegislationService {
   return new LegislationService(db);
@@ -113,6 +113,92 @@ export function normalizeRuleConfig(input: KnowledgeRuleConfigInput): KnowledgeR
       candidateFieldIdSuffixes: [...(input.tableRules?.candidateFieldIdSuffixes ?? [])].map(String),
     },
     qualityRules: Object.fromEntries(Object.entries(input.qualityRules ?? {}).sort(([a], [b]) => a.localeCompare(b))),
+    governanceRules: normalizeGovernanceRules(input.governanceRules),
+  };
+}
+
+export function defaultGovernanceRules(): KnowledgeGovernanceRules {
+  return {
+    schema: {
+      requireFrontmatter: true,
+      requireOkfType: true,
+      requireDescription: true,
+      requireTags: true,
+      allowObsidianLinks: false,
+      linkMode: "okf_absolute",
+    },
+    evidence: {
+      requiredComponentKinds: ["wiki_page", "table_wiki_page"],
+      citationRequiredOkfTypes: ["system_rule", "activity_template", "table_schema", "ui_flow", "numerical_convention"],
+      autoBackfillOnPublish: true,
+      missingEvidenceSeverity: "blocking",
+    },
+    trust: {
+      policyVersion: "v2-lite",
+      trustedMinScore: 0.85,
+      usableMinScore: 0.7,
+      reviewMinScore: 0.55,
+      blockBelowScore: 0.55,
+      warnBelowScore: 0.75,
+      blockOnLowTrust: false,
+    },
+    lint: {
+      enabledDomains: ["links", "evidence", "graph", "trust", "table_dependencies", "mcp_feedback"],
+      blockingDomains: ["evidence", "trust", "table_dependencies", "mcp_feedback"],
+      failPublishOnBlocking: false,
+    },
+    agent: {
+      includeTrustInMcp: true,
+      includeEvidenceInMcp: true,
+      recordUnresolvedQueries: true,
+      repeatedMissBlockingThreshold: 3,
+    },
+  };
+}
+
+function normalizeGovernanceRules(input: unknown): KnowledgeGovernanceRules {
+  const base = defaultGovernanceRules();
+  const value = objectValue(input);
+  const schema = objectValue(value.schema);
+  const evidence = objectValue(value.evidence);
+  const trust = objectValue(value.trust);
+  const lint = objectValue(value.lint);
+  const agent = objectValue(value.agent);
+  return {
+    schema: {
+      requireFrontmatter: boolValue(schema.requireFrontmatter, base.schema.requireFrontmatter),
+      requireOkfType: boolValue(schema.requireOkfType, base.schema.requireOkfType),
+      requireDescription: boolValue(schema.requireDescription, base.schema.requireDescription),
+      requireTags: boolValue(schema.requireTags, base.schema.requireTags),
+      allowObsidianLinks: boolValue(schema.allowObsidianLinks, base.schema.allowObsidianLinks),
+      linkMode: "okf_absolute",
+    },
+    evidence: {
+      requiredComponentKinds: stringArray(evidence.requiredComponentKinds, base.evidence.requiredComponentKinds),
+      citationRequiredOkfTypes: stringArray(evidence.citationRequiredOkfTypes, base.evidence.citationRequiredOkfTypes),
+      autoBackfillOnPublish: boolValue(evidence.autoBackfillOnPublish, base.evidence.autoBackfillOnPublish),
+      missingEvidenceSeverity: severityValue(evidence.missingEvidenceSeverity, base.evidence.missingEvidenceSeverity),
+    },
+    trust: {
+      policyVersion: "v2-lite",
+      trustedMinScore: numberValue(trust.trustedMinScore, base.trust.trustedMinScore),
+      usableMinScore: numberValue(trust.usableMinScore, base.trust.usableMinScore),
+      reviewMinScore: numberValue(trust.reviewMinScore, base.trust.reviewMinScore),
+      blockBelowScore: numberValue(trust.blockBelowScore, base.trust.blockBelowScore),
+      warnBelowScore: numberValue(trust.warnBelowScore, base.trust.warnBelowScore),
+      blockOnLowTrust: boolValue(trust.blockOnLowTrust, base.trust.blockOnLowTrust),
+    },
+    lint: {
+      enabledDomains: stringArray(lint.enabledDomains, base.lint.enabledDomains),
+      blockingDomains: stringArray(lint.blockingDomains, base.lint.blockingDomains),
+      failPublishOnBlocking: boolValue(lint.failPublishOnBlocking, base.lint.failPublishOnBlocking),
+    },
+    agent: {
+      includeTrustInMcp: boolValue(agent.includeTrustInMcp, base.agent.includeTrustInMcp),
+      includeEvidenceInMcp: boolValue(agent.includeEvidenceInMcp, base.agent.includeEvidenceInMcp),
+      recordUnresolvedQueries: boolValue(agent.recordUnresolvedQueries, base.agent.recordUnresolvedQueries),
+      repeatedMissBlockingThreshold: Math.max(1, Math.floor(numberValue(agent.repeatedMissBlockingThreshold, base.agent.repeatedMissBlockingThreshold))),
+    },
   };
 }
 
@@ -196,6 +282,27 @@ function jsonObject(value: unknown): Record<string, unknown> {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
   }
   return {};
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function boolValue(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function numberValue(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function stringArray(value: unknown, fallback: string[]): string[] {
+  return Array.isArray(value) ? value.map(String).filter(Boolean) : [...fallback];
+}
+
+function severityValue(value: unknown, fallback: KnowledgeGovernanceRules["evidence"]["missingEvidenceSeverity"]) {
+  return value === "blocking" || value === "warning" || value === "info" ? value : fallback;
 }
 
 function stableStringify(value: unknown): string {
