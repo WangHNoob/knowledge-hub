@@ -13,6 +13,15 @@ function optional(name: string, fallback: string): string {
   return value && value.trim() !== "" ? value : fallback;
 }
 
+function positiveInt(name: string, fallback: number): number {
+  const raw = optional(name, String(fallback));
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`环境变量 ${name} 必须是正整数（当前值：${raw}）。`);
+  }
+  return Math.floor(value);
+}
+
 export const config = {
   port: Number(optional("PORT", "4174")),
   host: optional("HOST", "0.0.0.0"),
@@ -23,7 +32,11 @@ export const config = {
   logRetentionDays: Number(optional("KH_LOG_RETENTION_DAYS", "14")),
   webImportRetentionHours: Number(optional("KH_WEBIMPORT_RETENTION_HOURS", "24")),
   logToFile: optional("KH_LOG_TO_FILE", "true") !== "false",
-  logToDb: optional("KH_LOG_TO_DB", "true") !== "false"
+  logToDb: optional("KH_LOG_TO_DB", "true") !== "false",
+  uploadMaxFileBytes: positiveInt("KH_UPLOAD_MAX_FILE_BYTES", 2 * 1024 * 1024 * 1024),
+  uploadMaxFiles: positiveInt("KH_UPLOAD_MAX_FILES", 20000),
+  uploadMaxFields: positiveInt("KH_UPLOAD_MAX_FIELDS", 200),
+  uploadMaxParts: positiveInt("KH_UPLOAD_MAX_PARTS", 20200)
 };
 
 export const testConfig = {

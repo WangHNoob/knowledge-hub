@@ -46,8 +46,16 @@ describe("ReleaseService", () => {
         summary: { blocking: 0 },
         citationSummary: { required: 1, present: 1 }
       });
+      expect(pub1.manifest.auditSummary).toMatchObject({
+        version: 1,
+        sources: { packageCount: 1, componentCount: 3 },
+        evidence: { requiredComponents: 1, coveredComponents: 1 },
+        review: { open: 0 }
+      });
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"))).toBe(true);
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"), "utf8")).toContain('type: "system_rule"');
+      expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "log.md"), "utf8")).toContain("# Release Audit Log");
+      expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "log.md"), "utf8")).toContain("## Trust Score");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "graph", "graph.json"), "utf8")).nodes[0].label).toBe("Demo Page");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "tables", "schemas.json"), "utf8")).tables[0].schema.table_name).toBe("Demo/Table");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "search", "index.json"), "utf8")).pages[0].title).toBe("Demo Page");

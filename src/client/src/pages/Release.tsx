@@ -1,4 +1,4 @@
-import { CheckCircle2, GitBranch, RotateCcw, Trash2 } from "lucide-react";
+import { CheckCircle2, FileText, GitBranch, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
@@ -12,6 +12,7 @@ import {
   publishRelease,
   rollbackRelease,
   updateRelease,
+  type ReleaseAuditSummary,
   type ReleaseRecord
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
@@ -227,7 +228,7 @@ export function Release() {
                 <span>{current.data.publishedAt ? formatTime(current.data.publishedAt) : "未发布"}</span>
                 <span>{current.data.packageIds.length} 个资产包</span>
               </div>
-              <OkfSummary release={current.data} />
+              <ReleaseAuditSummaryView release={current.data} />
             </>
           )}
           <h3>发布历史</h3>
@@ -291,6 +292,112 @@ export function Release() {
   );
 }
 
+function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
+  const audit = auditSummary(release);
+  const okf = okfManifest(release);
+  if (!audit) return <OkfSummary release={release} />;
+  const okfStats = audit.okf ?? okf;
+  const missingCitations = okfStats ? Math.max(okfStats.citationSummary.required - okfStats.citationSummary.present, 0) : 0;
+  const evidencePercent = Math.round(audit.evidence.coverageRate * 100);
+  const averageTrust = audit.trust.averageScore === null ? "-" : `${Math.round(audit.trust.averageScore * 100)}%`;
+  const minTrust = audit.trust.minScore === null ? "-" : `${Math.round(audit.trust.minScore * 100)}%`;
+  return (
+    <div className="release-audit">
+      <div className="audit-head">
+        <div>
+          <h3><ShieldCheck size={17} /> 发布审计摘要</h3>
+          <p>这份摘要同时写入 OKF bundle 的 log.md，Agent 和人工审核看到的是同一份发布事实。</p>
+        </div>
+        <Badge label={`v${audit.version}`} tone="ok" />
+      </div>
+
+      <div className="metrics compact audit-metrics">
+        <Metric label="资产组件" value={audit.sources.componentCount} hint={`${audit.sources.packageCount} 个资产包`} />
+        <Metric label="构建 Run" value={`${audit.build.completed}/${audit.build.runCount}`} hint={audit.build.failed ? `${audit.build.failed} failed` : "完成 / 总数"} tone={audit.build.failed ? "hot" : "ok"} />
+        <Metric label="证据覆盖" value={`${evidencePercent}%`} hint={`${audit.evidence.coveredComponents}/${audit.evidence.requiredComponents} 组件`} tone={audit.evidence.missingComponents ? "warn" : "ok"} />
+        <Metric label="可信均分" value={averageTrust} hint={`最低 ${minTrust}`} tone={trustTone(audit.trust.minScore)} />
+        <Metric label="审核未关" value={audit.review.open} hint={`${audit.review.blocking} blocking`} tone={audit.review.blocking ? "hot" : audit.review.open ? "warn" : "ok"} />
+        <Metric label="反馈回流" value={audit.agentFeedback.feedbackEvents} hint={`${audit.agentFeedback.mcpCalls} MCP calls`} tone={audit.agentFeedback.mcpMisses || audit.agentFeedback.mcpErrors ? "warn" : "ok"} />
+      </div>
+
+      <div className="audit-grid">
+        <section className="audit-card">
+          <h4>来源与构建</h4>
+          <div className="audit-kv">
+            <span>资料版本</span>
+            <strong>{audit.sources.sourceVersionIds.length}</strong>
+            <span>缓存阶段</span>
+            <strong>{audit.build.cachedStages}</strong>
+          </div>
+          <div className="audit-list">
+            {audit.sources.packages.slice(0, 5).map((pkg) => (
+              <p key={pkg.packageId}><strong>{pkg.name}</strong><span>{pkg.status} · {pkg.sourceVersionIds.join(", ") || "无来源版本"}</span></p>
+            ))}
+          </div>
+        </section>
+
+        <section className="audit-card">
+          <h4>可信度与证据</h4>
+          <div className="trust-bars">
+            {Object.entries(audit.trust.statusCounts).map(([status, count]) => (
+              <span key={status}><b>{status}</b><i>{count}</i></span>
+            ))}
+          </div>
+          <div className="audit-list">
+            {audit.trust.lowTrustComponents.slice(0, 4).map((component) => (
+              <p key={component.componentId}>
+                <strong>{component.title}</strong>
+                <span>{component.score === null ? "无分数" : `${Math.round(component.score * 100)}%`} · {component.status} · {component.reasons[0] ?? component.kind}</span>
+              </p>
+            ))}
+          </div>
+        </section>
+
+        <section className="audit-card">
+          <h4>审核与反馈</h4>
+          <div className="audit-kv">
+            <span>已解决</span>
+            <strong>{audit.review.resolvedSincePreviousRelease}</strong>
+            <span>MCP Miss</span>
+            <strong>{audit.agentFeedback.mcpMisses}</strong>
+          </div>
+          <div className="audit-list">
+            {audit.review.topOpenTasks.slice(0, 3).map((task) => (
+              <p key={task.taskId}><strong>{task.title}</strong><span>{task.severity} · {task.suggestedAction || "需要人工判断"}</span></p>
+            ))}
+            {audit.agentFeedback.topQueries.slice(0, 3).map((query) => (
+              <p key={query.query}><strong>{query.query}</strong><span>Agent 查询 {query.count} 次</span></p>
+            ))}
+          </div>
+        </section>
+
+        <section className="audit-card">
+          <h4>OKF 与文件</h4>
+          {okfStats ? (
+            <div className="audit-kv">
+              <span>Warning</span>
+              <strong>{okfStats.summary.warning}</strong>
+              <span>引用</span>
+              <strong>{okfStats.citationSummary.present}/{okfStats.citationSummary.required}</strong>
+              <span>链接</span>
+              <strong>{okfStats.linkSummary.resolved}</strong>
+              <span>断链</span>
+              <strong>{okfStats.linkSummary.unresolved}</strong>
+            </div>
+          ) : (
+            <p className="subtle">暂无 OKF 扫描结果。</p>
+          )}
+          <div className="okf-paths">
+            {okf?.logUri && <code><FileText size={14} /> {okf.logUri}</code>}
+            {okf?.reportUri && <code>{okf.reportUri}</code>}
+          </div>
+          {missingCitations > 0 && <p className="audit-warning">还有 {missingCitations} 个需要引用的页面没有 Citations。</p>}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function OkfSummary({ release }: { release: ReleaseRecord }) {
   const okf = okfManifest(release);
   if (!okf) return <p className="subtle">当前发布尚未记录 OKF 导出信息。</p>;
@@ -337,6 +444,7 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
   return {
     bundleUri: String(okf.bundleUri ?? ""),
     reportUri: String(okf.reportUri ?? ""),
+    logUri: String(okf.logUri ?? ""),
     summary: {
       blocking: Number(summary.blocking ?? 0),
       warning: Number(summary.warning ?? 0),
@@ -353,6 +461,21 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
   };
 }
 
+function auditSummary(release: ReleaseRecord): ReleaseAuditSummary | null {
+  const value = release.manifest.auditSummary;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const audit = value as ReleaseAuditSummary;
+  if (!audit.sources || !audit.build || !audit.evidence || !audit.trust) return null;
+  return audit;
+}
+
+function trustTone(score: number | null): "hot" | "warn" | "ok" | undefined {
+  if (score === null) return undefined;
+  if (score < 0.55) return "hot";
+  if (score < 0.75) return "warn";
+  return "ok";
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -360,6 +483,7 @@ function objectValue(value: unknown): Record<string, unknown> {
 interface OkfManifest {
   bundleUri: string;
   reportUri: string;
+  logUri: string;
   summary: { blocking: number; warning: number; info: number };
   linkSummary: { resolved: number; unresolved: number };
   citationSummary: { required: number; present: number };

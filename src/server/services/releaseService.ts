@@ -9,6 +9,7 @@ import { mapComponent, mapPackage, mapRelease } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
+import { buildReleaseAuditSummary, type ReleaseAuditSummary } from "./releaseAudit";
 import { computeTrustScore, scoreFromQuality } from "./trustScore";
 
 const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
@@ -111,12 +112,23 @@ export class ReleaseService {
       await this.ensurePublishEvidence(packages, components, publishedAt);
       const trustedComponents = await this.componentsWithTrustScores(components, publishedAt);
       const qualityGate = summarizePackages(packages, trustedComponents, activeRuleProfile.hash);
+      const auditSummary = await buildReleaseAuditSummary({
+        adapter: this.adapter,
+        release,
+        packages,
+        components: trustedComponents,
+        publishedAt,
+        publishedBy,
+        qualityGate,
+        legislationProfileHash: activeRuleProfile.hash,
+      });
       const okfExport = await createOkfExportService(this.db, this.dataDir).exportRelease({
         release,
         packages,
         components: trustedComponents,
         publishedAt,
         activeRuleProfileHash: activeRuleProfile.hash,
+        auditSummary,
       });
       const manifest = buildManifest({
         release,
@@ -127,6 +139,7 @@ export class ReleaseService {
         publishedBy,
         activeRuleProfileHash: activeRuleProfile.hash,
         okf: okfExport.manifest,
+        auditSummary: okfExport.manifest.auditSummary,
       });
       const manifestHash = hashManifest(manifest);
 
@@ -443,6 +456,7 @@ function buildManifest(input: {
   publishedBy: string;
   activeRuleProfileHash: string;
   okf: OkfExportManifest;
+  auditSummary: ReleaseAuditSummary;
 }) {
   const componentIds = input.components.map((component) => component.componentId).sort();
   const sourceVersionIds = uniqueSorted(input.packages.flatMap((pkg) => pkg.sourceVersionIds));
@@ -476,6 +490,7 @@ function buildManifest(input: {
       quality: component.quality,
     })),
     okf: input.okf,
+    auditSummary: input.auditSummary,
     qualityGate: input.qualityGate,
     publishedAt: input.publishedAt,
     publishedBy: input.publishedBy,

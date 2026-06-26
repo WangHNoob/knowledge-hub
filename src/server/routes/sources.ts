@@ -154,7 +154,7 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
         return result;
       } catch (error) {
         await span.fail(error, { fileCount });
-        return reply.code(400).send({ error: error instanceof Error ? error.message : "上传导入失败。" });
+        return reply.code(400).send({ error: describeUploadError(error) });
       }
     }
   );
@@ -187,4 +187,20 @@ function browseLocalPath(inputPath: string) {
 function safeUploadPath(filename: string): string {
   const normalized = filename.replace(/\\/g, "/").split("/").filter((part) => part && part !== "." && part !== "..");
   return normalized.join("/") || "upload.bin";
+}
+
+function describeUploadError(error: unknown): string {
+  const record = typeof error === "object" && error !== null ? error as Record<string, unknown> : {};
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = error instanceof Error ? error.message : String(error);
+  if (code === "FST_REQ_FILE_TOO_LARGE" || message.toLowerCase().includes("file too large")) {
+    return "上传文件过大。请调大 KH_UPLOAD_MAX_FILE_BYTES；如果前面有 Nginx/网关，还需要同步调大 client_max_body_size。";
+  }
+  if (message.toLowerCase().includes("request file too large")) {
+    return "上传请求过大。请调大 KH_UPLOAD_MAX_FILE_BYTES；如果前面有 Nginx/网关，还需要同步调大 client_max_body_size。";
+  }
+  if (code === "FST_PARTS_LIMIT" || message.toLowerCase().includes("parts limit")) {
+    return "上传文件数量过多。请调大 KH_UPLOAD_MAX_PARTS 和 KH_UPLOAD_MAX_FILES；如果一次上传目录特别大，建议分批上传。";
+  }
+  return error instanceof Error ? error.message : "上传导入失败。";
 }

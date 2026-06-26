@@ -358,6 +358,99 @@ export interface ReleaseRecord {
   qualityGate: Record<string, unknown>;
 }
 
+export interface ReleaseAuditSummary {
+  version: 1;
+  generatedAt: string;
+  release: {
+    releaseId: string;
+    version: string;
+    publishedAt: string;
+    publishedBy: string;
+  };
+  sources: {
+    sourceVersionIds: string[];
+    packageCount: number;
+    componentCount: number;
+    packages: Array<{ packageId: string; name: string; status: string; sourceVersionIds: string[] }>;
+  };
+  build: {
+    runCount: number;
+    completed: number;
+    failed: number;
+    running: number;
+    cachedStages: number;
+    runs: Array<{
+      runId: string;
+      sourceVersionId: string;
+      status: string;
+      stages: string[];
+      completedStages: string[];
+      startedAt: string;
+      finishedAt: string | null;
+      durationMs: number | null;
+    }>;
+  };
+  assets: {
+    byGroup: Record<string, number>;
+    byKind: Record<string, number>;
+  };
+  evidence: {
+    requiredComponents: number;
+    coveredComponents: number;
+    missingComponents: number;
+    evidenceRecords: number;
+    coverageRate: number;
+  };
+  trust: {
+    averageScore: number | null;
+    minScore: number | null;
+    statusCounts: Record<string, number>;
+    lowTrustComponents: Array<{
+      componentId: string;
+      title: string;
+      artifactId: string;
+      kind: string;
+      score: number | null;
+      status: string;
+      reasons: string[];
+    }>;
+  };
+  review: {
+    open: number;
+    blocking: number;
+    warning: number;
+    info: number;
+    resolvedSincePreviousRelease: number;
+    topOpenTasks: Array<{
+      taskId: string;
+      componentId: string;
+      severity: string;
+      title: string;
+      suggestedAction: string;
+    }>;
+  };
+  agentFeedback: {
+    windowStart: string | null;
+    windowEnd: string;
+    mcpCalls: number;
+    mcpMisses: number;
+    mcpErrors: number;
+    feedbackEvents: number;
+    feedbackByType: Record<string, number>;
+    topQueries: Array<{ query: string; count: number }>;
+  };
+  qualityGate: Record<string, unknown>;
+  legislationProfileHash: string;
+  okf?: {
+    summary: { blocking: number; warning: number; info: number };
+    linkSummary: { resolved: number; ambiguous: number; unresolved: number };
+    citationSummary: { required: number; present: number };
+    conceptCount: number;
+    reportUri: string;
+    reportMarkdownUri: string;
+  };
+}
+
 export interface AgentEvent {
   eventId: string;
   releaseId: string;

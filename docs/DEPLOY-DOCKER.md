@@ -26,6 +26,9 @@
 | `POSTGRES_PASSWORD` | 自带 PG 的密码（仅 compose 内部用，可任意设，**必填**） | 无 |
 | `KH_JWT_SECRET` | 应用鉴权密钥（**必填**，已为你生成强随机串） | 无 |
 | `APP_HOST_PORT` | 应用对外端口 | `4174` |
+| `KH_UPLOAD_MAX_FILE_BYTES` | Web 上传资料的单文件上限，单位 bytes | `2147483648` |
+| `KH_UPLOAD_MAX_FILES` | 一次上传最多文件数 | `20000` |
+| `KH_UPLOAD_MAX_PARTS` | 一次上传最多 multipart part 数，通常要大于文件数+字段数 | `20200` |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | LLM（仅“知识构建”需要） | 空 |
 
 > 应用连库的 `DATABASE_URL` **不需要你配**——`docker-compose.prod.yml` 内部按
@@ -74,6 +77,27 @@ docker compose -f docker-compose.prod.yml up -d --build
 # 改对外端口
 echo "APP_HOST_PORT=8080" >> .env && docker compose -f docker-compose.prod.yml up -d
 ```
+
+### 上传大文件 / 大目录报错
+
+如果上传原始资料时报 `request file too large`，先在服务器 `.env` 里调大应用限制，然后重建/重启：
+
+```bash
+echo "KH_UPLOAD_MAX_FILE_BYTES=4294967296" >> .env   # 4GB 单文件
+echo "KH_UPLOAD_MAX_FILES=50000" >> .env
+echo "KH_UPLOAD_MAX_PARTS=50200" >> .env
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+如果前面有 Nginx 或云厂商网关，还必须同步调大代理层限制。例如 Nginx：
+
+```nginx
+server {
+  client_max_body_size 4g;
+}
+```
+
+改完执行 `nginx -t && systemctl reload nginx`。如果代理层没放开，请求会在到达应用前就失败。
 
 ### 重置数据库（重新从种子恢复）
 

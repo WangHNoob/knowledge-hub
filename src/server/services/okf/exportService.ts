@@ -8,6 +8,11 @@ import { renderReportMarkdown } from "./reportRender";
 import { scanWorkspace } from "./conformanceService";
 import { buildOkfSearchIndex } from "./searchIndex";
 import { OKF_EXPORTER_VERSION, type ConformanceReport } from "./types";
+import {
+  renderReleaseAuditLog,
+  withOkfAuditSummary,
+  type ReleaseAuditSummary
+} from "../releaseAudit";
 
 const EXPORTABLE_MARKDOWN_KINDS = new Set(["wiki_page", "table_wiki_page"]);
 
@@ -19,12 +24,14 @@ export interface OkfExportManifest {
   tableSchemasUri?: string;
   tableAliasesUri?: string;
   searchIndexUri?: string;
+  logUri: string;
   exporterVersion: number;
   okfVersion: "0.1";
   bundleHash: string;
   summary: ConformanceReport["summary"];
   linkSummary: ConformanceReport["linkSummary"];
   citationSummary: ConformanceReport["citationSummary"];
+  auditSummary: ReleaseAuditSummary;
 }
 
 export interface OkfExportResult {
@@ -38,6 +45,7 @@ export interface ExportReleaseOkfInput {
   components: AssetComponent[];
   publishedAt: string;
   activeRuleProfileHash: string;
+  auditSummary: ReleaseAuditSummary;
 }
 
 export function createOkfExportService(db: DatabaseHandle, dataDir: string) {
@@ -92,13 +100,15 @@ export class OkfExportService {
     if (searchIndexUri) exportedPaths.push(searchIndexUri);
 
     writeFileSync(join(bundleDir, "index.md"), renderIndex(input.release, exportedPaths), "utf8");
-    writeFileSync(join(bundleDir, "log.md"), renderLog(input.release, input.publishedAt, input.packages), "utf8");
+    writeFileSync(join(bundleDir, "log.md"), renderReleaseAuditLog(input.auditSummary), "utf8");
 
     const report = await scanWorkspace(bundleDir, { now: input.publishedAt });
     const reportUri = posix.join("releases", input.release.releaseId, "okf_report.json");
     const reportMarkdownUri = posix.join("releases", input.release.releaseId, "okf_report.md");
     writeFileSync(join(this.dataDir, ...reportUri.split(posix.sep)), `${JSON.stringify(report, null, 2)}\n`, "utf8");
     writeFileSync(join(this.dataDir, ...reportMarkdownUri.split(posix.sep)), renderReportMarkdown(report), "utf8");
+    const auditSummary = withOkfAuditSummary(input.auditSummary, report, { reportUri, reportMarkdownUri });
+    writeFileSync(join(bundleDir, "log.md"), renderReleaseAuditLog(auditSummary), "utf8");
 
     if (report.summary.blocking > 0) {
       throw new Error(`OKF conformance failed with ${report.summary.blocking} blocking issue(s).`);
@@ -114,12 +124,14 @@ export class OkfExportService {
         tableSchemasUri,
         tableAliasesUri,
         searchIndexUri,
+        logUri: posix.join("releases", input.release.releaseId, "okf_bundle", "log.md"),
         exporterVersion: OKF_EXPORTER_VERSION,
         okfVersion: report.okfVersion,
         bundleHash: hashExportedBundle(bundleDir, exportedPaths),
         summary: report.summary,
         linkSummary: report.linkSummary,
         citationSummary: report.citationSummary,
+        auditSummary,
       },
     };
   }
@@ -427,18 +439,6 @@ function renderIndex(release: ReleaseRecord, paths: string[]): string {
     `Release: ${release.version}`,
     "",
     ...paths.sort().map((okfPath) => `- [${okfPath}](/${okfPath})`),
-    "",
-  ].join("\n");
-}
-
-function renderLog(release: ReleaseRecord, publishedAt: string, packages: AssetPackage[]): string {
-  return [
-    "# OKF Bundle Log",
-    "",
-    `- releaseId: ${release.releaseId}`,
-    `- version: ${release.version}`,
-    `- publishedAt: ${publishedAt}`,
-    `- packageIds: ${packages.map((pkg) => pkg.packageId).sort().join(", ")}`,
     "",
   ].join("\n");
 }

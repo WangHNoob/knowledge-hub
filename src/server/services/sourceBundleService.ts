@@ -93,7 +93,8 @@ export class SourceBundleService {
       throw new Error(`资料目录不存在或不是目录：${options.rootPath}`);
     }
 
-    const entries = collectSourceFiles(root);
+    const sourceRoot = resolveSourceRoot(root);
+    const entries = collectSourceFiles(sourceRoot);
     if (entries.length === 0) {
       throw new Error("目录下未发现 gamedata/ 或 gamedocs/ 内容。");
     }
@@ -223,6 +224,22 @@ function collectSourceFiles(root: string): ScannedFile[] {
   }
   out.sort((a, b) => a.logicalPath.localeCompare(b.logicalPath));
   return out;
+}
+
+function resolveSourceRoot(root: string): string {
+  if (hasSourceCategoryDir(root)) return root;
+  const directories = readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => join(root, entry.name));
+  const matching = directories.filter(hasSourceCategoryDir);
+  return matching.length === 1 ? matching[0] : root;
+}
+
+function hasSourceCategoryDir(root: string): boolean {
+  return CATEGORIES.some((category) => {
+    const dir = join(root, category);
+    return existsSync(dir) && statSync(dir).isDirectory();
+  });
 }
 
 function walk(dir: string, onFile: (absolutePath: string) => void): void {

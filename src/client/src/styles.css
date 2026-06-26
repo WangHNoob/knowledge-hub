@@ -1695,6 +1695,152 @@ code {
   overflow-wrap: anywhere;
 }
 
+.release-audit {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.audit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.audit-head h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+}
+
+.audit-head p {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+}
+
+.audit-metrics {
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+}
+
+.audit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.audit-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.audit-card h4 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.audit-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.audit-kv span,
+.audit-kv strong {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.audit-kv span {
+  color: var(--ink-muted);
+}
+
+.audit-kv strong {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.audit-list {
+  display: grid;
+  gap: 8px;
+}
+
+.audit-list p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+
+.audit-list strong,
+.audit-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.audit-list span {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.trust-bars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trust-bars span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  font-size: 12px;
+}
+
+.trust-bars b {
+  font-weight: 600;
+}
+
+.trust-bars i {
+  font-style: normal;
+  color: var(--ink-muted);
+}
+
+.audit-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--gold-dim);
+  border: 1px solid rgba(201, 162, 39, 0.18);
+  background: rgba(201, 162, 39, 0.08);
+}
+
+.okf-paths code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .okf-guidance,
 .agent-diagnosis {
   display: grid;
@@ -2688,7 +2834,9 @@ form button:active:not(:disabled) {
   .mcp-console,
   .diagnostics-workbench,
   .diagnostics-metrics,
-  .trust-breakdown {
+  .trust-breakdown,
+  .audit-metrics,
+  .audit-grid {
     grid-template-columns: 1fr;
   }
 

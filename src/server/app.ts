@@ -74,7 +74,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
-  await app.register(multipart);
+  await app.register(multipart, {
+    preservePath: true,
+    limits: {
+      fileSize: config.uploadMaxFileBytes,
+      files: config.uploadMaxFiles,
+      fields: config.uploadMaxFields,
+      parts: config.uploadMaxParts
+    }
+  });
   app.decorate("authenticate", async (request: FastifyRequest) => {
     await request.jwtVerify();
   });
