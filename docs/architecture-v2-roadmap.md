@@ -86,12 +86,29 @@
 | `component.trust_changed` | 可信度变化，后续判断是否自动发布 |
 | `release.published` | 发布完成，后续清理旧 OKF 或写审计摘要 |
 
-## 5. 下一阶段建议
+## 5. 第二阶段落地
 
-下一步优先做“标注样例进入构建 prompt”：
+第二阶段完成“标注样例进入构建 prompt”和“规则豁免进入 quality gate”：
 
-1. 为 `annotation_examples` 增加按 `page_type + rule_id` 查询的 service 方法。
-2. 在 `extractStage` 构造 prompt 时，注入最近且匹配的 examples。
+1. 从 `annotation_examples` 读取最近人工标注样例。
+2. 在 `extractStage` 构造 prompt 时，注入这些 examples 作为 few-shot 参考。
 3. 在 quality gate 读取 `rule_dismissals`，跳过已豁免规则。
 4. 在构建完成后统计“本次新增标注任务数 / 复发任务数 / 被样例命中的任务数”，让前端能看到飞轮是否正在收敛。
 
+当前实现说明：
+
+| 能力 | 状态 |
+| --- | --- |
+| 标注样例进入 extract prompt | 已接入最近 12 条人工标注，并纳入 extract cache 指纹 |
+| 规则豁免进入 quality gate | 已按 `rule_id + component_ref` 跳过 wiki/graph/table 质量规则 |
+| 构建 findings 生成 annotation task | 已生成 `task_kind=annotation`、`rule_id`、`confidence`、`context_snapshot` |
+| 收敛统计面板 | 未完成，建议作为下一阶段前端/报表能力 |
+
+## 6. 下一阶段建议
+
+下一步建议做“飞轮收敛可视化 + Agent 反馈自动触发重建”：
+
+1. 构建完成后统计 examples 命中数、被 dismissal 跳过数、新增 annotation task 数。
+2. 审核中心展示“这个问题是否复发、上次人工标注是什么、这次是否被样例影响”。
+3. Agent 负反馈按 component 聚合，达到阈值后创建增量重建 proposal。
+4. 再进入单组件增量重建和 release revision。

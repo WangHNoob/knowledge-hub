@@ -250,4 +250,53 @@ describe("evaluateQualityGate", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("skips dismissed rules for matching wiki component refs", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-quality-dismissed-"));
+    try {
+      const specDir = join(dataDir, "processed", "wiki_specs");
+      mkdirSync(join(dataDir, "wiki", "systems"), { recursive: true });
+      mkdirSync(join(dataDir, "wiki", "_meta"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { system: { dir: "systems", template: "system_rule.md" } },
+        entity_types: ["system"],
+        relation_types: ["references"]
+      }));
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview\n## Data Dependencies\n| key | required |\n| --- | --- |\n| config_table | yes |");
+      writeFileSync(join(dataDir, "wiki", "systems", "battle.md"), "---\ntype: system\ntitle: Battle\nsource: gamedocs/battle.md\n---\n\n## Overview\nOnly overview.");
+      writeFileSync(join(dataDir, "wiki", "_meta", "battle.json"), JSON.stringify({
+        title: "Battle",
+        source: "gamedocs/battle.md",
+        wiki_path: "wiki/systems/battle.md",
+        facts: {},
+        entities: [{ name: "Battle", type: "system" }],
+        relationships: []
+      }));
+
+      const result = evaluateQualityGate({
+        dataDir,
+        specs: loadWikiSpecs(specDir),
+        sourceLogicalPaths: new Set(["gamedocs/battle.md"]),
+        profile: {
+          minPackageScore: 0.75,
+          rules: {
+            wikiSpecCompleteness: { enabled: true, severity: "blocking", minScore: 0.75 },
+            requiredFacts: { enabled: true, severity: "warning", minScore: 0.7 },
+            frontmatterSource: { enabled: true, severity: "blocking" },
+            graphIntegrity: { enabled: false }
+          }
+        },
+        ruleDismissals: [
+          { ruleId: "wikiSpecCompleteness", componentRef: "wiki/systems/battle.md" },
+          { ruleId: "requiredFacts", componentRef: "wiki/systems/battle.md" }
+        ]
+      });
+
+      expect(result.findings.some((finding) => finding.ruleId === "wikiSpecCompleteness")).toBe(false);
+      expect(result.findings.some((finding) => finding.ruleId === "requiredFacts")).toBe(false);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });

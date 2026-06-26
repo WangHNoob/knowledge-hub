@@ -37,8 +37,16 @@ type ExtractOptions = {
   modelConfig?: PipelineModelConfig;
   force: boolean;
   only: string | null;
+  annotationExamples?: PromptAnnotationExample[];
   onProgress?: (info: { message: string; index: number; total: number }) => void;
 };
+
+export interface PromptAnnotationExample {
+  pageType: string;
+  ruleId: string;
+  contextSnapshot: Record<string, unknown>;
+  correctValue: Record<string, unknown>;
+}
 
 export async function runExtractStage(options: ExtractOptions): Promise<StageResult> {
   const parsedDir = join(options.dataDir, "processed", "parsed");
@@ -63,7 +71,8 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   // Build the LLM client once per run so capability state (e.g. whether the
   // model supports response_format) is remembered across every file.
   const client = createLlmClient(resolveModelConfig(options));
-  const guidance = buildSpecGuidance(options.specs);
+  const annotationExamples = options.annotationExamples ?? [];
+  const guidance = buildSpecGuidance(options.specs, annotationExamples);
   const usedSlugs = new Map<string, number>();
   const tableAliases = loadTableAliases(options.dataDir);
   const modelConfig = resolveModelConfig(options);
@@ -73,7 +82,7 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
-    const cacheKey = extractCacheKey({ markdown, rel, specsHash: options.specs.hash, modelConfig, aliasFingerprint });
+    const cacheKey = extractCacheKey({ markdown, rel, specsHash: options.specs.hash, modelConfig, aliasFingerprint, annotationExamples });
     const cached = options.force ? null : readExtractCache(options.dataDir, cacheKey);
     const extracted = cached ?? await extractPage(markdown, rel, client, guidance, warnings);
     normalizeTableRefs(extracted, tableAliases);
@@ -271,7 +280,7 @@ function factsToRecord(
 // Steer the model to emit a page `type` from the active legislation profile's
 // page types (otherwise extract silently skips every page as "unknown page type"),
 // and to follow each type's required sections/facts plus the allowed entity/relation types.
-function buildSpecGuidance(specs: WikiSpecSet): string {
+function buildSpecGuidance(specs: WikiSpecSet, annotationExamples: PromptAnnotationExample[] = []): string {
   const lines: string[] = [];
   const pageTypeIds = Object.keys(specs.manifest.pageTypes);
   lines.push(`The "type" field MUST be exactly one of these page type ids: ${pageTypeIds.join(", ")}.`);
@@ -286,7 +295,35 @@ function buildSpecGuidance(specs: WikiSpecSet): string {
   }
   if (specs.entityTypes.size) lines.push(`Each entity "type" should be one of: ${[...specs.entityTypes].join(", ")}.`);
   if (specs.relationTypes.size) lines.push(`Each relationship "relation" should be one of: ${[...specs.relationTypes].join(", ")}.`);
+  const examples = annotationExamples.slice(0, 12);
+  if (examples.length > 0) {
+    lines.push("Human annotation examples. Treat correctValue as the preferred extraction decision for similar contexts:");
+    for (const example of examples) {
+      lines.push(JSON.stringify({
+        pageType: example.pageType,
+        ruleId: example.ruleId,
+        context: compactExampleContext(example.contextSnapshot),
+        correctValue: example.correctValue,
+      }));
+    }
+  }
   return lines.join("\n");
+}
+
+function compactExampleContext(context: Record<string, unknown>): Record<string, unknown> {
+  const task = context.task && typeof context.task === "object" && !Array.isArray(context.task)
+    ? context.task as Record<string, unknown>
+    : {};
+  return {
+    sourceFile: stringValue(context.sourceFile),
+    pageType: stringValue(context.pageType ?? context.okfType),
+    title: stringValue(task.title ?? context.title),
+    ruleId: stringValue(task.ruleId ?? context.ruleId),
+  };
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function parseStructuredFrontmatter(markdown: string): ExtractedPage | null {
@@ -609,6 +646,7 @@ function extractCacheKey(input: {
   specsHash: string;
   modelConfig: PipelineModelConfig;
   aliasFingerprint: string;
+  annotationExamples: PromptAnnotationExample[];
 }): string {
   const hash = createHash("sha256");
   hash.update("extract-cache-v1\0");
@@ -621,7 +659,18 @@ function extractCacheKey(input: {
   hash.update(JSON.stringify(redactModelConfig(input.modelConfig)));
   hash.update("\0");
   hash.update(input.aliasFingerprint);
+  hash.update("\0");
+  hash.update(annotationExamplesFingerprint(input.annotationExamples));
   return hash.digest("hex");
+}
+
+function annotationExamplesFingerprint(examples: PromptAnnotationExample[]): string {
+  return JSON.stringify(examples.map((example) => ({
+    pageType: example.pageType,
+    ruleId: example.ruleId,
+    correctValue: example.correctValue,
+    context: compactExampleContext(example.contextSnapshot),
+  })));
 }
 
 function readExtractCache(dataDir: string, cacheKey: string): ExtractedPage | null {

@@ -191,6 +191,7 @@ export interface RuleDismissal {
   dismissalId: string;
   packageId: string;
   componentId: string;
+  componentRef: string;
   ruleId: string;
   reason: string;
   active: boolean;

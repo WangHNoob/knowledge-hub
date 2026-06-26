@@ -208,6 +208,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       dismissal_id TEXT PRIMARY KEY,
       package_id TEXT NOT NULL REFERENCES ${p}asset_packages(package_id) ON DELETE CASCADE,
       component_id TEXT NOT NULL REFERENCES ${p}asset_components(component_id) ON DELETE CASCADE,
+      component_ref TEXT NOT NULL DEFAULT '',
       rule_id TEXT NOT NULL,
       reason TEXT NOT NULL DEFAULT '',
       active BOOLEAN NOT NULL DEFAULT true,
@@ -349,6 +350,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotation_value JSONB NOT NULL DEFAULT '{}';
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_at TIMESTAMPTZ;
+    ALTER TABLE ${p}rule_dismissals ADD COLUMN IF NOT EXISTS component_ref TEXT NOT NULL DEFAULT '';
   `);
 
   // 默认资料集

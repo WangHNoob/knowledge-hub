@@ -307,6 +307,7 @@ export class KnowledgeService {
     const contextHash = hashJson(contextSnapshot);
     const now = new Date().toISOString();
     const exampleId = `ann_${slug(task.componentId)}_${nanoid(6)}`;
+    const componentRef = await this.findComponentLegacyPath(task.componentId);
 
     await this.adapter.query("BEGIN");
     try {
@@ -332,14 +333,15 @@ export class KnowledgeService {
         const dismissalId = `dismiss_${slug(task.componentId)}_${slug(task.ruleId)}`;
         await this.adapter.query(
           `INSERT INTO rule_dismissals
-            (dismissal_id, package_id, component_id, rule_id, reason, active, created_by, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            (dismissal_id, package_id, component_id, component_ref, rule_id, reason, active, created_by, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
            ON CONFLICT (component_id, rule_id)
-           DO UPDATE SET reason = EXCLUDED.reason, active = true, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
+           DO UPDATE SET component_ref = EXCLUDED.component_ref, reason = EXCLUDED.reason, active = true, created_by = EXCLUDED.created_by, created_at = EXCLUDED.created_at`,
           [
             dismissalId,
             task.packageId,
             task.componentId,
+            componentRef,
             task.ruleId,
             input.dismissalReason ?? input.note ?? "",
             true,
@@ -395,6 +397,11 @@ export class KnowledgeService {
       payload: { componentId: task.componentId, ruleId: task.ruleId, exampleId, dismissRule: Boolean(input.dismissRule && task.ruleId) },
     });
     return { task: updated, example };
+  }
+
+  private async findComponentLegacyPath(componentId: string): Promise<string> {
+    const { rows } = await this.adapter.query("SELECT legacy_path FROM asset_components WHERE component_id = $1", [componentId]);
+    return rows.length ? String(rows[0].legacy_path ?? "") : "";
   }
 
   async listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): Promise<EvidenceRecord[]> {

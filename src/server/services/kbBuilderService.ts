@@ -22,11 +22,11 @@ import { createTableAliasService } from "./tableAliasService";
 import { materializeSourceVersion } from "./kbBuilder/materialize";
 import { loadWikiSpecs } from "./kbBuilder/specs";
 import { runConvertStage } from "./kbBuilder/convertStage";
-import { runExtractStage } from "./kbBuilder/extractStage";
+import { runExtractStage, type PromptAnnotationExample } from "./kbBuilder/extractStage";
 import { runTableStage } from "./kbBuilder/tableStage";
 import { runGraphStage } from "./kbBuilder/graphStage";
 import { runVizStage } from "./kbBuilder/vizStage";
-import { evaluateQualityGate } from "./kbBuilder/qualityGate";
+import { evaluateQualityGate, type QualityRuleDismissal } from "./kbBuilder/qualityGate";
 import { collectPipelineArtifacts } from "./kbBuilder/collector";
 import { generateAliasDrafts, scanGamedataTableNames, writeAliasFile } from "./kbBuilder/aliasPrep";
 import { createLlmClient } from "./kbBuilder/llmClient";
@@ -170,6 +170,8 @@ export class KbBuilderPipelineService {
         workspaceRoot,
         runId,
       }));
+      const annotationExamples = await this.loadAnnotationExamplesForPrompt();
+      const ruleDismissals = await this.loadActiveRuleDismissals();
       const specs = await this.withStage(runId, options, "specs", async () => {
         const specDir = ensureWikiSpecs(workspace.dataDir, ruleProfile.config);
         return loadWikiSpecs(specDir);
@@ -189,6 +191,7 @@ export class KbBuilderPipelineService {
         modelConfig,
         force: options.force,
         only: options.only,
+        annotationExamples,
         onProgress: (info) => {
           void this.diagnostics?.write({
             traceId: options.traceId,
@@ -221,7 +224,7 @@ export class KbBuilderPipelineService {
 
       const sourceLogicalPaths = new Set(workspace.files.map((file) => file.logicalPath));
       const quality = await this.withStage(runId, options, "quality", async () => {
-        const result = evaluateQualityGate({ dataDir: workspace.dataDir, specs, sourceLogicalPaths, profile: mergeQualityRules(profile.config, ruleProfile.config) });
+        const result = evaluateQualityGate({ dataDir: workspace.dataDir, specs, sourceLogicalPaths, profile: mergeQualityRules(profile.config, ruleProfile.config), ruleDismissals });
         mkdirSync(join(workspace.dataDir, "wiki"), { recursive: true });
         writeFileSync(join(workspace.dataDir, "wiki", "quality_report.json"), `${JSON.stringify(result, null, 2)}\n`);
         return result;
@@ -573,21 +576,64 @@ export class KbBuilderPipelineService {
       const artifact = artifacts.find((item) => item.legacyPath === finding.componentId) ?? qualityReport;
       if (!artifact) continue;
       await this.adapter.query(
-        `INSERT INTO review_tasks (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        `INSERT INTO review_tasks (
+           task_id, package_id, component_id, severity, status, task_kind, rule_id,
+           title, description, suggested_action, candidates, confidence, context_snapshot, created_at
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           `task_${slug(packageId)}_${slug(finding.ruleId)}_${nanoid(6)}`,
           packageId,
           componentIdFor(packageId, artifact.legacyPath),
           finding.severity,
           "open",
+          "annotation",
+          finding.ruleId,
           finding.title,
           finding.description,
           finding.suggestedAction,
+          JSON.stringify(reviewTaskCandidates(finding)),
+          Math.max(0, Math.min(1, 1 - finding.scoreImpact)),
+          JSON.stringify({
+            ruleId: finding.ruleId,
+            componentRef: finding.componentId ?? artifact.legacyPath,
+            artifactLegacyPath: artifact.legacyPath,
+            title: finding.title,
+            description: finding.description,
+          }),
           new Date().toISOString(),
         ],
       );
     }
+  }
+
+  private async loadAnnotationExamplesForPrompt(limit = 12): Promise<PromptAnnotationExample[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT page_type, rule_id, context_snapshot, correct_value
+       FROM annotation_examples
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return rows.map((row) => ({
+      pageType: String(row.page_type ?? ""),
+      ruleId: String(row.rule_id ?? ""),
+      contextSnapshot: jsonValue<Record<string, unknown>>(row.context_snapshot, {}),
+      correctValue: jsonValue<Record<string, unknown>>(row.correct_value, {}),
+    }));
+  }
+
+  private async loadActiveRuleDismissals(): Promise<QualityRuleDismissal[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT component_id, component_ref, rule_id
+       FROM rule_dismissals
+       WHERE active = true`
+    );
+    return rows.map((row) => ({
+      componentId: String(row.component_id ?? ""),
+      componentRef: String(row.component_ref ?? ""),
+      ruleId: String(row.rule_id ?? ""),
+    }));
   }
 
   private async requireRun(runId: string): Promise<KnowledgeBuildRun> {
@@ -709,6 +755,20 @@ function mapProfile(row: Record<string, unknown>): QualityGateProfile {
 function jsonValue<T>(value: unknown, fallback: T): T {
   if (typeof value === "string") return JSON.parse(value) as T;
   return (value ?? fallback) as T;
+}
+
+function reviewTaskCandidates(finding: QualityFinding): Array<{ id: string; label: string; value: Record<string, unknown>; confidence: number; rationale: string }> {
+  return [{
+    id: "apply_suggested_action",
+    label: "按建议修复",
+    value: {
+      ruleId: finding.ruleId,
+      action: finding.suggestedAction,
+      componentRef: finding.componentId ?? "",
+    },
+    confidence: Math.max(0, Math.min(1, 1 - finding.scoreImpact)),
+    rationale: finding.description,
+  }];
 }
 
 function slug(value: string): string {
