@@ -42,6 +42,9 @@ describe("ReleaseService", () => {
         graphUri: "graph/graph.json",
         tableSchemasUri: "tables/schemas.json",
         searchIndexUri: "search/index.json",
+        lintUri: expect.stringContaining(`${pub1.releaseId}/knowledge_lint.json`),
+        lintMarkdownUri: expect.stringContaining(`${pub1.releaseId}/knowledge_lint.md`),
+        lintSummary: expect.objectContaining({ blocking: 0 }),
         exporterVersion: 1,
         summary: { blocking: 0 },
         citationSummary: { required: 1, present: 1 }
@@ -56,6 +59,8 @@ describe("ReleaseService", () => {
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "systems", "demo.md"), "utf8")).toContain('type: "system_rule"');
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "log.md"), "utf8")).toContain("# Release Audit Log");
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "log.md"), "utf8")).toContain("## Trust Score");
+      expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "knowledge_lint.md"), "utf8")).toContain("# Knowledge Lint Report");
+      expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "knowledge_lint.json"), "utf8")).summary.blocking).toBe(0);
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "graph", "graph.json"), "utf8")).nodes[0].label).toBe("Demo Page");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "tables", "schemas.json"), "utf8")).tables[0].schema.table_name).toBe("Demo/Table");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "search", "index.json"), "utf8")).pages[0].title).toBe("Demo Page");

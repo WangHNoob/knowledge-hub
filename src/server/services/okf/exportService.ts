@@ -8,6 +8,7 @@ import { renderReportMarkdown } from "./reportRender";
 import { scanWorkspace } from "./conformanceService";
 import { buildOkfSearchIndex } from "./searchIndex";
 import { OKF_EXPORTER_VERSION, type ConformanceReport } from "./types";
+import { exportKnowledgeLintReport, type KnowledgeLintReport } from "./lintService";
 import {
   renderReleaseAuditLog,
   withOkfAuditSummary,
@@ -25,6 +26,9 @@ export interface OkfExportManifest {
   tableAliasesUri?: string;
   searchIndexUri?: string;
   logUri: string;
+  lintUri: string;
+  lintMarkdownUri: string;
+  lintSummary: KnowledgeLintReport["summary"];
   exporterVersion: number;
   okfVersion: "0.1";
   bundleHash: string;
@@ -109,6 +113,14 @@ export class OkfExportService {
     writeFileSync(join(this.dataDir, ...reportMarkdownUri.split(posix.sep)), renderReportMarkdown(report), "utf8");
     const auditSummary = withOkfAuditSummary(input.auditSummary, report, { reportUri, reportMarkdownUri });
     writeFileSync(join(bundleDir, "log.md"), renderReleaseAuditLog(auditSummary), "utf8");
+    const lint = exportKnowledgeLintReport({
+      releaseId: input.release.releaseId,
+      generatedAt: input.publishedAt,
+      bundleDir,
+      releaseDir,
+      conformance: report,
+      audit: auditSummary,
+    });
 
     if (report.summary.blocking > 0) {
       throw new Error(`OKF conformance failed with ${report.summary.blocking} blocking issue(s).`);
@@ -125,6 +137,9 @@ export class OkfExportService {
         tableAliasesUri,
         searchIndexUri,
         logUri: posix.join("releases", input.release.releaseId, "okf_bundle", "log.md"),
+        lintUri: lint.jsonUri,
+        lintMarkdownUri: lint.markdownUri,
+        lintSummary: lint.report.summary,
         exporterVersion: OKF_EXPORTER_VERSION,
         okfVersion: report.okfVersion,
         bundleHash: hashExportedBundle(bundleDir, exportedPaths),

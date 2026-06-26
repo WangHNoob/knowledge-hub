@@ -451,6 +451,13 @@ export interface ReleaseAuditSummary {
   };
 }
 
+export interface KnowledgeLintSummary {
+  score: number;
+  blocking: number;
+  warning: number;
+  info: number;
+}
+
 export interface AgentEvent {
   eventId: string;
   releaseId: string;

@@ -12,6 +12,7 @@ import {
   publishRelease,
   rollbackRelease,
   updateRelease,
+  type KnowledgeLintSummary,
   type ReleaseAuditSummary,
   type ReleaseRecord
 } from "../api";
@@ -372,11 +373,23 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
         </section>
 
         <section className="audit-card">
-          <h4>OKF 与文件</h4>
+          <h4>OKF 与健康检查</h4>
           {okfStats ? (
             <div className="audit-kv">
+              {okf?.lintSummary && (
+                <>
+                  <span>健康分</span>
+                  <strong>{Math.round(okf.lintSummary.score * 100)}%</strong>
+                </>
+              )}
               <span>Warning</span>
               <strong>{okfStats.summary.warning}</strong>
+              {okf?.lintSummary && (
+                <>
+                  <span>Lint 问题</span>
+                  <strong>{okf.lintSummary.blocking}/{okf.lintSummary.warning}</strong>
+                </>
+              )}
               <span>引用</span>
               <strong>{okfStats.citationSummary.present}/{okfStats.citationSummary.required}</strong>
               <span>链接</span>
@@ -389,9 +402,11 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
           )}
           <div className="okf-paths">
             {okf?.logUri && <code><FileText size={14} /> {okf.logUri}</code>}
+            {okf?.lintMarkdownUri && <code>{okf.lintMarkdownUri}</code>}
             {okf?.reportUri && <code>{okf.reportUri}</code>}
           </div>
           {missingCitations > 0 && <p className="audit-warning">还有 {missingCitations} 个需要引用的页面没有 Citations。</p>}
+          {okf?.lintSummary && okf.lintSummary.blocking > 0 && <p className="audit-warning">Knowledge Lint 发现 {okf.lintSummary.blocking} 个阻断级健康问题。</p>}
         </section>
       </div>
     </div>
@@ -445,6 +460,9 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
     bundleUri: String(okf.bundleUri ?? ""),
     reportUri: String(okf.reportUri ?? ""),
     logUri: String(okf.logUri ?? ""),
+    lintUri: String(okf.lintUri ?? ""),
+    lintMarkdownUri: String(okf.lintMarkdownUri ?? ""),
+    lintSummary: lintSummary(okf.lintSummary),
     summary: {
       blocking: Number(summary.blocking ?? 0),
       warning: Number(summary.warning ?? 0),
@@ -458,6 +476,17 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
       required: Number(citationSummary.required ?? 0),
       present: Number(citationSummary.present ?? 0),
     },
+  };
+}
+
+function lintSummary(value: unknown): KnowledgeLintSummary | null {
+  const summary = objectValue(value);
+  if (Object.keys(summary).length === 0) return null;
+  return {
+    score: Number(summary.score ?? 0),
+    blocking: Number(summary.blocking ?? 0),
+    warning: Number(summary.warning ?? 0),
+    info: Number(summary.info ?? 0),
   };
 }
 
@@ -484,6 +513,9 @@ interface OkfManifest {
   bundleUri: string;
   reportUri: string;
   logUri: string;
+  lintUri: string;
+  lintMarkdownUri: string;
+  lintSummary: KnowledgeLintSummary | null;
   summary: { blocking: number; warning: number; info: number };
   linkSummary: { resolved: number; unresolved: number };
   citationSummary: { required: number; present: number };
