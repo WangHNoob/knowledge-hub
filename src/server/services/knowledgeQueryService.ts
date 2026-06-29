@@ -14,6 +14,9 @@ import { searchOkfIndex, type OkfSearchIndex, type OkfSearchResultItem } from ".
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
 const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
+const GRAPH_TOOLS = new Set(["kb_get_entity", "kb_get_neighbors", "kb_list_entities", "kb_get_relations"]);
+const TABLE_TOOLS = new Set(["kb_get_page_tables", "kb_list_tables", "kb_get_table_schema", "kb_query_table", "kb_validate_table", "kb_check_table_value"]);
+const REPORT_TOOLS = new Set(["kb_report_gap", "kb_report_bad_hit", "kb_report_stale"]);
 
 export interface KnowledgeQueryContext {
   sessionId?: string;
@@ -164,6 +167,7 @@ export class KnowledgeQueryService {
       status = toolResult.forceHit || hitComponentIds.length > 0 ? "hit" : "miss";
 
       const envelope: KnowledgeEnvelope<any> = {
+        contract: envelopeContract(toolName, evidenceIds),
         release: releaseEnvelope(release),
         result: toolResult.result,
         qualityFlags,
@@ -1142,6 +1146,21 @@ function releaseEnvelope(release: ReleaseRecord) {
     version: release.version,
     publishedAt: release.publishedAt,
     manifestHash: release.manifestHash,
+  };
+}
+
+function envelopeContract(toolName: string, evidenceIds: string[]): KnowledgeEnvelope["contract"] {
+  return {
+    schemaVersion: "knowledge-envelope/v1",
+    toolName,
+    stableFields: ["contract", "release", "result", "qualityFlags", "trust", "trace"],
+    capabilities: {
+      trust: "included",
+      evidence: evidenceIds.length > 0 ? "linked" : "none",
+      graph: GRAPH_TOOLS.has(toolName) ? "available" : "not_applicable",
+      tables: TABLE_TOOLS.has(toolName) ? "available" : "not_applicable",
+      feedback: REPORT_TOOLS.has(toolName) ? "explicit_report" : "auto_recorded",
+    },
   };
 }
 

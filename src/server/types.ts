@@ -412,6 +412,18 @@ export interface KnowledgeTrace {
 }
 
 export interface KnowledgeEnvelope<T = unknown> {
+  contract: {
+    schemaVersion: "knowledge-envelope/v1";
+    toolName: string;
+    stableFields: string[];
+    capabilities: {
+      trust: "included";
+      evidence: "linked" | "none";
+      graph: "available" | "not_applicable";
+      tables: "available" | "not_applicable";
+      feedback: "auto_recorded" | "explicit_report" | "none";
+    };
+  };
   release: {
     releaseId: string;
     version: string;
