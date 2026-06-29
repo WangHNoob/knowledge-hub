@@ -397,33 +397,50 @@ export class ReleaseService {
     only?: string | null;
   }): Promise<ProposedReleaseRevision> {
     if (!input.only) return { release: null, created: false, reason: "not_scoped_build" };
-    const pkg = (await this.loadPackages([input.packageId]))[0];
-    if (!pkg) return { release: null, created: false, reason: "unknown_package" };
-    const current = await this.getCurrent();
-    if (!current) return { release: null, created: false, reason: "no_current_release" };
-    const duplicate = await this.findDraftRevision(current.releaseId, input.packageId);
-    if (duplicate) return { release: duplicate, created: false, reason: "duplicate_draft" };
+    await this.adapter.query("BEGIN");
+    try {
+      await this.adapter.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`release_revision:${input.runId}`]);
+      const pkg = (await this.loadPackages([input.packageId]))[0];
+      if (!pkg) {
+        await this.adapter.query("COMMIT");
+        return { release: null, created: false, reason: "unknown_package" };
+      }
+      const current = await this.getCurrent();
+      if (!current) {
+        await this.adapter.query("COMMIT");
+        return { release: null, created: false, reason: "no_current_release" };
+      }
+      const duplicate = await this.findDraftRevision(current.releaseId, input.packageId);
+      if (duplicate) {
+        await this.adapter.query("COMMIT");
+        return { release: duplicate, created: false, reason: "duplicate_draft" };
+      }
 
-    const release = await this.createDraft({
-      version: `${current.version}.rev.${compactDate(new Date())}`,
-      packageIds: [input.packageId],
-      parentReleaseId: current.releaseId,
-      requestedBy: input.requestedBy || "system",
-      note: `自动草案：scoped build ${input.runId}${input.only ? ` (${input.only})` : ""}`,
-    });
-    await emitKnowledgeEvent(this.db, {
-      eventType: "release.revision_proposed",
-      entityType: "release",
-      entityId: release.releaseId,
-      payload: {
-        releaseId: release.releaseId,
+      const release = await this.createDraft({
+        version: `${current.version}.rev.${compactDate(new Date())}`,
+        packageIds: [input.packageId],
         parentReleaseId: current.releaseId,
-        packageId: input.packageId,
-        runId: input.runId,
-        only: input.only ?? "",
-      },
-    });
-    return { release, created: true, reason: "created" };
+        requestedBy: input.requestedBy || "system",
+        note: `自动草案：scoped build ${input.runId}${input.only ? ` (${input.only})` : ""}`,
+      });
+      await emitKnowledgeEvent(this.db, {
+        eventType: "release.revision_proposed",
+        entityType: "release",
+        entityId: release.releaseId,
+        payload: {
+          releaseId: release.releaseId,
+          parentReleaseId: current.releaseId,
+          packageId: input.packageId,
+          runId: input.runId,
+          only: input.only ?? "",
+        },
+      });
+      await this.adapter.query("COMMIT");
+      return { release, created: true, reason: "created" };
+    } catch (error) {
+      await this.adapter.query("ROLLBACK");
+      throw error;
+    }
   }
 
   private async findOpenBlockingTasksForComponents(componentIds: string[]): Promise<Record<string, unknown>[]> {

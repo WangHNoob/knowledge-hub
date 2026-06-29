@@ -173,4 +173,57 @@ describe("KbBuilderPipelineService", () => {
       rmSync(sourceRoot, { recursive: true, force: true });
     }
   }, 20000);
+
+  it("does not inject inactive annotation examples", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-service-data-"));
+    const sourceRoot = mkdtempSync(join(tmpdir(), "kh-kb-service-src-"));
+    const { db, cleanup } = await createTestDb();
+    try {
+      mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
+      writeFileSync(join(sourceRoot, "gamedocs", "battle.md"), "# Battle\n\nBattle rules.");
+      const imported = await createSourceBundleService(db, dataDir).importDirectoryAsVersion({
+        rootPath: sourceRoot,
+        bundleId: "default",
+        createdBy: "admin",
+        note: "inactive annotation fixture"
+      });
+      await db.adapter.query(
+        `INSERT INTO asset_packages
+          (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
+         VALUES ('pkg_inactive_example','Inactive Example','kb_builder_pipeline','draft','fixture','run_inactive_example','[]','[]','{}',NOW())`
+      );
+      await db.adapter.query(
+        `INSERT INTO asset_components
+          (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+         VALUES ('cmp_inactive_example','pkg_inactive_example','wiki/prev.md','wiki','wiki_page','Previous','draft','wiki/prev.md','data/wiki/prev.md','[]','{}')`
+      );
+      await db.adapter.query(
+        `INSERT INTO annotation_examples
+          (example_id, package_id, component_id, task_id, rule_id, apply_mode, page_type, context_hash, context_snapshot, correct_value, active, created_by, created_at)
+         VALUES ('ann_inactive_example','pkg_inactive_example','cmp_inactive_example','task_prev','wiki.required_fact','override','system','sha256:inactive','{}',$1,false,'admin',NOW())`,
+        [JSON.stringify({ field: "config_table", value: "Combat/Skill" })],
+      );
+
+      const result = await createKbBuilderPipelineService(db, dataDir).build({
+        bundleId: "default",
+        versionId: imported.version.versionId,
+        requestedBy: "admin",
+        stages: ["convert", "extract"],
+        model: "deterministic",
+        force: false,
+        only: null,
+        qualityProfileId: "default"
+      });
+
+      expect(result.run.config.flywheel).toMatchObject({
+        annotationExamplesInjected: 0,
+        annotationOverridesInjected: 0,
+        annotationExampleRefs: []
+      });
+    } finally {
+      await cleanup();
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(sourceRoot, { recursive: true, force: true });
+    }
+  }, 20000);
 });

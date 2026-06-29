@@ -29,7 +29,9 @@ export { getQualityProfile, getTrustPolicy, updateQualityProfile } from "./quali
 export {
   activateLegislationProfile,
   createLegislationProfile,
-  getLegislationProfile
+  getLegislationProfile,
+  listAnnotationExamples,
+  setAnnotationExampleActive
 } from "./legislation";
 export {
   createRelease,

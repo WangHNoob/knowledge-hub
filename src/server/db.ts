@@ -201,6 +201,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       context_hash TEXT NOT NULL,
       context_snapshot JSONB NOT NULL DEFAULT '{}',
       correct_value JSONB NOT NULL DEFAULT '{}',
+      active BOOLEAN NOT NULL DEFAULT true,
       created_by TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
@@ -354,8 +355,10 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_at TIMESTAMPTZ;
     ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS apply_mode TEXT NOT NULL DEFAULT 'hint';
+    ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
     ALTER TABLE ${p}rule_dismissals ADD COLUMN IF NOT EXISTS component_ref TEXT NOT NULL DEFAULT '';
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_override ON ${p}annotation_examples(apply_mode, page_type, rule_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_annotation_examples_active ON ${p}annotation_examples(active, apply_mode, created_at DESC);
   `);
 
   // 默认资料集

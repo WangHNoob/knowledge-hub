@@ -149,6 +149,20 @@ describe("review task transitions", () => {
     expect(events.rows).toHaveLength(1);
     expect(events.rows[0].payload_json).toMatchObject({ componentId: "cmp_rev", ruleId: "wiki.required_fact" });
 
+    const examplesResponse = await app.inject({ method: "GET", url: "/api/legislation/annotation-examples", headers: auth });
+    expect(examplesResponse.statusCode).toBe(200);
+    const example = examplesResponse.json().examples.find((item: { taskId: string }) => item.taskId === "task_annotation");
+    expect(example).toMatchObject({ active: true, applyMode: "hint", taskId: "task_annotation" });
+
+    const disableResponse = await app.inject({
+      method: "POST",
+      url: `/api/legislation/annotation-examples/${encodeURIComponent(example.exampleId)}/active`,
+      headers: auth,
+      payload: { active: false }
+    });
+    expect(disableResponse.statusCode).toBe(200);
+    expect(disableResponse.json().example).toMatchObject({ exampleId: example.exampleId, active: false });
+
     await db.adapter.query(
       `INSERT INTO review_tasks (
          task_id, package_id, component_id, severity, status, task_kind, rule_id,

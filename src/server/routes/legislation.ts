@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
-import { requireRole } from "../middleware/auth";
-import { activateLegislationProfileSchema, createLegislationProfileSchema } from "../schemas";
+import { denyRole, requireRole } from "../middleware/auth";
+import { activateLegislationProfileSchema, annotationExampleActiveSchema, createLegislationProfileSchema } from "../schemas";
 import type { RouteContext } from "./context";
 
 export function registerLegislationRoutes(app: FastifyInstance, ctx: RouteContext) {
@@ -32,4 +32,22 @@ export function registerLegislationRoutes(app: FastifyInstance, ctx: RouteContex
     if (!parsed.success) return reply.code(400).send({ error: "Invalid legislation activation payload." });
     return { profile: await ctx.legislationService.activateProfile(parsed.data.profileId, request.user.username) };
   });
+
+  app.get("/api/legislation/annotation-examples", { preHandler: app.authenticate }, async () => ({
+    examples: await ctx.service.listAnnotationExamples(),
+  }));
+
+  app.post<{ Params: { exampleId: string } }>(
+    "/api/legislation/annotation-examples/:exampleId/active",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = annotationExampleActiveSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid annotation example active payload." });
+      try {
+        return { example: await ctx.service.setAnnotationExampleActive(request.params.exampleId, parsed.data.active) };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "更新标注样例失败。" });
+      }
+    }
+  );
 }

@@ -771,6 +771,7 @@ export class KbBuilderPipelineService {
     const { rows } = await this.adapter.query(
       `SELECT example_id, component_id, task_id, apply_mode, page_type, rule_id, context_snapshot, correct_value, created_by, created_at
        FROM annotation_examples
+       WHERE active = true
        ORDER BY created_at DESC
        LIMIT $1`,
       [limit],

@@ -2595,6 +2595,131 @@ button.writeback-step:disabled {
   font-size: 13px;
 }
 
+.annotation-example-list {
+  display: grid;
+  gap: 12px;
+}
+
+.annotation-example-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 136px;
+  gap: 14px;
+  align-items: stretch;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.annotation-example-card.inactive {
+  opacity: 0.68;
+  background: var(--surface-sunken);
+}
+
+.annotation-example-main {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.annotation-example-title,
+.annotation-example-meta,
+.annotation-example-targets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.annotation-example-title strong {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.annotation-example-meta {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.annotation-example-meta code {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-example-targets button {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.annotation-example-targets button:hover {
+  border-color: var(--olive);
+  color: var(--olive-dim);
+}
+
+.annotation-example-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.annotation-example-values div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.annotation-example-values b {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.annotation-example-values code {
+  color: var(--ink);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.annotation-example-side {
+  display: grid;
+  justify-items: stretch;
+  align-content: center;
+  gap: 8px;
+  min-width: 0;
+  border-left: 1px solid var(--line);
+  padding-left: 14px;
+}
+
+.annotation-example-side strong {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 28px;
+  line-height: 1;
+}
+
+.annotation-example-side span,
+.annotation-example-side small {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
 .document-rule-card .rule-card-head {
   align-items: flex-start;
 }
@@ -3491,6 +3616,8 @@ form button:active:not(:disabled) {
   .governance-metrics,
   .governance-grid,
   .governance-score-grid,
+  .annotation-example-card,
+  .annotation-example-values,
   .audit-metrics,
   .convergence-metrics,
   .revision-patch-grid,
@@ -3504,6 +3631,13 @@ form button:active:not(:disabled) {
 
   .writeback-steps {
     grid-template-columns: 1fr;
+  }
+
+  .annotation-example-side {
+    border-left: none;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 12px;
   }
 
   .diagnostics-filter {

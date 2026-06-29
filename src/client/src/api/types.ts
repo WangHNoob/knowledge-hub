@@ -254,6 +254,25 @@ export interface ReviewWritebackSummary {
   autoPublishReason: string;
 }
 
+export interface AnnotationExample {
+  exampleId: string;
+  packageId: string;
+  componentId: string;
+  taskId: string;
+  ruleId: string;
+  applyMode: "hint" | "override";
+  pageType: string;
+  contextHash: string;
+  contextSnapshot: Record<string, unknown>;
+  correctValue: Record<string, unknown>;
+  active: boolean;
+  injectedBuildCount: number;
+  lastInjectedAt: string | null;
+  lastInjectedRunId: string;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface KnowledgeBuildRun {
   runId: string;
   sourceVersionId: string;

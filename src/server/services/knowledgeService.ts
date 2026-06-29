@@ -253,6 +253,55 @@ export class KnowledgeService {
     return this.enrichReviewTaskLearning(rows.map(mapReviewTask));
   }
 
+  async listAnnotationExamples(): Promise<AnnotationExample[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT
+         e.*,
+         COALESCE(injected.injected_build_count, 0)::int AS injected_build_count,
+         injected.last_injected_at,
+         injected.last_injected_run_id
+       FROM annotation_examples e
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*)::int AS injected_build_count,
+           MAX(r.started_at) AS last_injected_at,
+           (ARRAY_AGG(r.run_id ORDER BY r.started_at DESC))[1] AS last_injected_run_id
+         FROM knowledge_build_runs r
+         WHERE r.config_json -> 'flywheel' -> 'annotationExampleRefs' @> jsonb_build_array(jsonb_build_object('exampleId', e.example_id))
+       ) injected ON true
+       ORDER BY e.active DESC, e.created_at DESC`,
+    );
+    return rows.map((row) => ({
+      exampleId: String(row.example_id ?? ""),
+      packageId: String(row.package_id ?? ""),
+      componentId: String(row.component_id ?? ""),
+      taskId: String(row.task_id ?? ""),
+      ruleId: String(row.rule_id ?? ""),
+      applyMode: row.apply_mode === "override" ? "override" : "hint",
+      pageType: String(row.page_type ?? ""),
+      contextHash: String(row.context_hash ?? ""),
+      contextSnapshot: jsonObject(row.context_snapshot),
+      correctValue: jsonObject(row.correct_value),
+      active: Boolean(row.active),
+      injectedBuildCount: Number(row.injected_build_count ?? 0),
+      lastInjectedAt: row.last_injected_at ? String(row.last_injected_at) : null,
+      lastInjectedRunId: String(row.last_injected_run_id ?? ""),
+      createdBy: String(row.created_by ?? ""),
+      createdAt: String(row.created_at ?? ""),
+    }));
+  }
+
+  async setAnnotationExampleActive(exampleId: string, active: boolean): Promise<AnnotationExample> {
+    const { rowCount } = await this.adapter.query(
+      "UPDATE annotation_examples SET active = $2 WHERE example_id = $1",
+      [exampleId, active],
+    );
+    if (!rowCount) throw new Error(`Unknown annotation example: ${exampleId}`);
+    const example = (await this.listAnnotationExamples()).find((item) => item.exampleId === exampleId);
+    if (!example) throw new Error(`Unknown annotation example: ${exampleId}`);
+    return example;
+  }
+
   private async enrichReviewTaskLearning(tasks: ReviewTask[]): Promise<ReviewTask[]> {
     if (tasks.length === 0) return tasks;
     const componentIds = uniqueSorted(tasks.map((task) => task.componentId));
@@ -671,6 +720,10 @@ export class KnowledgeService {
       contextHash,
       contextSnapshot,
       correctValue,
+      active: true,
+      injectedBuildCount: 0,
+      lastInjectedAt: null,
+      lastInjectedRunId: "",
       createdBy: input.actor,
       createdAt: now,
     };

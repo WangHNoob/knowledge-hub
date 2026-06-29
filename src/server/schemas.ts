@@ -166,6 +166,10 @@ export const activateLegislationProfileSchema = z.object({
   profileId: z.string().min(1)
 });
 
+export const annotationExampleActiveSchema = z.object({
+  active: z.boolean()
+});
+
 export const createAttributionAuditSchema = z.object({
   releaseId: z.string().min(1),
   title: z.string().min(1),

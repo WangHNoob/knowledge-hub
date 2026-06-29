@@ -1,11 +1,12 @@
-import { Boxes, Braces, FileText, Gauge, LayoutDashboard, Plus, Save, Share2, ShieldAlert, ShieldCheck, Table, Trash2 } from "lucide-react";
+import { Boxes, Braces, FileText, Gauge, LayoutDashboard, ListChecks, Plus, Save, Share2, ShieldAlert, ShieldCheck, Table, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { activateLegislationProfile, createLegislationProfile, getLegislationProfile, getTrustPolicy } from "../api";
-import type { KnowledgeRuleConfig, RelationTypeSpec, TrustPolicy } from "../api/types";
+import { activateLegislationProfile, createLegislationProfile, getLegislationProfile, getTrustPolicy, listAnnotationExamples, setAnnotationExampleActive } from "../api";
+import type { AnnotationExample, KnowledgeRuleConfig, RelationTypeSpec, TrustPolicy } from "../api/types";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
-import { formatPercent } from "../utils/format";
+import { formatPercent, formatTime } from "../utils/format";
+import { useNav } from "../ui/navigation";
 import {
   addDocumentType,
   addEntityType,
@@ -30,12 +31,14 @@ import {
   updateTableRuleTags
 } from "./legislationEditor";
 
-type LegislationTab = "governance" | "documents" | "entities" | "relations" | "tables" | "quality" | "trust" | "overview" | "advanced";
+type LegislationTab = "governance" | "documents" | "entities" | "relations" | "tables" | "quality" | "trust" | "annotations" | "overview" | "advanced";
 
 export function Legislation() {
+  const { navigate } = useNav();
   const queryClient = useQueryClient();
   const profiles = useQuery({ queryKey: ["legislation-profile"], queryFn: getLegislationProfile });
   const trustPolicy = useQuery({ queryKey: ["trust-policy"], queryFn: getTrustPolicy });
+  const annotationExamples = useQuery({ queryKey: ["annotation-examples"], queryFn: listAnnotationExamples });
   const [tab, setTab] = useState<LegislationTab>("governance");
   const [name, setName] = useState("策划立法规则");
   const [activate, setActivate] = useState(true);
@@ -74,6 +77,12 @@ export function Legislation() {
       await queryClient.invalidateQueries({ queryKey: ["legislation-profile"] });
     }
   });
+  const exampleActiveMutation = useMutation({
+    mutationFn: ({ exampleId, active }: { exampleId: string; active: boolean }) => setAnnotationExampleActive(exampleId, active),
+    onSuccess: async () => {
+      await annotationExamples.refetch();
+    }
+  });
 
   const applyJson = () => {
     try {
@@ -98,6 +107,7 @@ export function Legislation() {
     { id: "tables", label: "表字段", icon: Table },
     { id: "quality", label: "质量红线", icon: ShieldAlert, count: config ? Object.keys(config.qualityRules).length : 0 },
     { id: "trust", label: "可信度", icon: Gauge, count: trustPolicy.data?.dimensions.length ?? 0 },
+    { id: "annotations", label: "标注样例", icon: ListChecks, count: annotationExamples.data?.filter((example) => example.active).length ?? 0 },
     { id: "overview", label: "概览 / 历史", icon: LayoutDashboard, count: history.length },
     { id: "advanced", label: "高级规则", icon: Braces }
   ];
@@ -147,6 +157,18 @@ export function Legislation() {
           trustPolicy.isLoading ? <Loading title="正在读取可信度规则" /> :
           trustPolicy.error ? <ErrorState error={trustPolicy.error} /> :
           trustPolicy.data ? <TrustPolicySection policy={trustPolicy.data} /> : null
+        )}
+        {tab === "annotations" && (
+          annotationExamples.isLoading ? <Loading title="正在读取标注样例" /> :
+          annotationExamples.error ? <ErrorState error={annotationExamples.error} /> :
+          <AnnotationExampleSection
+            examples={annotationExamples.data ?? []}
+            saving={exampleActiveMutation.isPending}
+            onToggle={(example) => exampleActiveMutation.mutate({ exampleId: example.exampleId, active: !example.active })}
+            onNavigateReview={(taskId) => navigate("review", { taskId })}
+            onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
+            onNavigateBuild={(runId) => navigate("builder", { runId })}
+          />
         )}
 
         {tab === "overview" && (
@@ -214,6 +236,90 @@ export function Legislation() {
         )}
       </div>
     </Page>
+  );
+}
+
+function AnnotationExampleSection({
+  examples,
+  saving,
+  onToggle,
+  onNavigateReview,
+  onNavigateAsset,
+  onNavigateBuild,
+}: {
+  examples: AnnotationExample[];
+  saving: boolean;
+  onToggle: (example: AnnotationExample) => void;
+  onNavigateReview: (taskId: string) => void;
+  onNavigateAsset: (packageId: string, componentId: string) => void;
+  onNavigateBuild: (runId: string) => void;
+}) {
+  const active = examples.filter((example) => example.active);
+  const overrides = examples.filter((example) => example.active && example.applyMode === "override");
+  const injected = examples.filter((example) => example.injectedBuildCount > 0);
+  return (
+    <section className="legislation-workbench">
+      <section className="release-panel">
+        <div className="detail-head">
+          <div>
+            <h2>标注样例池</h2>
+            <p>人工标注沉淀为构建 prompt 样例；override 样例会作为确定性覆盖规则参与后续构建。</p>
+          </div>
+          <Badge label={`${active.length}/${examples.length} active`} tone={active.length ? "ok" : undefined} />
+        </div>
+        <div className="metrics compact">
+          <Metric label="启用样例" value={active.length} hint="后续构建可注入" tone={active.length ? "ok" : undefined} />
+          <Metric label="确定覆盖" value={overrides.length} hint="override active" tone={overrides.length ? "warn" : undefined} />
+          <Metric label="已被注入" value={injected.length} hint="至少进入过一次 build" tone={injected.length ? "ok" : undefined} />
+          <Metric label="停用样例" value={examples.length - active.length} hint="保留审计，不再注入" />
+        </div>
+      </section>
+
+      <section className="release-panel">
+        <div className="annotation-example-list">
+          {examples.length === 0 && <p className="subtle">还没有人工标注样例。</p>}
+          {examples.map((example) => (
+            <article className={example.active ? "annotation-example-card" : "annotation-example-card inactive"} key={example.exampleId}>
+              <div className="annotation-example-main">
+                <div className="annotation-example-title">
+                  <Badge label={example.applyMode} tone={example.applyMode === "override" ? "warn" : undefined} />
+                  <Badge label={example.active ? "active" : "inactive"} tone={example.active ? "ok" : undefined} />
+                  <strong>{example.ruleId || "annotation"}</strong>
+                </div>
+                <div className="annotation-example-meta">
+                  <span>{example.pageType || "unknown page"}</span>
+                  <span>{example.createdBy || "unknown"} · {formatTime(example.createdAt)}</span>
+                  {example.contextHash && <code>{example.contextHash}</code>}
+                </div>
+                <div className="annotation-example-targets">
+                  <button type="button" onClick={() => onNavigateAsset(example.packageId, example.componentId)}>{example.componentId}</button>
+                  {example.taskId && <button type="button" onClick={() => onNavigateReview(example.taskId)}>{example.taskId}</button>}
+                  {example.lastInjectedRunId && <button type="button" onClick={() => onNavigateBuild(example.lastInjectedRunId)}>最近注入 {example.lastInjectedRunId}</button>}
+                </div>
+                <div className="annotation-example-values">
+                  <div>
+                    <b>正确值</b>
+                    <code>{compactJson(example.correctValue)}</code>
+                  </div>
+                  <div>
+                    <b>上下文</b>
+                    <code>{annotationContextLabel(example.contextSnapshot)}</code>
+                  </div>
+                </div>
+              </div>
+              <div className="annotation-example-side">
+                <strong>{example.injectedBuildCount}</strong>
+                <span>build 注入</span>
+                {example.lastInjectedAt && <small>{formatTime(example.lastInjectedAt)}</small>}
+                <button className="secondary-action" type="button" disabled={saving} onClick={() => onToggle(example)}>
+                  {example.active ? "停用" : "启用"}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -410,6 +516,23 @@ function TrustPolicySection({ policy }: { policy: TrustPolicy }) {
       </section>
     </section>
   );
+}
+
+function compactJson(value: Record<string, unknown>): string {
+  const text = JSON.stringify(value);
+  return text.length > 180 ? `${text.slice(0, 177)}...` : text;
+}
+
+function annotationContextLabel(value: Record<string, unknown>): string {
+  const sourceFile = stringValue(value.sourceFile);
+  const componentRef = stringValue(value.componentRef) || stringValue(value.artifactLegacyPath);
+  const task = typeof value.task === "object" && value.task && !Array.isArray(value.task) ? value.task as Record<string, unknown> : {};
+  const title = stringValue(task.title);
+  return [sourceFile, componentRef, title].filter(Boolean).join(" · ") || compactJson(value);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function PageTypeSection({ config, onChange }: EditorSectionProps) {
