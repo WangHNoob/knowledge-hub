@@ -2165,6 +2165,54 @@ code {
   grid-template-columns: repeat(6, minmax(120px, 1fr));
 }
 
+.revision-patch {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.revision-patch-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.revision-patch-head h4 {
+  margin: 0 0 4px;
+}
+
+.revision-patch-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.patch-group {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.patch-group.warn {
+  border-color: rgba(201, 162, 39, 0.22);
+}
+
+.patch-id-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
 .audit-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3321,6 +3369,7 @@ form button:active:not(:disabled) {
   .governance-score-grid,
   .audit-metrics,
   .convergence-metrics,
+  .revision-patch-grid,
   .audit-grid {
     grid-template-columns: 1fr;
   }

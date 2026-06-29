@@ -401,6 +401,7 @@ function AutoPublishEventsPanel({
 }
 
 function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
+  const { navigate } = useNav();
   const audit = auditSummary(release);
   const okf = okfManifest(release);
   const revision = revisionInfo(release);
@@ -431,6 +432,13 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
         <Metric label="变更组件" value={revision ? revision.summary.componentsChanged + revision.summary.componentsAdded + revision.summary.componentsRemoved : "-"} hint={revision?.mode ?? "无版本链"} />
         <Metric label="自动发布" value={autoPublish?.eligible ? "可用" : "不可用"} hint={autoPublish?.reasons[0] ?? autoPublish?.mode ?? "未检查"} tone={autoPublish?.eligible ? "ok" : "warn"} />
       </div>
+
+      {revision && (
+        <RevisionPatchView
+          revision={revision}
+          onNavigateComponent={(componentId) => navigate("assets", { componentId })}
+        />
+      )}
 
       <div className="audit-grid">
         <section className="audit-card">
@@ -624,13 +632,77 @@ function auditSummary(release: ReleaseRecord): ReleaseAuditSummary | null {
   return audit;
 }
 
+function RevisionPatchView({
+  revision,
+  onNavigateComponent,
+}: {
+  revision: ReleaseRevision;
+  onNavigateComponent: (componentId: string) => void;
+}) {
+  const reused = revision.diff.componentIds.unchanged.length;
+  const rewritten = revision.diff.componentIds.added.length + revision.diff.changedComponents.length;
+  return (
+    <section className="revision-patch">
+      <div className="revision-patch-head">
+        <div>
+          <h4>Revision Patch 明细</h4>
+          <p>{revision.mode === "revision" ? `基于 ${revision.parentReleaseId}` : "首次发布，没有可复用基线。"}</p>
+        </div>
+        <Badge label={`${rewritten} rewrite / ${reused} reuse`} tone={revision.diff.componentIds.removed.length ? "warn" : "ok"} />
+      </div>
+      <div className="revision-patch-grid">
+        <PatchGroup title="组件新增" ids={revision.diff.componentIds.added} onClick={onNavigateComponent} />
+        <PatchGroup title="组件变更" ids={revision.diff.changedComponents} onClick={onNavigateComponent} />
+        <PatchGroup title="组件删除" ids={revision.diff.componentIds.removed} tone="warn" />
+        <PatchGroup title="组件复用" ids={revision.diff.componentIds.unchanged.slice(0, 8)} suffix={revision.diff.componentIds.unchanged.length > 8 ? `+${revision.diff.componentIds.unchanged.length - 8}` : ""} />
+        <PatchGroup title="资料版本新增" ids={revision.diff.sourceVersionIds.added} />
+        <PatchGroup title="资料版本移除" ids={revision.diff.sourceVersionIds.removed} tone="warn" />
+      </div>
+    </section>
+  );
+}
+
+function PatchGroup({
+  title,
+  ids,
+  tone,
+  suffix,
+  onClick,
+}: {
+  title: string;
+  ids: string[];
+  tone?: "warn";
+  suffix?: string;
+  onClick?: (id: string) => void;
+}) {
+  return (
+    <div className={`patch-group ${tone ?? ""}`}>
+      <strong>{title}</strong>
+      <div className="patch-id-list">
+        {ids.length === 0 ? <span className="subtle">无</span> : ids.map((id) => (
+          onClick ? <IdChip key={id} label={id} onClick={() => onClick(id)} /> : <IdChip key={id} label={id} />
+        ))}
+        {suffix && <span className="subtle">{suffix}</span>}
+      </div>
+    </div>
+  );
+}
+
 function revisionInfo(release: ReleaseRecord): ReleaseRevision | null {
   const revision = objectValue(release.manifest.revision);
   const summary = objectValue(revision.summary);
+  const diff = objectValue(revision.diff);
   if (Object.keys(revision).length === 0) return null;
   return {
     mode: String(revision.mode ?? "initial"),
     parentReleaseId: typeof revision.parentReleaseId === "string" ? revision.parentReleaseId : null,
+    diff: {
+      packageIds: diffBucket(diff.packageIds),
+      componentIds: diffBucket(diff.componentIds),
+      sourceVersionIds: diffBucket(diff.sourceVersionIds),
+      changedComponents: stringArray(diff.changedComponents),
+      unchangedComponents: stringArray(diff.unchangedComponents),
+    },
     summary: {
       packagesAdded: Number(summary.packagesAdded ?? 0),
       packagesRemoved: Number(summary.packagesRemoved ?? 0),
@@ -736,6 +808,19 @@ function stringField(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function diffBucket(value: unknown): ReleaseDiffBucket {
+  const bucket = objectValue(value);
+  return {
+    added: stringArray(bucket.added),
+    removed: stringArray(bucket.removed),
+    unchanged: stringArray(bucket.unchanged),
+  };
+}
+
 interface OkfManifest {
   bundleUri: string;
   reportUri: string;
@@ -752,6 +837,13 @@ interface OkfManifest {
 interface ReleaseRevision {
   mode: string;
   parentReleaseId: string | null;
+  diff: {
+    packageIds: ReleaseDiffBucket;
+    componentIds: ReleaseDiffBucket;
+    sourceVersionIds: ReleaseDiffBucket;
+    changedComponents: string[];
+    unchangedComponents: string[];
+  };
   summary: {
     packagesAdded: number;
     packagesRemoved: number;
@@ -762,6 +854,12 @@ interface ReleaseRevision {
     sourceVersionsAdded: number;
     sourceVersionsRemoved: number;
   };
+}
+
+interface ReleaseDiffBucket {
+  added: string[];
+  removed: string[];
+  unchanged: string[];
 }
 
 interface AutoPublishInfo {
