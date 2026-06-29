@@ -71,6 +71,10 @@ export const rollbackReleaseSchema = z.object({
   releaseId: z.string().min(1)
 });
 
+export const publishReleaseSchema = z.object({
+  autoMode: z.boolean().default(false)
+});
+
 /** 资产包/资料库/版本/发布的命名与备注更新校验：至少提供一个可编辑字段。 */
 export const updatePackageSchema = z.object({
   name: z.string().min(1).max(200).optional(),

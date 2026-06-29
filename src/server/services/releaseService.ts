@@ -45,6 +45,19 @@ interface ReleaseRevision {
   };
 }
 
+interface PublishOptions {
+  autoMode?: boolean;
+}
+
+interface AutoPublishCheck {
+  eligible: boolean;
+  mode: "manual" | "auto";
+  reasons: string[];
+  changedComponentIds: string[];
+  blockingTaskIds: string[];
+  trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
+}
+
 export interface CreateReleaseDraftInput {
   version: string;
   packageIds: string[];
@@ -122,7 +135,7 @@ export class ReleaseService {
     }
   }
 
-  async publish(releaseId: string, publishedBy: string): Promise<ReleaseRecord> {
+  async publish(releaseId: string, publishedBy: string, options: PublishOptions = {}): Promise<ReleaseRecord> {
     const span = this.diagnostics?.startSpan({
       category: "release",
       message: "publish release",
@@ -136,13 +149,14 @@ export class ReleaseService {
       if (!release) throw new Error(`Unknown release: ${releaseId}`);
       if (release.status === "published") throw new Error(`Release ${releaseId} is already published.`);
 
-      const blockers = await this.findOpenBlockingTasks(release.packageIds);
-      if (blockers.length > 0) {
-        throw new Error(`Cannot publish release with open blocking tasks: ${blockers.map((task) => task.task_id).join(", ")}`);
-      }
-
       const packages = await this.loadPackages(release.packageIds);
       const components = await this.loadComponents(release.packageIds);
+      if (!options.autoMode) {
+        const blockers = await this.findOpenBlockingTasks(release.packageIds);
+        if (blockers.length > 0) {
+          throw new Error(`Cannot publish release with open blocking tasks: ${blockers.map((task) => task.task_id).join(", ")}`);
+        }
+      }
       const activeRuleProfile = await createLegislationService(this.db).getActiveProfile();
       const publishedAt = new Date().toISOString();
       await this.ensurePublishEvidence(packages, components, publishedAt);
@@ -151,6 +165,10 @@ export class ReleaseService {
       const parentRelease = release.parentReleaseId ? await this.getRelease(release.parentReleaseId) : null;
       const revisionDiff = buildReleaseDiff(parentRelease, packages, trustedComponents);
       const revision = buildReleaseRevision(release, revisionDiff);
+      const autoPublish = await this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode));
+      if (options.autoMode && !autoPublish.eligible) {
+        throw new Error(`Auto publish is not eligible: ${autoPublish.reasons.join(", ")}`);
+      }
       const auditSummary = await buildReleaseAuditSummary({
         adapter: this.adapter,
         release,
@@ -183,6 +201,7 @@ export class ReleaseService {
         okf: okfExport.manifest,
         auditSummary: okfExport.manifest.auditSummary,
         revision,
+        autoPublish,
       });
       const manifestHash = hashManifest(manifest);
 
@@ -347,6 +366,48 @@ export class ReleaseService {
     return rows;
   }
 
+  private async findOpenBlockingTasksForComponents(componentIds: string[]): Promise<Record<string, unknown>[]> {
+    if (componentIds.length === 0) return [];
+    const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT task_id, package_id, component_id, title
+       FROM review_tasks
+       WHERE component_id IN (${placeholders}) AND severity = 'blocking' AND status = 'open'
+       ORDER BY created_at, task_id`,
+      componentIds,
+    );
+    return rows;
+  }
+
+  private async buildAutoPublishCheck(
+    release: ReleaseRecord,
+    parentRelease: ReleaseRecord | null,
+    revision: ReleaseRevision,
+    components: AssetComponent[],
+    autoMode: boolean,
+  ): Promise<AutoPublishCheck> {
+    const changedComponentIds = uniqueSorted([...revision.diff.componentIds.added, ...revision.diff.changedComponents]);
+    const reasons: string[] = [];
+    if (!parentRelease || !release.parentReleaseId) reasons.push("missing_parent_release");
+    if (revision.diff.componentIds.removed.length > 0) reasons.push("removed_components_present");
+    if (changedComponentIds.length === 0) reasons.push("no_component_changes");
+
+    const blockingTasks = await this.findOpenBlockingTasksForComponents(changedComponentIds);
+    if (blockingTasks.length > 0) reasons.push("changed_components_have_blocking_tasks");
+
+    const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
+    if (trustDeclines.length > 0) reasons.push("trust_score_declined_or_missing");
+
+    return {
+      eligible: reasons.length === 0,
+      mode: autoMode ? "auto" : "manual",
+      reasons,
+      changedComponentIds,
+      blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
+      trustDeclines,
+    };
+  }
+
   private async loadPackages(packageIds: string[]): Promise<AssetPackage[]> {
     if (packageIds.length === 0) return [];
     const placeholders = packageIds.map((_, index) => `$${index + 1}`).join(",");
@@ -489,6 +550,7 @@ function buildManifest(input: {
   okf: OkfExportManifest;
   auditSummary: ReleaseAuditSummary;
   revision: ReleaseRevision;
+  autoPublish: AutoPublishCheck;
 }) {
   const componentIds = input.components.map((component) => component.componentId).sort();
   const sourceVersionIds = uniqueSorted(input.packages.flatMap((pkg) => pkg.sourceVersionIds));
@@ -497,6 +559,7 @@ function buildManifest(input: {
     parentReleaseId: input.release.parentReleaseId,
     version: input.release.version,
     revision: input.revision,
+    autoPublish: input.autoPublish,
     packageIds: input.packages.map((pkg) => pkg.packageId).sort(),
     componentIds,
     sourceVersionIds,
@@ -569,6 +632,39 @@ function buildReleaseRevision(release: ReleaseRecord, diff: ReleaseDiff): Releas
       sourceVersionsRemoved: diff.sourceVersionIds.removed.length,
     },
   };
+}
+
+function trustDeclinesAgainstParent(
+  parentRelease: ReleaseRecord | null,
+  components: AssetComponent[],
+  changedComponentIds: string[],
+): Array<{ componentId: string; previousScore: number | null; nextScore: number | null }> {
+  const nextById = new Map(components.map((component) => [component.componentId, scoreFromQuality(component.quality)] as const));
+  const previousById = parentComponentTrustScores(parentRelease);
+  const declines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }> = [];
+  for (const componentId of changedComponentIds) {
+    const nextScore = nextById.get(componentId) ?? null;
+    const previousScore = previousById.get(componentId) ?? null;
+    if (nextScore === null) declines.push({ componentId, previousScore, nextScore });
+    else if (!previousById.has(componentId)) continue;
+    else if (previousScore === null) declines.push({ componentId, previousScore, nextScore });
+    else if (nextScore + 0.0001 < previousScore) declines.push({ componentId, previousScore, nextScore });
+  }
+  return declines;
+}
+
+function parentComponentTrustScores(parentRelease: ReleaseRecord | null): Map<string, number | null> {
+  if (!parentRelease) return new Map();
+  const components = Array.isArray(parentRelease.manifest.components) ? parentRelease.manifest.components : [];
+  const entries = components.flatMap((item) => {
+    const component = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
+    const componentId = typeof component.componentId === "string" ? component.componentId : "";
+    const quality = component.quality && typeof component.quality === "object" && !Array.isArray(component.quality)
+      ? component.quality as Record<string, unknown>
+      : {};
+    return componentId ? [[componentId, scoreFromQuality(quality)] as const] : [];
+  });
+  return new Map(entries);
 }
 
 function diffBucket(previous: string[], next: string[]): DiffBucket {

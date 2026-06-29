@@ -13,8 +13,9 @@ export async function createRelease(version: string, packageIds: string[], paren
   return (await postJson<{ release: ReleaseRecord }>("/api/releases", { version, packageIds, parentReleaseId })).release;
 }
 
-export async function publishRelease(releaseId: string): Promise<ReleaseRecord> {
-  return (await postEmpty<{ release: ReleaseRecord }>(`/api/releases/${encodeURIComponent(releaseId)}/publish`)).release;
+export async function publishRelease(releaseId: string, options: { autoMode?: boolean } = {}): Promise<ReleaseRecord> {
+  if (!options.autoMode) return (await postEmpty<{ release: ReleaseRecord }>(`/api/releases/${encodeURIComponent(releaseId)}/publish`)).release;
+  return (await postJson<{ release: ReleaseRecord }>(`/api/releases/${encodeURIComponent(releaseId)}/publish`, options)).release;
 }
 
 export async function rollbackRelease(releaseId: string): Promise<ReleaseRecord> {

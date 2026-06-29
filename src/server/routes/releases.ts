@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 
 import { requireRole, denyRole } from "../middleware/auth";
-import { createReleaseSchema, rollbackReleaseSchema, updateReleaseSchema } from "../schemas";
+import { createReleaseSchema, publishReleaseSchema, rollbackReleaseSchema, updateReleaseSchema } from "../schemas";
 import type { RouteContext } from "./context";
 
 export function registerReleaseRoutes(app: FastifyInstance, ctx: RouteContext) {
@@ -31,12 +31,14 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: RouteContext) {
     }
   });
 
-  app.post<{ Params: { releaseId: string } }>(
+  app.post<{ Params: { releaseId: string }; Body: z.infer<typeof publishReleaseSchema> }>(
     "/api/releases/:releaseId/publish",
     { preHandler: [app.authenticate, requireRole("admin")] },
     async (request, reply) => {
+      const parsed = publishReleaseSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid publish payload." });
       try {
-        return { release: await ctx.releaseService.publish(request.params.releaseId, request.user.username) };
+        return { release: await ctx.releaseService.publish(request.params.releaseId, request.user.username, parsed.data) };
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "发布失败。" });
       }

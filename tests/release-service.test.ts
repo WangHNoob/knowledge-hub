@@ -87,6 +87,7 @@ describe("ReleaseService", () => {
 
       const rel2 = await service.createDraft({ version: "2026.06.15.002", packageIds: ["pkg_second"], requestedBy: "admin" });
       expect(rel2.parentReleaseId).toBe(pub1.releaseId);
+      await expect(service.publish(rel2.releaseId, "admin", { autoMode: true })).rejects.toThrow(/removed_components_present/u);
       const pub2 = await service.publish(rel2.releaseId, "admin");
       expect(pub2.parentReleaseId).toBe(pub1.releaseId);
       expect(pub2.manifest.revision).toMatchObject({
@@ -155,6 +156,36 @@ describe("ReleaseService", () => {
       });
       const secondPage = readFileSync(join(fixture.dataDir, "releases", second.releaseId, "okf_bundle", "systems", "demo.md"), "utf8");
       expect(secondPage).toBe(firstPage);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
+
+  it("allows auto-mode publishing when changed components have no blockers and trust does not decline", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_auto_ok" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+
+    try {
+      const firstDraft = await service.createDraft({ version: "2026.06.15.auto.1", packageIds: ["pkg_auto_ok"], requestedBy: "admin" });
+      const first = await service.publish(firstDraft.releaseId, "admin");
+      await fixture.db.adapter.query(
+        "UPDATE asset_components SET title = $2 WHERE component_id = $1",
+        ["cmp_pkg_auto_ok_page", "Demo Page Updated"],
+      );
+
+      const secondDraft = await service.createDraft({ version: "2026.06.15.auto.2", packageIds: ["pkg_auto_ok"], requestedBy: "admin" });
+      const second = await service.publish(secondDraft.releaseId, "admin", { autoMode: true });
+      expect(second.parentReleaseId).toBe(first.releaseId);
+      expect(second.manifest.revision).toMatchObject({
+        mode: "revision",
+        summary: { componentsAdded: 0, componentsRemoved: 0, componentsChanged: 1 }
+      });
+      expect(second.manifest.autoPublish).toMatchObject({
+        eligible: true,
+        mode: "auto",
+        reasons: [],
+        changedComponentIds: ["cmp_pkg_auto_ok_page"],
+      });
     } finally {
       await fixture.cleanup();
     }

@@ -68,7 +68,7 @@ export function Release() {
     }
   });
   const publishMutation = useMutation({
-    mutationFn: async () => publishRelease(draft?.releaseId ?? ""),
+    mutationFn: async (input: { autoMode?: boolean } = {}) => publishRelease(draft?.releaseId ?? "", input),
     onSuccess: async () => {
       setDraft(null);
       setVersion(releaseVersion());
@@ -202,10 +202,17 @@ export function Release() {
             <button
               className="primary-action"
               disabled={!draft || blockers.length > 0 || publishMutation.isPending}
-              onClick={() => publishMutation.mutate()}
+              onClick={() => publishMutation.mutate({ autoMode: false })}
             >
               <CheckCircle2 size={16} />
               {publishMutation.isPending ? "发布中..." : "发布为 Agent 当前版本"}
+            </button>
+            <button
+              className="secondary-action"
+              disabled={!draft || publishMutation.isPending}
+              onClick={() => publishMutation.mutate({ autoMode: true })}
+            >
+              自动条件发布
             </button>
           </div>
           {(createMutation.error || publishMutation.error) && (
@@ -300,6 +307,7 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
   const audit = auditSummary(release);
   const okf = okfManifest(release);
   const revision = revisionInfo(release);
+  const autoPublish = autoPublishInfo(release);
   if (!audit) return <OkfSummary release={release} />;
   const okfStats = audit.okf ?? okf;
   const missingCitations = okfStats ? Math.max(okfStats.citationSummary.required - okfStats.citationSummary.present, 0) : 0;
@@ -324,6 +332,7 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
         <Metric label="审核未关" value={audit.review.open} hint={`${audit.review.blocking} blocking`} tone={audit.review.blocking ? "hot" : audit.review.open ? "warn" : "ok"} />
         <Metric label="反馈回流" value={audit.agentFeedback.feedbackEvents} hint={`${audit.agentFeedback.mcpCalls} MCP calls`} tone={audit.agentFeedback.mcpMisses || audit.agentFeedback.mcpErrors ? "warn" : "ok"} />
         <Metric label="变更组件" value={revision ? revision.summary.componentsChanged + revision.summary.componentsAdded + revision.summary.componentsRemoved : "-"} hint={revision?.mode ?? "无版本链"} />
+        <Metric label="自动发布" value={autoPublish?.eligible ? "可用" : "不可用"} hint={autoPublish?.reasons[0] ?? autoPublish?.mode ?? "未检查"} tone={autoPublish?.eligible ? "ok" : "warn"} />
       </div>
 
       <div className="audit-grid">
@@ -538,6 +547,16 @@ function revisionInfo(release: ReleaseRecord): ReleaseRevision | null {
   };
 }
 
+function autoPublishInfo(release: ReleaseRecord): AutoPublishInfo | null {
+  const value = objectValue(release.manifest.autoPublish);
+  if (Object.keys(value).length === 0) return null;
+  return {
+    eligible: Boolean(value.eligible),
+    mode: String(value.mode ?? "manual"),
+    reasons: Array.isArray(value.reasons) ? value.reasons.filter((item): item is string => typeof item === "string") : [],
+  };
+}
+
 function trustTone(score: number | null): "hot" | "warn" | "ok" | undefined {
   if (score === null) return undefined;
   if (score < 0.55) return "hot";
@@ -575,4 +594,10 @@ interface ReleaseRevision {
     sourceVersionsAdded: number;
     sourceVersionsRemoved: number;
   };
+}
+
+interface AutoPublishInfo {
+  eligible: boolean;
+  mode: string;
+  reasons: string[];
 }
