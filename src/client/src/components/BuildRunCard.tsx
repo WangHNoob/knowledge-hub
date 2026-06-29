@@ -19,8 +19,8 @@ export function BuildRunCard({
   onStop: () => void;
   onDelete: () => void;
   onShowPackage: (packageId: string) => void;
-  onShowRelease: (releaseId?: string) => void;
-  onShowReview: () => void;
+  onShowRelease: (releaseId?: string, eventId?: string) => void;
+  onShowReview: (taskId?: string, packageId?: string) => void;
   busy: boolean;
 }) {
   const traceId = typeof run.config.traceId === "string" ? run.config.traceId : "";
@@ -126,8 +126,8 @@ function ReleaseAutomationStatus({
 }: {
   automation: BuildReleaseAutomation | null;
   onShowPackage: (packageId: string) => void;
-  onShowRelease: (releaseId?: string) => void;
-  onShowReview: () => void;
+  onShowRelease: (releaseId?: string, eventId?: string) => void;
+  onShowReview: (taskId?: string, packageId?: string) => void;
 }) {
   if (!automation) {
     return (
@@ -157,9 +157,9 @@ function ReleaseAutomationStatus({
         )}
         <div className="build-release-actions">
           {!succeeded && automation.reasons.some(needsReviewAction) && (
-            <button className="secondary-action" type="button" onClick={onShowReview}>处理审核任务</button>
+            <button className="secondary-action" type="button" onClick={() => onShowReview(automation.reviewTaskIds[0], automation.packageId)}>处理审核任务</button>
           )}
-          <button className="secondary-action" type="button" onClick={() => onShowRelease(automation.releaseId || undefined)}>查看发布状态</button>
+          <button className="secondary-action" type="button" onClick={() => onShowRelease(automation.releaseId || undefined, automation.eventId)}>查看发布事件</button>
           {automation.packageId && (
             <button className="secondary-action" type="button" onClick={() => onShowPackage(automation.packageId)}>查看资产包</button>
           )}
@@ -211,9 +211,11 @@ function parseFlywheelSummary(value: unknown): {
 }
 
 export interface BuildReleaseAutomation {
+  eventId: string;
   status: "succeeded" | "skipped";
   releaseId: string;
   packageId: string;
+  reviewTaskIds: string[];
   reasons: string[];
   createdAt: string;
 }

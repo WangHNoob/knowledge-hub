@@ -2050,6 +2050,12 @@ code {
   border-color: rgba(95, 127, 72, 0.24);
 }
 
+.auto-publish-event.targeted,
+.task.targeted {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.16), var(--shadow-soft);
+}
+
 .auto-publish-event header {
   display: flex;
   justify-content: space-between;

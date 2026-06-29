@@ -21,6 +21,8 @@ export interface NavParams {
   runId?: string;
   versionId?: string;
   releaseId?: string;
+  taskId?: string;
+  eventId?: string;
   severity?: string;
   toolName?: string;
   query?: string;

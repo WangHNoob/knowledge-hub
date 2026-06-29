@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
@@ -66,6 +66,10 @@ export function Review() {
     queryFn: () => listReviewTasks(severity || undefined, status || undefined)
   });
 
+  useEffect(() => {
+    if (params.severity && params.severity !== severity) setSeverity(params.severity);
+  }, [params.severity, severity]);
+
   const transition = useMutation({
     mutationFn: (input: { taskIds: string[]; next: "open" | "resolved" | "dismissed"; note?: string }) =>
       transitionReviewTasks(input.taskIds, input.next, input.note),
@@ -110,8 +114,12 @@ export function Review() {
   });
 
   const tasks = useMemo(
-    () => (data ?? []).filter((task) => !params.packageId || task.packageId === params.packageId),
-    [data, params.packageId]
+    () => (data ?? []).filter((task) => {
+      if (params.packageId && task.packageId !== params.packageId) return false;
+      if (params.taskId && task.taskId !== params.taskId) return false;
+      return true;
+    }),
+    [data, params.packageId, params.taskId]
   );
   const taskStats = useMemo(() => {
     let open = 0;
@@ -155,7 +163,7 @@ export function Review() {
         <div>
           <h2>审核任务</h2>
           {params.packageId
-            ? <p>已按资产包 <code>{params.packageId}</code> 过滤。</p>
+            ? <p>已按资产包 <code>{params.packageId}</code>{params.taskId ? <> 和任务 <code>{params.taskId}</code></> : null} 过滤。</p>
             : <p>按级别与状态筛选门禁与反馈生成的任务。</p>}
         </div>
         <div className="review-controls">
@@ -210,6 +218,7 @@ export function Review() {
           <ReviewTaskCard
             key={task.taskId}
             task={task}
+            highlighted={task.taskId === params.taskId}
             note={notes[task.taskId] ?? ""}
             answer={answers[task.taskId] ?? ""}
             selectedCandidateId={selectedCandidates[task.taskId] ?? ""}
@@ -235,6 +244,7 @@ export function Review() {
 
 const ReviewTaskCard = memo(function ReviewTaskCard({
   task,
+  highlighted,
   note,
   answer,
   selectedCandidateId,
@@ -252,6 +262,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onRetest,
 }: {
   task: ReviewTask;
+  highlighted: boolean;
   note: string;
   answer: string;
   selectedCandidateId: string;
@@ -273,7 +284,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   const componentIds = insight?.componentIds.length ? insight.componentIds : task.componentId ? [task.componentId] : [];
   const isRebuildCandidate = task.ruleId === "agent_feedback.rebuild_candidate";
   return (
-    <article className="task actionable-task">
+    <article className={highlighted ? "task actionable-task targeted" : "task actionable-task"}>
       <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />
       <div>
         <div className="task-title-row">

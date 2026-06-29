@@ -1,6 +1,6 @@
 import { AlertTriangle, CheckCircle2, FileText, GitBranch, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   createRelease,
@@ -26,7 +26,7 @@ import { IdChip, useNav } from "../ui/navigation";
 type ReleaseTab = "compose" | "current";
 
 export function Release() {
-  const { navigate } = useNav();
+  const { navigate, params } = useNav();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<ReleaseTab>("compose");
   const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
@@ -37,6 +37,10 @@ export function Release() {
   const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
   const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
+
+  useEffect(() => {
+    if (params.releaseId || params.eventId) setTab("current");
+  }, [params.eventId, params.releaseId]);
 
   const selectedPackageIdSet = useMemo(() => new Set(selectedPackageIds), [selectedPackageIds]);
   const blockersByPackage = useMemo(() => {
@@ -252,6 +256,7 @@ export function Release() {
           )}
           <AutoPublishEventsPanel
             events={autoPublishEvents}
+            focusedEventId={params.eventId}
             onNavigateReview={() => navigate("review")}
             onNavigateBuilder={() => navigate("builder")}
             onNavigateAssets={(packageId) => navigate("assets", { packageId })}
@@ -320,16 +325,22 @@ export function Release() {
 
 function AutoPublishEventsPanel({
   events,
+  focusedEventId,
   onNavigateReview,
   onNavigateBuilder,
   onNavigateAssets,
 }: {
   events: AutoPublishEventView[];
+  focusedEventId?: string;
   onNavigateReview: () => void;
   onNavigateBuilder: () => void;
   onNavigateAssets: (packageId: string) => void;
 }) {
-  const latest = events.slice(0, 5);
+  const latestBase = events.slice(0, 5);
+  const focusedEvent = focusedEventId ? events.find((event) => event.eventId === focusedEventId) : undefined;
+  const latest = focusedEvent && !latestBase.some((event) => event.eventId === focusedEvent.eventId)
+    ? [focusedEvent, ...latestBase.slice(0, 4)]
+    : latestBase;
   const currentStatus = latest[0]?.type ?? null;
   return (
     <section className="auto-publish-panel">
@@ -346,7 +357,7 @@ function AutoPublishEventsPanel({
       ) : (
         <div className="auto-publish-list">
           {latest.map((event) => (
-            <article className={`auto-publish-event ${event.type}`} key={event.eventId}>
+            <article className={`auto-publish-event ${event.type}${event.eventId === focusedEventId ? " targeted" : ""}`} key={event.eventId}>
               <header>
                 <div>
                   <strong>{event.type === "skipped" ? "自动发布已跳过" : "自动发布成功"}</strong>

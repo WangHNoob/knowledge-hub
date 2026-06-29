@@ -8,11 +8,13 @@ import {
   listBuildRuns,
   listBundleVersions,
   listFlywheelEvents,
+  listReviewTasks,
   stopBuildRun,
   testModelConnectivity,
   type BuildModelConfig,
   type FlywheelEvent,
-  type KnowledgeBuildRun
+  type KnowledgeBuildRun,
+  type ReviewTask
 } from "../api";
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
@@ -60,6 +62,11 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     queryFn: listFlywheelEvents,
     refetchInterval: 3000
   });
+  const blockingTasks = useQuery({
+    queryKey: ["review", "blocking"],
+    queryFn: () => listReviewTasks("blocking", "open"),
+    refetchInterval: 5000
+  });
 
   useEffect(() => {
     if (!selectedVersion && versions.data?.[0]) setSelectedVersion(versions.data[0].versionId);
@@ -92,6 +99,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
           void queryClient.invalidateQueries({ queryKey: ["packages"] });
           void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
           void queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] });
+          void queryClient.invalidateQueries({ queryKey: ["review", "blocking"] });
         }
       }
     }
@@ -125,6 +133,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
         queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["review", "blocking"] }),
         queryClient.invalidateQueries({ queryKey: ["packages"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
@@ -163,7 +172,10 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
 
   const activeRuns = (runs.data ?? []).filter((run) => run.status === "running");
   const selectedRuns = (runs.data ?? []).filter((run) => !selectedVersion || run.sourceVersionId === selectedVersion);
-  const automationByRunId = useMemo(() => buildReleaseAutomationByRunId(flywheelEvents.data ?? []), [flywheelEvents.data]);
+  const automationByRunId = useMemo(
+    () => buildReleaseAutomationByRunId(flywheelEvents.data ?? [], blockingTasks.data ?? []),
+    [blockingTasks.data, flywheelEvents.data]
+  );
   const canStart = Boolean(selectedVersion) && !buildMutation.isPending && stages.length > 0 && (
     provider === "deterministic" || Boolean(baseUrl.trim() && model.trim() && apiKey.trim())
   );
@@ -379,8 +391,8 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                   onStop={() => stopRunMutation.mutate(run.runId)}
                   onDelete={() => deleteRunMutation.mutate(run.runId)}
                   onShowPackage={onShowPackage}
-                  onShowRelease={(releaseId) => navigate("release", { releaseId })}
-                  onShowReview={() => navigate("review", { severity: "blocking", packageId: run.packageId ?? undefined })}
+                  onShowRelease={(releaseId, eventId) => navigate("release", { releaseId, eventId })}
+                  onShowReview={(taskId, packageId) => navigate("review", { severity: "blocking", packageId: packageId ?? run.packageId ?? undefined, taskId })}
                   busy={stopRunMutation.isPending || deleteRunMutation.isPending}
                 />
               ))}
@@ -443,17 +455,26 @@ function createModelConfig(
   };
 }
 
-function buildReleaseAutomationByRunId(events: FlywheelEvent[]): Map<string, BuildReleaseAutomation> {
+function buildReleaseAutomationByRunId(events: FlywheelEvent[], tasks: ReviewTask[]): Map<string, BuildReleaseAutomation> {
   const result = new Map<string, BuildReleaseAutomation>();
+  const taskIdsByPackage = new Map<string, string[]>();
+  for (const task of tasks) {
+    const bucket = taskIdsByPackage.get(task.packageId) ?? [];
+    bucket.push(task.taskId);
+    taskIdsByPackage.set(task.packageId, bucket);
+  }
   for (const event of events) {
     if (event.eventType !== "release.auto_publish_succeeded" && event.eventType !== "release.auto_publish_skipped") continue;
     const payload = objectValue(event.payload);
     const runId = stringField(payload.runId);
     if (!runId || result.has(runId)) continue;
+    const packageId = stringField(payload.packageId);
     result.set(runId, {
+      eventId: event.eventId,
       status: event.eventType === "release.auto_publish_succeeded" ? "succeeded" : "skipped",
       releaseId: stringField(payload.releaseId),
-      packageId: stringField(payload.packageId),
+      packageId,
+      reviewTaskIds: taskIdsByPackage.get(packageId) ?? [],
       reasons: parseAutoPublishReasons(stringField(payload.reason)),
       createdAt: event.createdAt,
     });
