@@ -8,6 +8,10 @@ export function registerAgentRoutes(app: FastifyInstance, ctx: RouteContext) {
     events: await ctx.service.listAgentEvents()
   }));
 
+  app.get("/api/agent/flywheel-events", { preHandler: app.authenticate }, async () => ({
+    events: await ctx.service.listFlywheelEvents()
+  }));
+
   app.get("/api/mcp/audit", { preHandler: app.authenticate }, async () => ({
     audit: await ctx.service.listMcpAudit()
   }));

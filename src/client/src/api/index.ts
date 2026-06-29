@@ -40,6 +40,6 @@ export {
   rollbackRelease,
   updateRelease
 } from "./releases";
-export { createOutputAudit, listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery } from "./agent";
+export { createOutputAudit, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery } from "./agent";
 export { getDiagnosticSummary, getDiagnosticTrace, listDiagnosticLogs } from "./diagnostics";
 export { importLegacy, scanLegacy } from "./legacy";

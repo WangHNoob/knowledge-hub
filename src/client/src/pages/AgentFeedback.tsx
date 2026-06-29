@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { listAgentEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type KnowledgeEnvelope } from "../api";
+import { listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelEvent, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
 import { formatPercent, formatTime } from "../utils/format";
@@ -40,6 +40,7 @@ export function AgentFeedback() {
   const [payload, setPayload] = useState('{\n  "query": "Battle System"\n}');
   const [envelope, setEnvelope] = useState<KnowledgeEnvelope | null>(null);
   const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
+  const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({
@@ -48,6 +49,7 @@ export function AgentFeedback() {
       setEnvelope(result);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["agent-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent-flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["mcp-audit"] }),
         queryClient.invalidateQueries({ queryKey: ["review"] })
       ]);
@@ -67,9 +69,10 @@ export function AgentFeedback() {
   };
   const eventRows = events.data ?? [];
   const pressureRows = useMemo(() => buildFeedbackPressure(eventRows), [eventRows]);
+  const automationRows = useMemo(() => buildAutomationChains(flywheelEvents.data ?? []), [flywheelEvents.data]);
   const rebuildCandidates = pressureRows.filter((row) => row.negativeCount >= 2).length;
-  if (events.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
-  if (events.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? audit.error ?? outputAudits.error} />;
+  if (events.isLoading || flywheelEvents.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
+  if (events.error || flywheelEvents.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? audit.error ?? outputAudits.error} />;
   const auditRows = audit.data ?? [];
   const missCount = eventRows.filter((event) => event.status === "miss").length;
   const flaggedCount = eventRows.filter((event) => event.qualityFlags.length > 0).length;
@@ -235,6 +238,11 @@ export function AgentFeedback() {
         {tab === "feedback" && (
           <section className="mcp-panel">
             <h2>反馈回流</h2>
+            <AutomationTimeline
+              rows={automationRows}
+              onNavigateReview={() => navigate("review")}
+              onNavigateAsset={(componentId) => navigate("assets", { componentId })}
+            />
             {pressureRows.length > 0 && (
               <div className="feedback-pressure-grid">
                 {pressureRows.slice(0, 6).map((row) => (
@@ -309,6 +317,170 @@ function buildFeedbackPressure(events: AgentEvent[]): Array<{ componentId: strin
     }
   }
   return [...rows.values()].sort((a, b) => b.negativeCount - a.negativeCount || a.title.localeCompare(b.title));
+}
+
+interface AutomationChain {
+  id: string;
+  title: string;
+  componentId: string;
+  packageId: string;
+  taskId: string;
+  runId: string;
+  releaseId: string;
+  status: "proposed" | "running" | "built" | "draft" | "published" | "skipped";
+  statusText: string;
+  reason: string;
+  updatedAt: string;
+  steps: Array<{ key: string; label: string; status: "done" | "current" | "blocked" | "pending"; detail: string; at: string }>;
+}
+
+function buildAutomationChains(events: FlywheelEvent[]): AutomationChain[] {
+  const chains = new Map<string, AutomationChain>();
+  const sorted = [...events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+  for (const event of sorted) {
+    const payload = event.payload ?? {};
+    const key = chainKey(event, chains);
+    const chain = chains.get(key) ?? createAutomationChain(key);
+    applyAutomationEvent(chain, event, payload);
+    chains.set(key, chain);
+  }
+  return [...chains.values()].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 6);
+}
+
+function createAutomationChain(id: string): AutomationChain {
+  return {
+    id,
+    title: "自动化链路",
+    componentId: "",
+    packageId: "",
+    taskId: "",
+    runId: "",
+    releaseId: "",
+    status: "proposed",
+    statusText: "等待触发",
+    reason: "",
+    updatedAt: "",
+    steps: [
+      { key: "proposal", label: "反馈提案", status: "pending", detail: "", at: "" },
+      { key: "rebuild", label: "重建 run", status: "pending", detail: "", at: "" },
+      { key: "build", label: "构建完成", status: "pending", detail: "", at: "" },
+      { key: "revision", label: "revision 草案", status: "pending", detail: "", at: "" },
+      { key: "publish", label: "发布结果", status: "pending", detail: "", at: "" },
+    ],
+  };
+}
+
+function applyAutomationEvent(chain: AutomationChain, event: FlywheelEvent, payload: Record<string, unknown>) {
+  chain.updatedAt = event.createdAt;
+  chain.packageId = stringField(payload.packageId) || chain.packageId;
+  chain.taskId = stringField(payload.taskId) || chain.taskId;
+  chain.runId = stringField(payload.runId) || (event.eventType === "agent.feedback.rebuild_started" || event.eventType === "build.completed" ? event.entityId : chain.runId);
+  chain.releaseId = stringField(payload.releaseId) || (event.entityType === "release" ? event.entityId : chain.releaseId);
+  chain.componentId = stringField(payload.componentId) || (event.entityType === "component" ? event.entityId : chain.componentId);
+  chain.title = chain.componentId || chain.packageId || chain.runId || "自动化链路";
+  if (event.eventType === "agent.feedback.rebuild_proposed") {
+    updateStep(chain, "proposal", "done", `任务 ${chain.taskId || stringField(payload.taskId)}`, event.createdAt);
+    updateStep(chain, "rebuild", "current", "等待启动 scoped rebuild", event.createdAt);
+    chain.status = "proposed";
+    chain.statusText = "已提出重建";
+  }
+  if (event.eventType === "agent.feedback.rebuild_started") {
+    updateStep(chain, "proposal", "done", chain.taskId ? `任务 ${chain.taskId}` : "已确认", event.createdAt);
+    updateStep(chain, "rebuild", "done", chain.runId ? `run ${chain.runId}` : "已启动", event.createdAt);
+    updateStep(chain, "build", "current", "等待构建完成", event.createdAt);
+    chain.status = "running";
+    chain.statusText = "重建中";
+  }
+  if (event.eventType === "build.completed") {
+    updateStep(chain, "build", "done", chain.runId ? `run ${chain.runId}` : "已完成", event.createdAt);
+    updateStep(chain, "revision", "current", "等待 revision 草案", event.createdAt);
+    chain.status = "built";
+    chain.statusText = "构建完成";
+  }
+  if (event.eventType === "release.revision_proposed") {
+    updateStep(chain, "revision", "done", chain.releaseId ? `草案 ${chain.releaseId}` : "已创建", event.createdAt);
+    updateStep(chain, "publish", "current", "等待自动发布资格检查", event.createdAt);
+    chain.status = "draft";
+    chain.statusText = "草案已生成";
+  }
+  if (event.eventType === "release.auto_publish_succeeded") {
+    updateStep(chain, "publish", "done", chain.releaseId ? `已发布 ${chain.releaseId}` : "已发布", event.createdAt);
+    chain.status = "published";
+    chain.statusText = "已自动发布";
+  }
+  if (event.eventType === "release.auto_publish_skipped") {
+    chain.reason = stringField(payload.reason);
+    updateStep(chain, "publish", "blocked", chain.reason || "未满足自动发布条件", event.createdAt);
+    chain.status = "skipped";
+    chain.statusText = "等待人工确认";
+  }
+}
+
+function chainKey(event: FlywheelEvent, chains: Map<string, AutomationChain>): string {
+  const payload = event.payload ?? {};
+  const ids = [
+    stringField(payload.taskId),
+    stringField(payload.runId),
+    stringField(payload.releaseId),
+    event.entityId,
+  ].filter(Boolean);
+  for (const chain of chains.values()) {
+    if (ids.some((id) => id === chain.taskId || id === chain.runId || id === chain.releaseId || id === chain.componentId)) return chain.id;
+  }
+  return ids[0]
+    || stringField(payload.sourceEventId)
+    || event.entityId
+    || event.eventId;
+}
+
+function updateStep(chain: AutomationChain, key: string, status: AutomationChain["steps"][number]["status"], detail: string, at: string) {
+  chain.steps = chain.steps.map((step) => step.key === key ? { ...step, status, detail, at } : step);
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function AutomationTimeline({
+  rows,
+  onNavigateReview,
+  onNavigateAsset,
+}: {
+  rows: AutomationChain[];
+  onNavigateReview: () => void;
+  onNavigateAsset: (componentId: string) => void;
+}) {
+  if (rows.length === 0) return <p className="subtle">暂无自动化链路事件。触发两次有效负反馈后会出现重建与发布进度。</p>;
+  return (
+    <div className="automation-grid">
+      {rows.map((row) => (
+        <article className={`automation-card ${row.status}`} key={row.id}>
+          <div className="detail-head">
+            <div>
+              <h3>{row.title}</h3>
+              <p>{[row.taskId, row.runId, row.releaseId].filter(Boolean).join(" / ") || row.id}</p>
+            </div>
+            <Badge label={row.statusText} tone={row.status === "published" ? "ok" : row.status === "skipped" ? "warn" : undefined} />
+          </div>
+          <div className="automation-steps">
+            {row.steps.map((step) => (
+              <div className={`automation-step ${step.status}`} key={step.key}>
+                <span />
+                <strong>{step.label}</strong>
+                <small>{step.detail || "待处理"}</small>
+              </div>
+            ))}
+          </div>
+          {row.reason && <p className="automation-reason">{row.reason}</p>}
+          <div className="task-primary-actions">
+            {row.componentId && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(row.componentId)}>查看资产</button>}
+            <button className="secondary-action" type="button" onClick={onNavigateReview}>查看审核任务</button>
+          </div>
+          <small>{formatTime(row.updatedAt)}</small>
+        </article>
+      ))}
+    </div>
+  );
 }
 
 function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: string; body: string }> {

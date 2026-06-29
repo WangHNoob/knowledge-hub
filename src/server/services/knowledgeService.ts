@@ -17,6 +17,7 @@ import type {
   DatabaseHandle,
   EvidenceCoverage,
   EvidenceRecord,
+  FlywheelEvent,
   McpAuditRecord,
   PackageStatus,
   ReleaseRecord,
@@ -474,6 +475,31 @@ export class KnowledgeService {
   async listMcpAudit(): Promise<McpAuditRecord[]> {
     const { rows } = await this.adapter.query("SELECT * FROM mcp_audit ORDER BY created_at DESC LIMIT 100");
     return rows.map(mapMcpAudit);
+  }
+
+  async listFlywheelEvents(): Promise<FlywheelEvent[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM knowledge_events
+       WHERE event_type IN (
+         'agent.feedback.rebuild_proposed',
+         'agent.feedback.rebuild_started',
+         'build.completed',
+         'release.revision_proposed',
+         'release.auto_publish_succeeded',
+         'release.auto_publish_skipped'
+       )
+       ORDER BY created_at DESC
+       LIMIT 100`,
+    );
+    return rows.map((row) => ({
+      eventId: String(row.event_id),
+      eventType: String(row.event_type),
+      entityType: String(row.entity_type ?? ""),
+      entityId: String(row.entity_id ?? ""),
+      payload: jsonObject(row.payload_json),
+      createdAt: String(row.created_at),
+    }));
   }
 }
 

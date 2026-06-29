@@ -533,6 +533,15 @@ export interface AgentEventComponent {
   evidenceRecords: number;
 }
 
+export interface FlywheelEvent {
+  eventId: string;
+  eventType: string;
+  entityType: string;
+  entityId: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface AttributionSegment {
   segmentId: string;
   text: string;

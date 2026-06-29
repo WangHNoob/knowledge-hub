@@ -283,6 +283,37 @@ describe("knowledge hub api", () => {
     }));
   });
 
+  it("serves flywheel automation events only to authenticated users", async () => {
+    const { app, token } = await getToken();
+    await db.adapter.query(
+      `INSERT INTO knowledge_events (event_id, event_type, entity_type, entity_id, payload_json, created_at)
+       VALUES ($1,$2,$3,$4,$5,NOW())`,
+      [
+        "evt_api_flywheel",
+        "release.auto_publish_skipped",
+        "release",
+        "rel_api_flywheel",
+        JSON.stringify({ releaseId: "rel_api_flywheel", runId: "run_api_flywheel", reason: "changed_components_have_blocking_tasks" }),
+      ],
+    );
+
+    const denied = await app.inject({ method: "GET", url: "/api/agent/flywheel-events" });
+    expect(denied.statusCode).toBe(401);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/agent/flywheel-events",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().events[0]).toMatchObject({
+      eventId: "evt_api_flywheel",
+      eventType: "release.auto_publish_skipped",
+      entityId: "rel_api_flywheel",
+      payload: { runId: "run_api_flywheel" }
+    });
+  });
+
   it("imports a legacy directory into a draft package through the api", async () => {
     const { app, token } = await getToken();
     const legacy = join(dir, "legacy-api-" + randomUUID().slice(0, 6));
