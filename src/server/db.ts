@@ -236,6 +236,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}releases (
       release_id TEXT PRIMARY KEY,
+      parent_release_id TEXT,
       version TEXT NOT NULL,
       status TEXT NOT NULL,
       package_ids JSONB NOT NULL DEFAULT '[]',
@@ -329,6 +330,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
   await adapter.exec(`
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_hash TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_json JSONB NOT NULL DEFAULT '{}';
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS parent_release_id TEXT;
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS published_by TEXT NOT NULL DEFAULT '';

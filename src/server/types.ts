@@ -201,6 +201,7 @@ export interface RuleDismissal {
 
 export interface ReleaseRecord {
   releaseId: string;
+  parentReleaseId: string | null;
   version: string;
   status: "draft" | "published";
   packageIds: string[];

@@ -61,7 +61,7 @@ export function Release() {
     [selectedPackages]
   );
   const createMutation = useMutation({
-    mutationFn: () => createRelease(version.trim(), selectedPackageIds),
+    mutationFn: () => createRelease(version.trim(), selectedPackageIds, current.data?.releaseId ?? null),
     onSuccess: async (release) => {
       setDraft(release);
       await queryClient.invalidateQueries({ queryKey: ["releases"] });
@@ -174,6 +174,7 @@ export function Release() {
             <Metric label="资产包" value={selectedPackages.length} hint="本次发布包含" />
             <Metric label="来源版本" value={new Set(selectedPackages.flatMap((pkg) => pkg.sourceVersionIds)).size} hint="冻结到 manifest" />
             <Metric label="组件估算" value={selectedComponents || "-"} hint="发布时实际冻结" />
+            <Metric label="发布基线" value={current.data ? "revision" : "initial"} hint={current.data?.version ?? "首次发布"} />
           </div>
           {blockers.length > 0 ? (
             <div className="warning-list">
@@ -186,6 +187,7 @@ export function Release() {
             <div className="release-draft">
               <strong>草案：{draft.version}</strong>
               <code>{draft.releaseId}</code>
+              {draft.parentReleaseId && <span>基于 {draft.parentReleaseId}</span>}
             </div>
           )}
           <div className="detail-actions">
@@ -239,6 +241,7 @@ export function Release() {
                 <div>
                   <strong>{release.version}</strong>
                   <span>{release.releaseId}</span>
+                  {release.parentReleaseId && <span className="subtle">基于 {release.parentReleaseId}</span>}
                   {release.note && <span className="subtle">{release.note}</span>}
                   <small>{release.manifestHash}</small>
                   {release.publishedAt && <small>发布于 {formatTime(release.publishedAt)}</small>}
@@ -296,6 +299,7 @@ export function Release() {
 function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
   const audit = auditSummary(release);
   const okf = okfManifest(release);
+  const revision = revisionInfo(release);
   if (!audit) return <OkfSummary release={release} />;
   const okfStats = audit.okf ?? okf;
   const missingCitations = okfStats ? Math.max(okfStats.citationSummary.required - okfStats.citationSummary.present, 0) : 0;
@@ -319,16 +323,29 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
         <Metric label="可信均分" value={averageTrust} hint={`最低 ${minTrust}`} tone={trustTone(audit.trust.minScore)} />
         <Metric label="审核未关" value={audit.review.open} hint={`${audit.review.blocking} blocking`} tone={audit.review.blocking ? "hot" : audit.review.open ? "warn" : "ok"} />
         <Metric label="反馈回流" value={audit.agentFeedback.feedbackEvents} hint={`${audit.agentFeedback.mcpCalls} MCP calls`} tone={audit.agentFeedback.mcpMisses || audit.agentFeedback.mcpErrors ? "warn" : "ok"} />
+        <Metric label="变更组件" value={revision ? revision.summary.componentsChanged + revision.summary.componentsAdded + revision.summary.componentsRemoved : "-"} hint={revision?.mode ?? "无版本链"} />
       </div>
 
       <div className="audit-grid">
         <section className="audit-card">
           <h4>来源与构建</h4>
           <div className="audit-kv">
+            {revision && (
+              <>
+                <span>发布模式</span>
+                <strong>{revision.mode}</strong>
+              </>
+            )}
             <span>资料版本</span>
             <strong>{audit.sources.sourceVersionIds.length}</strong>
             <span>缓存阶段</span>
             <strong>{audit.build.cachedStages}</strong>
+            {revision?.parentReleaseId && (
+              <>
+                <span>基线版本</span>
+                <strong>{revision.parentReleaseId}</strong>
+              </>
+            )}
           </div>
           <div className="audit-list">
             {audit.sources.packages.slice(0, 5).map((pkg) => (
@@ -402,6 +419,7 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
           )}
           <div className="okf-paths">
             {okf?.logUri && <code><FileText size={14} /> {okf.logUri}</code>}
+            {okf?.revisionUri && <code>{okf.revisionUri}</code>}
             {okf?.lintMarkdownUri && <code>{okf.lintMarkdownUri}</code>}
             {okf?.reportUri && <code>{okf.reportUri}</code>}
           </div>
@@ -443,6 +461,7 @@ function OkfSummary({ release }: { release: ReleaseRecord }) {
       </div>
       <div className="okf-paths">
         <code>{okf.bundleUri}</code>
+        {okf.revisionUri && <code>{okf.revisionUri}</code>}
         <code>{okf.reportUri}</code>
       </div>
     </div>
@@ -459,6 +478,7 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
   return {
     bundleUri: String(okf.bundleUri ?? ""),
     reportUri: String(okf.reportUri ?? ""),
+    revisionUri: String(okf.revisionUri ?? ""),
     logUri: String(okf.logUri ?? ""),
     lintUri: String(okf.lintUri ?? ""),
     lintMarkdownUri: String(okf.lintMarkdownUri ?? ""),
@@ -498,6 +518,26 @@ function auditSummary(release: ReleaseRecord): ReleaseAuditSummary | null {
   return audit;
 }
 
+function revisionInfo(release: ReleaseRecord): ReleaseRevision | null {
+  const revision = objectValue(release.manifest.revision);
+  const summary = objectValue(revision.summary);
+  if (Object.keys(revision).length === 0) return null;
+  return {
+    mode: String(revision.mode ?? "initial"),
+    parentReleaseId: typeof revision.parentReleaseId === "string" ? revision.parentReleaseId : null,
+    summary: {
+      packagesAdded: Number(summary.packagesAdded ?? 0),
+      packagesRemoved: Number(summary.packagesRemoved ?? 0),
+      componentsAdded: Number(summary.componentsAdded ?? 0),
+      componentsRemoved: Number(summary.componentsRemoved ?? 0),
+      componentsChanged: Number(summary.componentsChanged ?? 0),
+      componentsUnchanged: Number(summary.componentsUnchanged ?? 0),
+      sourceVersionsAdded: Number(summary.sourceVersionsAdded ?? 0),
+      sourceVersionsRemoved: Number(summary.sourceVersionsRemoved ?? 0),
+    },
+  };
+}
+
 function trustTone(score: number | null): "hot" | "warn" | "ok" | undefined {
   if (score === null) return undefined;
   if (score < 0.55) return "hot";
@@ -512,6 +552,7 @@ function objectValue(value: unknown): Record<string, unknown> {
 interface OkfManifest {
   bundleUri: string;
   reportUri: string;
+  revisionUri: string;
   logUri: string;
   lintUri: string;
   lintMarkdownUri: string;
@@ -519,4 +560,19 @@ interface OkfManifest {
   summary: { blocking: number; warning: number; info: number };
   linkSummary: { resolved: number; unresolved: number };
   citationSummary: { required: number; present: number };
+}
+
+interface ReleaseRevision {
+  mode: string;
+  parentReleaseId: string | null;
+  summary: {
+    packagesAdded: number;
+    packagesRemoved: number;
+    componentsAdded: number;
+    componentsRemoved: number;
+    componentsChanged: number;
+    componentsUnchanged: number;
+    sourceVersionsAdded: number;
+    sourceVersionsRemoved: number;
+  };
 }

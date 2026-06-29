@@ -125,6 +125,7 @@ export function mapEvidenceRecord(row: Record<string, unknown>): EvidenceRecord 
 export function mapRelease(row: Record<string, unknown>): ReleaseRecord {
   return {
     releaseId: row.release_id as string,
+    parentReleaseId: row.parent_release_id ? String(row.parent_release_id) : null,
     version: row.version as string,
     status: row.status as ReleaseRecord["status"],
     packageIds: jsonArray(row.package_ids),

@@ -25,6 +25,7 @@ export interface OkfExportManifest {
   tableSchemasUri?: string;
   tableAliasesUri?: string;
   searchIndexUri?: string;
+  revisionUri?: string;
   logUri: string;
   lintUri: string;
   lintMarkdownUri: string;
@@ -50,6 +51,7 @@ export interface ExportReleaseOkfInput {
   publishedAt: string;
   activeRuleProfileHash: string;
   auditSummary: ReleaseAuditSummary;
+  revision?: Record<string, unknown>;
 }
 
 export function createOkfExportService(db: DatabaseHandle, dataDir: string) {
@@ -102,6 +104,8 @@ export class OkfExportService {
 
     const searchIndexUri = exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
     if (searchIndexUri) exportedPaths.push(searchIndexUri);
+    const revisionUri = input.revision ? exportRevisionAsset(bundleDir, input.revision) : undefined;
+    if (revisionUri) exportedPaths.push(revisionUri);
 
     writeFileSync(join(bundleDir, "index.md"), renderIndex(input.release, exportedPaths), "utf8");
     writeFileSync(join(bundleDir, "log.md"), renderReleaseAuditLog(input.auditSummary), "utf8");
@@ -136,6 +140,7 @@ export class OkfExportService {
         tableSchemasUri,
         tableAliasesUri,
         searchIndexUri,
+        revisionUri,
         logUri: posix.join("releases", input.release.releaseId, "okf_bundle", "log.md"),
         lintUri: lint.jsonUri,
         lintMarkdownUri: lint.markdownUri,
@@ -305,6 +310,16 @@ function exportSearchIndexAsset(bundleDir: string, generatedAt: string, pages: A
   if (pages.length === 0) return undefined;
   const uri = "search/index.json";
   writeJsonAsset(bundleDir, uri, buildOkfSearchIndex({ generatedAt, pages, bundleDir }));
+  return uri;
+}
+
+function exportRevisionAsset(bundleDir: string, revision: Record<string, unknown>): string {
+  const uri = "meta/revision.json";
+  writeJsonAsset(bundleDir, uri, {
+    okfAssetType: "release_revision",
+    version: 1,
+    ...revision,
+  });
   return uri;
 }
 

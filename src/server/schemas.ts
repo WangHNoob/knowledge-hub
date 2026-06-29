@@ -63,7 +63,8 @@ export const modelConnectivitySchema = z.object({
 
 export const createReleaseSchema = z.object({
   version: z.string().min(1),
-  packageIds: z.array(z.string().min(1)).min(1)
+  packageIds: z.array(z.string().min(1)).min(1),
+  parentReleaseId: z.string().min(1).nullable().optional()
 });
 
 export const rollbackReleaseSchema = z.object({

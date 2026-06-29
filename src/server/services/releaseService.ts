@@ -15,10 +15,41 @@ import { computeTrustScore, scoreFromQuality } from "./trustScore";
 const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
 
+interface ReleaseDiff {
+  packageIds: DiffBucket;
+  componentIds: DiffBucket;
+  sourceVersionIds: DiffBucket;
+  changedComponents: string[];
+  unchangedComponents: string[];
+}
+
+interface DiffBucket {
+  added: string[];
+  removed: string[];
+  unchanged: string[];
+}
+
+interface ReleaseRevision {
+  parentReleaseId: string | null;
+  mode: "initial" | "revision";
+  diff: ReleaseDiff;
+  summary: {
+    packagesAdded: number;
+    packagesRemoved: number;
+    componentsAdded: number;
+    componentsRemoved: number;
+    componentsChanged: number;
+    componentsUnchanged: number;
+    sourceVersionsAdded: number;
+    sourceVersionsRemoved: number;
+  };
+}
+
 export interface CreateReleaseDraftInput {
   version: string;
   packageIds: string[];
   requestedBy: string;
+  parentReleaseId?: string | null;
 }
 
 export function createReleaseService(db: DatabaseHandle, dataDirOrDiagnostics?: string | DiagnosticLogger, diagnostics?: DiagnosticLogger) {
@@ -56,13 +87,18 @@ export class ReleaseService {
       const releaseId = `rel_${compactDate(new Date())}_${nanoid(6)}`;
       const qualityGate = summarizePackages(packages);
       const createdAt = new Date().toISOString();
+      const parentReleaseId = input.parentReleaseId !== undefined ? input.parentReleaseId : (await this.getCurrent())?.releaseId ?? null;
+      if (parentReleaseId && !(await this.getRelease(parentReleaseId))) {
+        throw new Error(`Unknown parent release: ${parentReleaseId}`);
+      }
 
       await this.adapter.query(
         `INSERT INTO releases
-          (release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          (release_id, parent_release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           releaseId,
+          parentReleaseId,
           input.version,
           "draft",
           JSON.stringify(packageIds),
@@ -112,6 +148,9 @@ export class ReleaseService {
       await this.ensurePublishEvidence(packages, components, publishedAt);
       const trustedComponents = await this.componentsWithTrustScores(components, publishedAt);
       const qualityGate = summarizePackages(packages, trustedComponents, activeRuleProfile.hash);
+      const parentRelease = release.parentReleaseId ? await this.getRelease(release.parentReleaseId) : null;
+      const revisionDiff = buildReleaseDiff(parentRelease, packages, trustedComponents);
+      const revision = buildReleaseRevision(release, revisionDiff);
       const auditSummary = await buildReleaseAuditSummary({
         adapter: this.adapter,
         release,
@@ -129,6 +168,7 @@ export class ReleaseService {
         publishedAt,
         activeRuleProfileHash: activeRuleProfile.hash,
         auditSummary,
+        revision: revision as unknown as Record<string, unknown>,
       });
       const manifest = buildManifest({
         release,
@@ -141,6 +181,7 @@ export class ReleaseService {
         activeRuleProfileConfig: activeRuleProfile.config,
         okf: okfExport.manifest,
         auditSummary: okfExport.manifest.auditSummary,
+        revision,
       });
       const manifestHash = hashManifest(manifest);
 
@@ -446,12 +487,15 @@ function buildManifest(input: {
   activeRuleProfileConfig: KnowledgeRuleConfig;
   okf: OkfExportManifest;
   auditSummary: ReleaseAuditSummary;
+  revision: ReleaseRevision;
 }) {
   const componentIds = input.components.map((component) => component.componentId).sort();
   const sourceVersionIds = uniqueSorted(input.packages.flatMap((pkg) => pkg.sourceVersionIds));
   return {
     releaseId: input.release.releaseId,
+    parentReleaseId: input.release.parentReleaseId,
     version: input.release.version,
+    revision: input.revision,
     packageIds: input.packages.map((pkg) => pkg.packageId).sort(),
     componentIds,
     sourceVersionIds,
@@ -485,6 +529,95 @@ function buildManifest(input: {
     publishedAt: input.publishedAt,
     publishedBy: input.publishedBy,
   };
+}
+
+function buildReleaseDiff(parent: ReleaseRecord | null, packages: AssetPackage[], components: AssetComponent[]): ReleaseDiff {
+  const parentManifest = parent?.manifest ?? {};
+  const parentPackageIds = stringArray(parentManifest.packageIds);
+  const nextPackageIds = packages.map((pkg) => pkg.packageId);
+  const parentComponentIds = stringArray(parentManifest.componentIds);
+  const nextComponentIds = components.map((component) => component.componentId);
+  const parentSourceVersionIds = stringArray(parentManifest.sourceVersionIds);
+  const nextSourceVersionIds = uniqueSorted(packages.flatMap((pkg) => pkg.sourceVersionIds));
+  const parentComponents = componentFingerprintMap(parentManifest.components);
+  const nextComponents = new Map(components.map((component) => [component.componentId, componentFingerprint(component)]));
+  const sharedComponentIds = intersect(parentComponentIds, nextComponentIds);
+  const changedComponents = sharedComponentIds.filter((componentId) => parentComponents.get(componentId) !== nextComponents.get(componentId)).sort();
+  return {
+    packageIds: diffBucket(parentPackageIds, nextPackageIds),
+    componentIds: diffBucket(parentComponentIds, nextComponentIds),
+    sourceVersionIds: diffBucket(parentSourceVersionIds, nextSourceVersionIds),
+    changedComponents,
+    unchangedComponents: sharedComponentIds.filter((componentId) => !changedComponents.includes(componentId)).sort(),
+  };
+}
+
+function buildReleaseRevision(release: ReleaseRecord, diff: ReleaseDiff): ReleaseRevision {
+  return {
+    parentReleaseId: release.parentReleaseId,
+    mode: release.parentReleaseId ? "revision" : "initial",
+    diff,
+    summary: {
+      packagesAdded: diff.packageIds.added.length,
+      packagesRemoved: diff.packageIds.removed.length,
+      componentsAdded: diff.componentIds.added.length,
+      componentsRemoved: diff.componentIds.removed.length,
+      componentsChanged: diff.changedComponents.length,
+      componentsUnchanged: diff.unchangedComponents.length,
+      sourceVersionsAdded: diff.sourceVersionIds.added.length,
+      sourceVersionsRemoved: diff.sourceVersionIds.removed.length,
+    },
+  };
+}
+
+function diffBucket(previous: string[], next: string[]): DiffBucket {
+  const previousSet = new Set(previous);
+  const nextSet = new Set(next);
+  return {
+    added: next.filter((id) => !previousSet.has(id)).sort(),
+    removed: previous.filter((id) => !nextSet.has(id)).sort(),
+    unchanged: next.filter((id) => previousSet.has(id)).sort(),
+  };
+}
+
+function intersect(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  return left.filter((id) => rightSet.has(id));
+}
+
+function componentFingerprintMap(value: unknown): Map<string, string> {
+  if (!Array.isArray(value)) return new Map();
+  const entries = value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const component = item as Record<string, unknown>;
+    const componentId = typeof component.componentId === "string" ? component.componentId : "";
+    return componentId ? [[componentId, stableComponentFingerprint(component)] as const] : [];
+  });
+  return new Map(entries);
+}
+
+function componentFingerprint(component: AssetComponent): string {
+  return stableComponentFingerprint({
+    packageId: component.packageId,
+    artifactId: component.artifactId,
+    group: component.group,
+    kind: component.kind,
+    title: component.title,
+    storageUri: component.storageUri,
+    sourceRefs: component.sourceRefs,
+  });
+}
+
+function stableComponentFingerprint(component: Record<string, unknown>): string {
+  return stableStringify({
+    packageId: component.packageId,
+    artifactId: component.artifactId,
+    group: component.group,
+    kind: component.kind,
+    title: component.title,
+    storageUri: component.storageUri,
+    sourceRefs: stringArray(component.sourceRefs),
+  });
 }
 
 function summarizePackages(packages: AssetPackage[], components: AssetComponent[] = [], activeRuleProfileHash = ""): Record<string, unknown> {
@@ -551,6 +684,10 @@ function numberFromQuality(quality: Record<string, unknown>, keys: string[]): nu
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
 
 function compactDate(date: Date): string {

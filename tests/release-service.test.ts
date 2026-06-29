@@ -32,8 +32,14 @@ describe("ReleaseService", () => {
 
     try {
       const rel1 = await service.createDraft({ version: "2026.06.15.001", packageIds: ["pkg_first"], requestedBy: "admin" });
+      expect(rel1.parentReleaseId).toBeNull();
       const pub1 = await service.publish(rel1.releaseId, "admin");
       expect(pub1.status).toBe("published");
+      expect(pub1.manifest.revision).toMatchObject({
+        parentReleaseId: null,
+        mode: "initial",
+        summary: { componentsAdded: 3, componentsRemoved: 0, componentsChanged: 0 }
+      });
       expect(pub1.manifestHash).toMatch(/^sha256:/u);
       expect(pub1.manifest.packageIds).toEqual(["pkg_first"]);
       expect(pub1.manifest.componentIds).toEqual(["cmp_pkg_first_graph", "cmp_pkg_first_page", "cmp_pkg_first_table_schema"]);
@@ -42,6 +48,7 @@ describe("ReleaseService", () => {
         graphUri: "graph/graph.json",
         tableSchemasUri: "tables/schemas.json",
         searchIndexUri: "search/index.json",
+        revisionUri: "meta/revision.json",
         lintUri: expect.stringContaining(`${pub1.releaseId}/knowledge_lint.json`),
         lintMarkdownUri: expect.stringContaining(`${pub1.releaseId}/knowledge_lint.md`),
         lintSummary: expect.objectContaining({ blocking: 0 }),
@@ -68,13 +75,30 @@ describe("ReleaseService", () => {
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "knowledge_lint.md"), "utf8")).toContain("# Knowledge Lint Report");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "knowledge_lint.json"), "utf8")).summary.blocking).toBe(0);
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "graph", "graph.json"), "utf8")).nodes[0].label).toBe("Demo Page");
+      expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "meta", "revision.json"), "utf8"))).toMatchObject({
+        okfAssetType: "release_revision",
+        mode: "initial",
+        summary: { componentsAdded: 3 }
+      });
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "tables", "schemas.json"), "utf8")).tables[0].schema.table_name).toBe("Demo/Table");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "search", "index.json"), "utf8")).pages[0].title).toBe("Demo Page");
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_report.json"))).toBe(true);
       expect(pub1.publishedAt).toBeTruthy();
 
       const rel2 = await service.createDraft({ version: "2026.06.15.002", packageIds: ["pkg_second"], requestedBy: "admin" });
+      expect(rel2.parentReleaseId).toBe(pub1.releaseId);
       const pub2 = await service.publish(rel2.releaseId, "admin");
+      expect(pub2.parentReleaseId).toBe(pub1.releaseId);
+      expect(pub2.manifest.revision).toMatchObject({
+        parentReleaseId: pub1.releaseId,
+        mode: "revision",
+        summary: { packagesAdded: 1, packagesRemoved: 1, componentsAdded: 3, componentsRemoved: 3, componentsChanged: 0 }
+      });
+      expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub2.releaseId, "okf_bundle", "meta", "revision.json"), "utf8"))).toMatchObject({
+        okfAssetType: "release_revision",
+        parentReleaseId: pub1.releaseId,
+        mode: "revision"
+      });
       expect((await service.getCurrent())?.releaseId).toBe(pub2.releaseId);
 
       const rolledBack = await service.rollback(pub1.releaseId, "admin");

@@ -393,6 +393,7 @@ export interface ModelConnectivityResult {
 
 export interface ReleaseRecord {
   releaseId: string;
+  parentReleaseId: string | null;
   version: string;
   status: string;
   packageIds: string[];

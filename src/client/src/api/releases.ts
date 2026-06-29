@@ -9,8 +9,8 @@ export async function getCurrentRelease(): Promise<ReleaseRecord | null> {
   return (await getJson<{ release: ReleaseRecord | null }>("/api/releases/current")).release;
 }
 
-export async function createRelease(version: string, packageIds: string[]): Promise<ReleaseRecord> {
-  return (await postJson<{ release: ReleaseRecord }>("/api/releases", { version, packageIds })).release;
+export async function createRelease(version: string, packageIds: string[], parentReleaseId?: string | null): Promise<ReleaseRecord> {
+  return (await postJson<{ release: ReleaseRecord }>("/api/releases", { version, packageIds, parentReleaseId })).release;
 }
 
 export async function publishRelease(releaseId: string): Promise<ReleaseRecord> {
