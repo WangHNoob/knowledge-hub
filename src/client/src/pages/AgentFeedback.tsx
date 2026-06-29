@@ -252,7 +252,7 @@ export function AgentFeedback() {
                   <button key={row.componentId} type="button" className="feedback-pressure" onClick={() => navigate("assets", { componentId: row.componentId })}>
                     <span>
                       <strong>{row.title}</strong>
-                      <code>{row.componentId}</code>
+                      <code title={row.componentId}>{row.componentId}</code>
                     </span>
                     <span className="component-quality">
                       <Badge label={`${row.negativeCount} 次负反馈`} tone={row.negativeCount >= 2 ? "warn" : "ok"} />
@@ -342,13 +342,22 @@ function buildFeedbackPressure(events: AgentEvent[]): Array<{ componentId: strin
       : event.hitComponentIds;
     for (const componentId of componentIds) {
       const component = event.components.find((item) => item.componentId === componentId);
-      const current = rows.get(componentId) ?? { componentId, title: component?.title || componentId, negativeCount: 0 };
+      const current = rows.get(componentId) ?? { componentId, title: feedbackPressureTitle(componentId, component?.title), negativeCount: 0 };
       current.negativeCount += 1;
-      if (component?.title) current.title = component.title;
+      if (component?.title) current.title = feedbackPressureTitle(componentId, component.title);
       rows.set(componentId, current);
     }
   }
   return [...rows.values()].sort((a, b) => b.negativeCount - a.negativeCount || a.title.localeCompare(b.title));
+}
+
+function feedbackPressureTitle(componentId: string, title?: string) {
+  if (title && title !== componentId) return title;
+  const wikiMatch = componentId.match(/_wiki_(.+?)_md(?:_[a-f0-9]+)?$/iu);
+  if (wikiMatch?.[1]) return `wiki/${wikiMatch[1].replace(/_/gu, "/")}.md`;
+  const tableMatch = componentId.match(/_tables?_(.+?)(?:_[a-f0-9]+)?$/iu);
+  if (tableMatch?.[1]) return `table/${tableMatch[1].replace(/_/gu, "/")}`;
+  return componentId;
 }
 
 interface AutomationChain {
@@ -586,7 +595,7 @@ function AgentFeedbackCard({
               >
                 <span>
                   <strong>{component.title}</strong>
-                  <code>{component.artifactId}</code>
+                  <code title={component.artifactId}>{component.artifactId}</code>
                 </span>
                 <span className="component-quality">
                   <Badge label={component.kind} />
