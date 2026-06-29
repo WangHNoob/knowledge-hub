@@ -321,6 +321,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
             {task.resolutionNote ? `：${task.resolutionNote}` : ""}
           </small>
         )}
+        <LearningStrip task={task} />
         {task.status === "open" && task.taskKind === "annotation" && (
           <div className="annotation-panel">
             <div className="annotation-head">
@@ -382,3 +383,39 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
     </article>
   );
 });
+
+function LearningStrip({ task }: { task: ReviewTask }) {
+  const learning = task.learning;
+  const hasSignal = learning.recurrenceCount > 0
+    || learning.openSimilarCount > 0
+    || learning.exampleCount > 0
+    || learning.buildExamplesInjected > 0
+    || Boolean(learning.lastAnnotation);
+  if (!hasSignal) return null;
+  return (
+    <div className="learning-strip">
+      <span>
+        <b>复发</b>
+        <strong>{learning.recurrenceCount}</strong>
+      </span>
+      <span>
+        <b>同类待处理</b>
+        <strong>{learning.openSimilarCount}</strong>
+      </span>
+      <span>
+        <b>可用样例</b>
+        <strong>{learning.exampleCount}</strong>
+      </span>
+      <span>
+        <b>本次注入</b>
+        <strong>{learning.buildExamplesInjected}</strong>
+      </span>
+      {learning.lastAnnotation && (
+        <span className="learning-last">
+          <b>最近标注</b>
+          <strong>{learning.lastAnnotation.createdBy || "unknown"} · {formatTime(learning.lastAnnotation.createdAt)}</strong>
+        </span>
+      )}
+    </div>
+  );
+}

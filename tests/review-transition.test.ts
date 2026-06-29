@@ -148,6 +148,33 @@ describe("review task transitions", () => {
     const events = await db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = $1", ["annotation.created"]);
     expect(events.rows).toHaveLength(1);
     expect(events.rows[0].payload_json).toMatchObject({ componentId: "cmp_rev", ruleId: "wiki.required_fact" });
+
+    await db.adapter.query(
+      `INSERT INTO review_tasks (
+         task_id, package_id, component_id, severity, status, task_kind, rule_id,
+         title, description, suggested_action, candidates, confidence, context_snapshot, created_at
+       )
+       VALUES (
+         'task_annotation_repeat','pkg_rev','cmp_rev','warning','open','annotation','wiki.required_fact',
+         '字段候选再次不确定','同组件同规则再次出现','参考上次人工标注',
+         '[]',0.6,'{}',NOW()
+       )`
+    );
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/api/review/tasks?status=open",
+      headers: auth,
+    });
+    const repeat = listed.json().tasks.find((item: { taskId: string }) => item.taskId === "task_annotation_repeat");
+    expect(repeat.learning).toMatchObject({
+      recurrenceCount: 1,
+      exampleCount: 1,
+      lastAnnotation: {
+        createdBy: "admin",
+        correctValue: { field: "activity_structure", source: "candidate" }
+      }
+    });
   });
 
   it("rejects viewers", async () => {

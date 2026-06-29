@@ -250,7 +250,92 @@ export class KnowledgeService {
     if (filter.status) { where.push(`status = $${params.length + 1}`); params.push(filter.status); }
     const sql = `SELECT * FROM review_tasks${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY CASE severity WHEN 'blocking' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at`;
     const { rows } = await this.adapter.query(sql, params);
-    return rows.map(mapReviewTask);
+    return this.enrichReviewTaskLearning(rows.map(mapReviewTask));
+  }
+
+  private async enrichReviewTaskLearning(tasks: ReviewTask[]): Promise<ReviewTask[]> {
+    if (tasks.length === 0) return tasks;
+    const componentIds = uniqueSorted(tasks.map((task) => task.componentId));
+    const packageIds = uniqueSorted(tasks.map((task) => task.packageId));
+    const componentPlaceholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
+    const packagePlaceholders = packageIds.map((_, index) => `$${index + 1}`).join(",");
+
+    const [taskHistoryRows, exampleRows, runRows] = await Promise.all([
+      this.adapter.query(
+        `SELECT component_id, rule_id, status
+         FROM review_tasks
+         WHERE component_id IN (${componentPlaceholders})`,
+        componentIds,
+      ),
+      this.adapter.query(
+        `SELECT DISTINCT ON (component_id, rule_id)
+           component_id, rule_id, example_id, correct_value, created_by, created_at,
+           COUNT(*) OVER (PARTITION BY component_id, rule_id)::int AS example_count
+         FROM annotation_examples
+         WHERE component_id IN (${componentPlaceholders})
+         ORDER BY component_id, rule_id, created_at DESC`,
+        componentIds,
+      ),
+      this.adapter.query(
+        `SELECT p.package_id, r.config_json
+         FROM asset_packages p
+         LEFT JOIN knowledge_build_runs r ON r.run_id = p.created_by_run_id
+         WHERE p.package_id IN (${packagePlaceholders})`,
+        packageIds,
+      ),
+    ]);
+
+    const history = new Map<string, { total: number; open: number }>();
+    for (const row of taskHistoryRows.rows) {
+      const key = reviewLearningKey(String(row.component_id), String(row.rule_id ?? ""));
+      const current = history.get(key) ?? { total: 0, open: 0 };
+      current.total += 1;
+      if (String(row.status) === "open") current.open += 1;
+      history.set(key, current);
+    }
+
+    const examples = new Map<string, ReviewTask["learning"]["lastAnnotation"] & { count?: number }>();
+    for (const row of exampleRows.rows) {
+      const annotation = {
+        exampleId: String(row.example_id),
+        correctValue: jsonObject(row.correct_value),
+        createdBy: String(row.created_by ?? ""),
+        createdAt: String(row.created_at),
+        count: Number(row.example_count ?? 0),
+      };
+      examples.set(reviewLearningKey(String(row.component_id), String(row.rule_id ?? "")), annotation);
+    }
+
+    const injectedByPackage = new Map<string, number>();
+    for (const row of runRows.rows) {
+      const config = jsonObject(row.config_json);
+      const flywheel = jsonObject(config.flywheel);
+      injectedByPackage.set(String(row.package_id), Number(flywheel.annotationExamplesInjected ?? 0));
+    }
+
+    return tasks.map((task) => {
+      const key = reviewLearningKey(task.componentId, task.ruleId);
+      const stats = history.get(key) ?? { total: 0, open: 0 };
+      const annotation = examples.get(key) ?? null;
+      const lastAnnotation = annotation
+        ? {
+          exampleId: annotation.exampleId,
+          correctValue: annotation.correctValue,
+          createdBy: annotation.createdBy,
+          createdAt: annotation.createdAt,
+        }
+        : null;
+      return {
+        ...task,
+        learning: {
+          recurrenceCount: Math.max(stats.total - 1, 0),
+          openSimilarCount: Math.max(stats.open - (task.status === "open" ? 1 : 0), 0),
+          exampleCount: annotation?.count ?? 0,
+          buildExamplesInjected: injectedByPackage.get(task.packageId) ?? 0,
+          lastAnnotation,
+        },
+      };
+    });
   }
 
   /**
@@ -530,6 +615,10 @@ function numberFromQuality(quality: Record<string, unknown>, keys: string[]): nu
     if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
   }
   return null;
+}
+
+function reviewLearningKey(componentId: string, ruleId: string): string {
+  return `${componentId}\u0000${ruleId}`;
 }
 
 function uniqueSorted(values: string[]): string[] {

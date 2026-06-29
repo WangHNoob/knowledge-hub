@@ -171,6 +171,20 @@ export interface ReviewTask {
   resolvedBy: string;
   resolvedAt: string | null;
   resolutionNote: string;
+  learning: ReviewLearningSummary;
+}
+
+export interface ReviewLearningSummary {
+  recurrenceCount: number;
+  openSimilarCount: number;
+  exampleCount: number;
+  buildExamplesInjected: number;
+  lastAnnotation: {
+    exampleId: string;
+    correctValue: Record<string, unknown>;
+    createdBy: string;
+    createdAt: string;
+  } | null;
 }
 
 export interface AnnotationExample {
