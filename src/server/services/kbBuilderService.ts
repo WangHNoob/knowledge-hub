@@ -34,6 +34,7 @@ import type { BuildPipelineOptions, CollectedArtifact, QualityGateResult } from 
 import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelConfig } from "./kbBuilder/modelConfig";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { computeTrustScore } from "./trustScore";
+import { emitKnowledgeEvent } from "./eventService";
 
 /**
  * 生成 runId / packageId 里嵌入的紧凑时间戳，按东八区（Asia/Shanghai）墙钟时间。
@@ -243,12 +244,27 @@ export class KbBuilderPipelineService {
       const artifacts = await this.withStage(runId, options, "collect", async () => collectPipelineArtifacts(workspace.dataDir, workspace.workspaceDir, quality.componentQuality));
       const pkg = await this.withStage(runId, options, "persist", async () => {
         const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality, ruleProfile, flywheelSummary);
-        await this.completeRun(runId, packageId, specs.hash, workspace.workspaceDir);
         flywheelSummary.newAnnotationTasks = await this.insertReviewTasks(packageId, artifacts, quality.findings);
         await this.updateRunFlywheelSummary(runId, flywheelSummary);
         return inserted;
       });
+      await this.completeRun(runId, packageId, specs.hash, workspace.workspaceDir);
       await runSpan?.complete({ packageId, artifactCount: artifacts.length, overallScore: quality.overallScore });
+      await emitKnowledgeEvent(this.db, {
+        eventType: "build.completed",
+        entityType: "build_run",
+        entityId: runId,
+        payload: {
+          runId,
+          packageId,
+          sourceVersionId: options.versionId,
+          requestedBy: options.requestedBy,
+          only: options.only,
+          overallScore: quality.overallScore,
+          blockingCount: quality.blockingCount,
+          warningCount: quality.warningCount,
+        },
+      });
       return { run: await this.requireRun(runId), package: pkg, qualitySummary: pkg.qualitySummary };
     } catch (error) {
       await this.failRun(runId, error);

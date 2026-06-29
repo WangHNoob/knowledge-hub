@@ -11,6 +11,7 @@ import { createLegislationService } from "./legislationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
 import { buildReleaseAuditSummary, type ReleaseAuditSummary } from "./releaseAudit";
 import { computeTrustScore, scoreFromQuality } from "./trustScore";
+import { emitKnowledgeEvent } from "./eventService";
 
 const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9_-]+$/u;
@@ -63,6 +64,13 @@ export interface CreateReleaseDraftInput {
   packageIds: string[];
   requestedBy: string;
   parentReleaseId?: string | null;
+  note?: string;
+}
+
+export interface ProposedReleaseRevision {
+  release: ReleaseRecord | null;
+  created: boolean;
+  reason: "created" | "no_current_release" | "duplicate_draft" | "unknown_package" | "not_scoped_build";
 }
 
 export function createReleaseService(db: DatabaseHandle, dataDirOrDiagnostics?: string | DiagnosticLogger, diagnostics?: DiagnosticLogger) {
@@ -127,8 +135,10 @@ export class ReleaseService {
 
       const release = await this.getRelease(releaseId);
       if (!release) throw new Error("Failed to create release draft.");
+      if (input.note?.trim()) await this.updateRelease(releaseId, { note: input.note.trim() });
+      const finalRelease = await this.getRelease(releaseId);
       await span?.complete({ releaseId });
-      return release;
+      return finalRelease ?? release;
     } catch (error) {
       await span?.fail(error);
       throw error;
@@ -317,6 +327,20 @@ export class ReleaseService {
     return rows.length ? mapRelease(rows[0]) : null;
   }
 
+  private async findDraftRevision(parentReleaseId: string, packageId: string): Promise<ReleaseRecord | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM releases
+       WHERE status = 'draft'
+         AND parent_release_id = $1
+         AND package_ids @> $2::jsonb
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [parentReleaseId, JSON.stringify([packageId])],
+    );
+    return rows.length ? mapRelease(rows[0]) : null;
+  }
+
   async updateRelease(releaseId: string, patch: { version?: string; note?: string }): Promise<ReleaseRecord | null> {
     const sets: string[] = [];
     const params: unknown[] = [];
@@ -364,6 +388,42 @@ export class ReleaseService {
       packageIds,
     );
     return rows;
+  }
+
+  async proposeRevisionDraftFromBuild(input: {
+    packageId: string;
+    runId: string;
+    requestedBy: string;
+    only?: string | null;
+  }): Promise<ProposedReleaseRevision> {
+    if (!input.only) return { release: null, created: false, reason: "not_scoped_build" };
+    const pkg = (await this.loadPackages([input.packageId]))[0];
+    if (!pkg) return { release: null, created: false, reason: "unknown_package" };
+    const current = await this.getCurrent();
+    if (!current) return { release: null, created: false, reason: "no_current_release" };
+    const duplicate = await this.findDraftRevision(current.releaseId, input.packageId);
+    if (duplicate) return { release: duplicate, created: false, reason: "duplicate_draft" };
+
+    const release = await this.createDraft({
+      version: `${current.version}.rev.${compactDate(new Date())}`,
+      packageIds: [input.packageId],
+      parentReleaseId: current.releaseId,
+      requestedBy: input.requestedBy || "system",
+      note: `自动草案：scoped build ${input.runId}${input.only ? ` (${input.only})` : ""}`,
+    });
+    await emitKnowledgeEvent(this.db, {
+      eventType: "release.revision_proposed",
+      entityType: "release",
+      entityId: release.releaseId,
+      payload: {
+        releaseId: release.releaseId,
+        parentReleaseId: current.releaseId,
+        packageId: input.packageId,
+        runId: input.runId,
+        only: input.only ?? "",
+      },
+    });
+    return { release, created: true, reason: "created" };
   }
 
   private async findOpenBlockingTasksForComponents(componentIds: string[]): Promise<Record<string, unknown>[]> {

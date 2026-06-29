@@ -11,6 +11,7 @@ import { createKnowledgeService } from "./services/knowledgeService";
 import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
+import { registerReleaseAutomation } from "./services/releaseAutomationService";
 import { createSourceBundleService } from "./services/sourceBundleService";
 import { createStorageMaintenanceService } from "./services/storageMaintenanceService";
 import { registerAgentRoutes } from "./routes/agent";
@@ -71,6 +72,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       logRetentionDays: config.logRetentionDays
     })
   };
+  const unsubscribeReleaseAutomation = registerReleaseAutomation({
+    releaseService: ctx.releaseService,
+    diagnostics,
+  });
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -106,7 +111,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerSearchRoutes(app, ctx);
   registerTableAliasRoutes(app, ctx);
 
-  app.addHook("onClose", async () => { await options.db.close(); });
+  app.addHook("onClose", async () => {
+    unsubscribeReleaseAutomation();
+    await options.db.close();
+  });
   return app;
 }
 

@@ -11,6 +11,7 @@ export type KnowledgeEventType =
   | "component.trust_changed"
   | "agent.feedback.received"
   | "agent.feedback.rebuild_proposed"
+  | "release.revision_proposed"
   | "release.published";
 
 export interface KnowledgeEvent {
@@ -23,6 +24,7 @@ export interface KnowledgeEvent {
 }
 
 const bus = new EventEmitter();
+bus.setMaxListeners(0);
 
 export function onKnowledgeEvent(type: KnowledgeEventType, listener: (event: KnowledgeEvent) => void): () => void {
   bus.on(type, listener);

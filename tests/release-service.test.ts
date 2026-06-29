@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createReleaseService } from "../src/server/services/releaseService";
+import { emitKnowledgeEvent } from "../src/server/services/eventService";
+import { registerReleaseAutomation } from "../src/server/services/releaseAutomationService";
 import { createTestDb, type TestDbHandle } from "./helpers/testDb";
 
 describe("ReleaseService", () => {
@@ -191,6 +193,74 @@ describe("ReleaseService", () => {
     }
   }, 15000);
 
+  it("proposes one revision draft for a completed scoped build", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_current" });
+    await setupReleaseFixture({ handle: fixture.handle, packageId: "pkg_scoped" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+
+    try {
+      const currentDraft = await service.createDraft({ version: "2026.06.15.current", packageIds: ["pkg_current"], requestedBy: "admin" });
+      const current = await service.publish(currentDraft.releaseId, "admin");
+      const proposal = await service.proposeRevisionDraftFromBuild({
+        packageId: "pkg_scoped",
+        runId: "run_scoped",
+        requestedBy: "builder",
+        only: "gamedocs/demo.md",
+      });
+      expect(proposal.created).toBe(true);
+      expect(proposal.release).toMatchObject({
+        parentReleaseId: current.releaseId,
+        packageIds: ["pkg_scoped"],
+        status: "draft",
+      });
+      expect(proposal.release?.note).toContain("run_scoped");
+
+      const duplicate = await service.proposeRevisionDraftFromBuild({
+        packageId: "pkg_scoped",
+        runId: "run_scoped_again",
+        requestedBy: "builder",
+        only: "gamedocs/demo.md",
+      });
+      expect(duplicate.created).toBe(false);
+      expect(duplicate.reason).toBe("duplicate_draft");
+      expect(duplicate.release?.releaseId).toBe(proposal.release?.releaseId);
+
+      const events = await fixture.db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = 'release.revision_proposed'");
+      expect(events.rows).toHaveLength(1);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
+
+  it("creates a revision draft from the build.completed event subscriber", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_event_current" });
+    await setupReleaseFixture({ handle: fixture.handle, packageId: "pkg_event_scoped" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+    const unsubscribe = registerReleaseAutomation({ releaseService: service });
+
+    try {
+      const currentDraft = await service.createDraft({ version: "2026.06.15.event-current", packageIds: ["pkg_event_current"], requestedBy: "admin" });
+      const current = await service.publish(currentDraft.releaseId, "admin");
+      await emitKnowledgeEvent(fixture.db, {
+        eventType: "build.completed",
+        entityType: "build_run",
+        entityId: "run_event_scoped",
+        payload: {
+          runId: "run_event_scoped",
+          packageId: "pkg_event_scoped",
+          requestedBy: "builder",
+          only: "gamedocs/demo.md",
+        },
+      });
+      const draft = await waitForDraftRevision(fixture.db, current.releaseId, "pkg_event_scoped");
+      expect(draft).toMatchObject({ parent_release_id: current.releaseId, status: "draft" });
+      expect(String(draft.note)).toContain("run_event_scoped");
+    } finally {
+      unsubscribe();
+      await fixture.cleanup();
+    }
+  }, 15000);
+
   it("backfills publish evidence from source refs before OKF export", async () => {
     const fixture = await setupReleaseFixture({ packageId: "pkg_backfill", withEvidence: false });
     const service = createReleaseService(fixture.db, fixture.dataDir);
@@ -322,4 +392,22 @@ async function setupReleaseFixture(options: {
       await handle.cleanup();
     }
   };
+}
+
+async function waitForDraftRevision(db: TestDbHandle["db"], parentReleaseId: string, packageId: string): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const { rows } = await db.adapter.query(
+      `SELECT *
+       FROM releases
+       WHERE status = 'draft'
+         AND parent_release_id = $1
+         AND package_ids @> $2::jsonb
+       LIMIT 1`,
+      [parentReleaseId, JSON.stringify([packageId])],
+    );
+    if (rows[0]) return rows[0];
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for draft revision ${packageId}`);
 }
