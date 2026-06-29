@@ -312,6 +312,7 @@ export class KnowledgeService {
       const flywheel = jsonObject(config.flywheel);
       injectedByPackage.set(String(row.package_id), Number(flywheel.annotationExamplesInjected ?? 0));
     }
+    const writebacks = await this.loadReviewWritebacks(tasks.map((task) => task.taskId));
 
     return tasks.map((task) => {
       const key = reviewLearningKey(task.componentId, task.ruleId);
@@ -334,8 +335,198 @@ export class KnowledgeService {
           buildExamplesInjected: injectedByPackage.get(task.packageId) ?? 0,
           lastAnnotation,
         },
+        writeback: writebacks.get(task.taskId) ?? null,
       };
     });
+  }
+
+  private async loadReviewWritebacks(taskIds: string[]): Promise<Map<string, ReviewTask["writeback"]>> {
+    const ids = uniqueSorted(taskIds);
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM knowledge_events
+       WHERE (
+         event_type = 'annotation.writeback_requested'
+         AND entity_type = 'review_task'
+         AND entity_id IN (${placeholders})
+       ) OR (
+         event_type = 'annotation.writeback_rebuild_started'
+         AND payload_json ->> 'taskId' IN (${placeholders})
+       )
+       ORDER BY created_at ASC`,
+      ids,
+    );
+    const byTask = new Map<string, NonNullable<ReviewTask["writeback"]>>();
+    for (const row of rows) {
+      const eventType = String(row.event_type);
+      const payload = jsonObject(row.payload_json);
+      const taskId = eventType === "annotation.writeback_requested"
+        ? String(row.entity_id ?? "")
+        : stringValue(payload.taskId);
+      if (!taskId) continue;
+      const current = byTask.get(taskId);
+      if (eventType === "annotation.writeback_requested" || !current) {
+        byTask.set(taskId, {
+          requestedAt: String(row.created_at),
+          requestedEventId: String(row.event_id),
+          startedAt: current?.startedAt ?? null,
+          startedEventId: current?.startedEventId ?? "",
+          sourcePath: stringValue(payload.sourcePath) || current?.sourcePath || "",
+          exampleId: stringValue(payload.exampleId) || current?.exampleId || "",
+          runId: current?.runId ?? "",
+          runStatus: current?.runStatus ?? "",
+          runPackageId: current?.runPackageId ?? "",
+          only: current?.only ?? "",
+          buildCompletedAt: current?.buildCompletedAt ?? null,
+          releaseId: current?.releaseId ?? "",
+          releaseStatus: current?.releaseStatus ?? "",
+          releaseAt: current?.releaseAt ?? null,
+          autoPublishStatus: current?.autoPublishStatus ?? "none",
+          autoPublishReason: current?.autoPublishReason ?? "",
+        });
+        continue;
+      }
+      byTask.set(taskId, {
+        ...current,
+        startedAt: String(row.created_at),
+        startedEventId: String(row.event_id),
+        runId: stringValue(payload.runId) || String(row.entity_id ?? ""),
+        only: stringValue(payload.only) || current.only,
+        exampleId: stringValue(payload.exampleId) || current.exampleId,
+      });
+    }
+
+    const runIds = uniqueSorted([...byTask.values()].map((summary) => summary.runId));
+    if (runIds.length === 0) return byTask;
+    await this.enrichWritebacksFromRuns(byTask, runIds);
+    await this.enrichWritebacksFromReleaseEvents(byTask, runIds);
+    return byTask;
+  }
+
+  private async enrichWritebacksFromRuns(
+    byTask: Map<string, NonNullable<ReviewTask["writeback"]>>,
+    runIds: string[],
+  ): Promise<void> {
+    const placeholders = runIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT run_id, status, package_id, config_json
+       FROM knowledge_build_runs
+       WHERE run_id IN (${placeholders})`,
+      runIds,
+    );
+    const byRun = new Map<string, Record<string, unknown>>();
+    for (const row of rows) byRun.set(String(row.run_id), row);
+    for (const [taskId, summary] of byTask) {
+      if (!summary.runId) continue;
+      const row = byRun.get(summary.runId);
+      if (!row) continue;
+      const config = jsonObject(row.config_json);
+      byTask.set(taskId, {
+        ...summary,
+        runStatus: String(row.status ?? ""),
+        runPackageId: String(row.package_id ?? ""),
+        only: summary.only || stringValue(config.only),
+      });
+    }
+  }
+
+  private async enrichWritebacksFromReleaseEvents(
+    byTask: Map<string, NonNullable<ReviewTask["writeback"]>>,
+    runIds: string[],
+  ): Promise<void> {
+    const placeholders = runIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM knowledge_events
+       WHERE event_type IN (
+         'build.completed',
+         'release.revision_proposed',
+         'release.auto_publish_succeeded',
+         'release.auto_publish_skipped'
+       )
+       AND payload_json ->> 'runId' IN (${placeholders})
+       ORDER BY created_at ASC`,
+      runIds,
+    );
+    const taskByRunId = new Map([...byTask].flatMap(([taskId, summary]) => summary.runId ? [[summary.runId, taskId] as const] : []));
+    const releaseIds = new Set<string>();
+    for (const row of rows) {
+      const eventType = String(row.event_type);
+      const payload = jsonObject(row.payload_json);
+      const runId = stringValue(payload.runId);
+      const taskId = taskByRunId.get(runId);
+      if (!taskId) continue;
+      const current = byTask.get(taskId);
+      if (!current) continue;
+      if (eventType === "build.completed") {
+        byTask.set(taskId, {
+          ...current,
+          buildCompletedAt: String(row.created_at),
+          runPackageId: stringValue(payload.packageId) || current.runPackageId,
+        });
+        continue;
+      }
+      const releaseId = stringValue(payload.releaseId) || String(row.entity_id ?? "");
+      if (releaseId) releaseIds.add(releaseId);
+      if (eventType === "release.revision_proposed") {
+        byTask.set(taskId, {
+          ...current,
+          releaseId,
+          releaseStatus: "draft",
+          releaseAt: String(row.created_at),
+        });
+        continue;
+      }
+      if (eventType === "release.auto_publish_succeeded") {
+        byTask.set(taskId, {
+          ...current,
+          releaseId,
+          releaseStatus: "published",
+          releaseAt: String(row.created_at),
+          autoPublishStatus: "published",
+          autoPublishReason: "",
+        });
+        continue;
+      }
+      if (eventType === "release.auto_publish_skipped") {
+        byTask.set(taskId, {
+          ...current,
+          releaseId,
+          releaseStatus: current.releaseStatus || "draft",
+          releaseAt: String(row.created_at),
+          autoPublishStatus: "skipped",
+          autoPublishReason: stringValue(payload.reason),
+        });
+      }
+    }
+    await this.enrichWritebacksFromReleaseRows(byTask, [...releaseIds]);
+  }
+
+  private async enrichWritebacksFromReleaseRows(
+    byTask: Map<string, NonNullable<ReviewTask["writeback"]>>,
+    releaseIds: string[],
+  ): Promise<void> {
+    if (releaseIds.length === 0) return;
+    const placeholders = releaseIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT release_id, status, published_at
+       FROM releases
+       WHERE release_id IN (${placeholders})`,
+      releaseIds,
+    );
+    const byRelease = new Map(rows.map((row) => [String(row.release_id), row] as const));
+    for (const [taskId, summary] of byTask) {
+      if (!summary.releaseId) continue;
+      const row = byRelease.get(summary.releaseId);
+      if (!row) continue;
+      byTask.set(taskId, {
+        ...summary,
+        releaseStatus: String(row.status ?? summary.releaseStatus),
+        releaseAt: row.published_at ? String(row.published_at) : summary.releaseAt,
+      });
+    }
   }
 
   /**
@@ -594,6 +785,8 @@ export class KnowledgeService {
        WHERE event_type IN (
          'agent.feedback.rebuild_proposed',
          'agent.feedback.rebuild_started',
+         'annotation.writeback_requested',
+         'annotation.writeback_rebuild_started',
          'build.completed',
          'release.revision_proposed',
          'release.auto_publish_succeeded',
@@ -755,6 +948,10 @@ function jsonArray(value: unknown): string[] {
     }
   }
   return Array.isArray(value) ? value.map(String) : [];
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function numberFromQuality(quality: Record<string, unknown>, keys: string[]): number | null {

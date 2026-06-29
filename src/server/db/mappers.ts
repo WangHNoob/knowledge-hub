@@ -87,7 +87,8 @@ export function mapReviewTask(row: Record<string, unknown>): ReviewTask {
       exampleCount: 0,
       buildExamplesInjected: 0,
       lastAnnotation: null
-    }
+    },
+    writeback: null
   };
 }
 

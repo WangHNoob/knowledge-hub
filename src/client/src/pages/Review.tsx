@@ -238,6 +238,8 @@ export function Review() {
             onTransition={(next) => act(task, next)}
             onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
             onNavigateAsset={(componentId) => navigate("assets", { packageId: task.packageId, componentId })}
+            onNavigateBuilder={() => navigate("builder", task.writeback?.runId ? { runId: task.writeback.runId } : {})}
+            onNavigateRelease={() => navigate("release", task.writeback?.releaseId ? { releaseId: task.writeback.releaseId } : {})}
             onRetest={(insight) => navigate("agent", { toolName: insight.toolName, query: insight.queryText })}
           />
         ))}
@@ -266,6 +268,8 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onTransition,
   onNavigatePackage,
   onNavigateAsset,
+  onNavigateBuilder,
+  onNavigateRelease,
   onRetest,
 }: {
   task: ReviewTask;
@@ -286,6 +290,8 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onTransition: (next: "open" | "resolved" | "dismissed") => void;
   onNavigatePackage: () => void;
   onNavigateAsset: (componentId: string) => void;
+  onNavigateBuilder: () => void;
+  onNavigateRelease: () => void;
   onRetest: (insight: FeedbackInsight) => void;
 }) {
   const isAgentTask = isAgentFeedbackTask(task);
@@ -342,6 +348,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
           </small>
         )}
         <LearningStrip task={task} />
+        <WritebackStrip task={task} onNavigateBuilder={onNavigateBuilder} onNavigateRelease={onNavigateRelease} />
         {task.status === "open" && task.taskKind === "annotation" && (
           <div className="annotation-panel">
             <div className="annotation-head">
@@ -413,6 +420,57 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
     </article>
   );
 });
+
+function WritebackStrip({
+  task,
+  onNavigateBuilder,
+  onNavigateRelease,
+}: {
+  task: ReviewTask;
+  onNavigateBuilder: () => void;
+  onNavigateRelease: () => void;
+}) {
+  const writeback = task.writeback;
+  if (!writeback) return null;
+  const buildTone = writeback.runStatus === "completed" ? "ok" : writeback.runStatus === "failed" ? "hot" : "warn";
+  const releaseTone = writeback.autoPublishStatus === "published"
+    ? "ok"
+    : writeback.autoPublishStatus === "skipped"
+      ? "warn"
+      : writeback.releaseStatus === "published"
+        ? "ok"
+        : undefined;
+  return (
+    <div className="writeback-strip">
+      <div className="writeback-head">
+        <strong>确定性回写链路</strong>
+        <Badge label={writeback.autoPublishStatus === "published" ? "已自动发布" : writeback.releaseId ? "已有 revision" : writeback.runId ? "已启动构建" : "已请求"} tone={releaseTone} />
+      </div>
+      <div className="writeback-steps">
+        <span className="writeback-step done">
+          <b>标注</b>
+          <strong>{formatTime(writeback.requestedAt)}</strong>
+          {writeback.sourcePath && <small>{writeback.sourcePath}</small>}
+        </span>
+        <button type="button" className={`writeback-step ${writeback.runId ? "done" : ""}`} onClick={onNavigateBuilder} disabled={!writeback.runId}>
+          <b>局部构建</b>
+          <strong>{writeback.runId || "等待启动"}</strong>
+          <small>{writeback.only || writeback.runStatus || "scoped"}</small>
+          {writeback.runStatus && <Badge label={writeback.runStatus} tone={buildTone} />}
+        </button>
+        <button type="button" className={`writeback-step ${writeback.releaseId ? "done" : ""}`} onClick={onNavigateRelease} disabled={!writeback.releaseId}>
+          <b>发布修订</b>
+          <strong>{writeback.releaseId || "等待构建完成"}</strong>
+          <small>{writeback.releaseAt ? formatTime(writeback.releaseAt) : writeback.releaseStatus || "revision draft"}</small>
+          {writeback.releaseStatus && <Badge label={writeback.releaseStatus} tone={releaseTone} />}
+        </button>
+      </div>
+      {writeback.autoPublishStatus === "skipped" && writeback.autoPublishReason && (
+        <p className="writeback-note">自动发布跳过：{writeback.autoPublishReason}</p>
+      )}
+    </div>
+  );
+}
 
 function LearningStrip({ task }: { task: ReviewTask }) {
   const learning = task.learning;

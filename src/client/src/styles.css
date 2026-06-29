@@ -939,6 +939,99 @@ code {
   flex: 1 1 240px;
 }
 
+.writeback-strip {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--olive) 35%, var(--line));
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, rgba(143, 168, 79, 0.08), rgba(143, 168, 79, 0.02)),
+    var(--surface-sunken);
+}
+
+.writeback-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.writeback-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.writeback-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.writeback-step {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  min-height: 82px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+button.writeback-step {
+  cursor: pointer;
+}
+
+button.writeback-step:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.writeback-step.done {
+  border-color: color-mix(in srgb, var(--olive) 42%, var(--line));
+}
+
+.writeback-step b {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.writeback-step strong,
+.writeback-step small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.writeback-step strong {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.writeback-step small {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.writeback-step .badge {
+  justify-self: start;
+}
+
+.writeback-note {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .feedback-components {
   display: grid;
   gap: 8px;
@@ -3409,6 +3502,10 @@ form button:active:not(:disabled) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .writeback-steps {
+    grid-template-columns: 1fr;
+  }
+
   .diagnostics-filter {
     position: static;
   }
@@ -3432,6 +3529,7 @@ form button:active:not(:disabled) {
 
 @media (max-width: 560px) {
   .automation-steps,
+  .writeback-steps,
   .feedback-pressure,
   .feedback-component {
     grid-template-columns: 1fr;

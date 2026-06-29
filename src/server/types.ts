@@ -172,6 +172,7 @@ export interface ReviewTask {
   resolvedAt: string | null;
   resolutionNote: string;
   learning: ReviewLearningSummary;
+  writeback: ReviewWritebackSummary | null;
 }
 
 export interface ReviewLearningSummary {
@@ -185,6 +186,25 @@ export interface ReviewLearningSummary {
     createdBy: string;
     createdAt: string;
   } | null;
+}
+
+export interface ReviewWritebackSummary {
+  requestedAt: string;
+  requestedEventId: string;
+  startedAt: string | null;
+  startedEventId: string;
+  sourcePath: string;
+  exampleId: string;
+  runId: string;
+  runStatus: string;
+  runPackageId: string;
+  only: string;
+  buildCompletedAt: string | null;
+  releaseId: string;
+  releaseStatus: string;
+  releaseAt: string | null;
+  autoPublishStatus: "none" | "published" | "skipped";
+  autoPublishReason: string;
 }
 
 export interface AnnotationExample {
