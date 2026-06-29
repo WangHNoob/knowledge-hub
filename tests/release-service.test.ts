@@ -252,7 +252,7 @@ describe("ReleaseService", () => {
           only: "gamedocs/demo.md",
         },
       });
-      const draft = await waitForDraftRevision(fixture.db, current.releaseId, "pkg_event_scoped");
+      const draft = await waitForDraftRevision(fixture.db, current.releaseId, "pkg_event_scoped", "run_event_scoped");
       expect(draft).toMatchObject({ parent_release_id: current.releaseId, status: "draft" });
       expect(String(draft.note)).toContain("run_event_scoped");
     } finally {
@@ -433,8 +433,9 @@ async function setupReleaseFixture(options: {
   };
 }
 
-async function waitForDraftRevision(db: TestDbHandle["db"], parentReleaseId: string, packageId: string): Promise<Record<string, unknown>> {
-  const deadline = Date.now() + 3000;
+async function waitForDraftRevision(db: TestDbHandle["db"], parentReleaseId: string, packageId: string, noteIncludes = ""): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + 5000;
+  let observed: string[] = [];
   while (Date.now() < deadline) {
     const { rows } = await db.adapter.query(
       `SELECT *
@@ -442,13 +443,15 @@ async function waitForDraftRevision(db: TestDbHandle["db"], parentReleaseId: str
        WHERE status = 'draft'
          AND parent_release_id = $1
          AND package_ids @> $2::jsonb
-       LIMIT 1`,
+       ORDER BY created_at DESC, release_id DESC`,
       [parentReleaseId, JSON.stringify([packageId])],
     );
-    if (rows[0]) return rows[0];
+    observed = rows.map((row) => `${String(row.release_id)}:${String(row.note ?? "")}`);
+    const match = rows.find((row) => !noteIncludes || String(row.note ?? "").includes(noteIncludes));
+    if (match) return match;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for draft revision ${packageId}`);
+  throw new Error(`Timed out waiting for draft revision ${packageId}${noteIncludes ? ` (${noteIncludes})` : ""}. Observed: ${observed.join(" | ") || "none"}`);
 }
 
 async function waitForAutoPublish(db: TestDbHandle["db"], parentReleaseId: string, packageId: string): Promise<Record<string, unknown>> {
