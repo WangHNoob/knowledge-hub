@@ -119,10 +119,11 @@
 | release revision 版本链基础 | 已为 release 增加 `parent_release_id`，新草案可基于当前发布生成 revision |
 | release diff 写入 manifest | 已比较父版本与本次发布的 package/component/sourceVersion 差异，并写入 `manifest.revision` |
 | OKF revision 元数据 | 已导出 `okf_bundle/meta/revision.json`，Agent 可从 OKF 包消费版本差异 |
+| OKF bundle 文件复用 | 已复制父 bundle 作为基底，仅重写 added/changed Markdown，并清理 removed Markdown 与缺失全局资产 |
 
 后续继续做“Agent 反馈驱动增量重建执行”：
 
 1. 进一步统计 examples 的精确命中来源，而不是只展示注入数量。
 2. 审核中心展示“这个问题是否复发、上次人工标注是什么、这次是否被样例影响”。
-3. 让 OKF export 支持基于 `manifest.revision.diff` 的文件级 patch/复用。
+3. 让 graph/table/search 等全局资产支持更细粒度 patch，而不是每次 revision 重建聚合资产。
 4. 增加自动发布条件判断：仅变化组件无 blocking、trust 未下降时允许一键或自动发布 revision。

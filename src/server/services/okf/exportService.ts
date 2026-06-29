@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, posix, relative } from "node:path";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, ReleaseRecord } from "../../types";
@@ -46,6 +46,7 @@ export interface OkfExportResult {
 
 export interface ExportReleaseOkfInput {
   release: ReleaseRecord;
+  parentRelease?: ReleaseRecord | null;
   packages: AssetPackage[];
   components: AssetComponent[];
   publishedAt: string;
@@ -70,6 +71,7 @@ export class OkfExportService {
     const bundleDir = join(releaseDir, "okf_bundle");
     rmSync(bundleDir, { recursive: true, force: true });
     mkdirSync(bundleDir, { recursive: true });
+    const patch = preparePatchContext(this.dataDir, bundleDir, input.parentRelease, input.revision);
 
     const exportedPaths: string[] = [];
     const packageById = new Map(input.packages.map((pkg) => [pkg.packageId, pkg] as const));
@@ -77,6 +79,11 @@ export class OkfExportService {
     const graphUri = exportGraphAsset(this.dataDir, bundleDir, input.components, packageById);
     const tableSchemasUri = exportTableSchemasAsset(this.dataDir, bundleDir, input.components, packageById, input.release, input.packages);
     const tableAliasesUri = exportTableAliasesAsset(this.dataDir, bundleDir, input.components, packageById);
+    removeAbsentAssets(bundleDir, [
+      ["graph/graph.json", graphUri],
+      ["tables/schemas.json", tableSchemasUri],
+      ["tables/aliases.json", tableAliasesUri],
+    ]);
     exportedPaths.push(...[graphUri, tableSchemasUri, tableAliasesUri].filter((uri): uri is string => Boolean(uri)));
 
     const searchPages: Array<{ okfPath: string; markdown: string }> = [];
@@ -84,25 +91,31 @@ export class OkfExportService {
       if (!EXPORTABLE_MARKDOWN_KINDS.has(component.kind)) continue;
       const okfPath = okfPathForComponent(component);
       if (!okfPath) continue;
-      const sourcePath = resolveComponentFile(this.dataDir, component, packageById.get(component.packageId));
-      const raw = readFileSync(sourcePath, "utf8");
-      const body = stripFrontmatter(raw).trim();
-      const rendered = renderOkfMarkdown({
-        component,
-        body,
-        okfPath,
-        publishedAt: input.publishedAt,
-        activeRuleProfileHash: input.activeRuleProfileHash,
-        evidenceRows: evidenceByComponent.get(component.componentId) ?? [],
-      });
       const target = join(bundleDir, ...okfPath.split(posix.sep));
-      mkdirSync(dirname(target), { recursive: true });
-      writeFileSync(target, rendered, "utf8");
+      let rendered: string;
+      if (patch.reuseMarkdownComponentIds.has(component.componentId) && existsSync(target)) {
+        rendered = readFileSync(target, "utf8");
+      } else {
+        const sourcePath = resolveComponentFile(this.dataDir, component, packageById.get(component.packageId));
+        const raw = readFileSync(sourcePath, "utf8");
+        const body = stripFrontmatter(raw).trim();
+        rendered = renderOkfMarkdown({
+          component,
+          body,
+          okfPath,
+          publishedAt: input.publishedAt,
+          activeRuleProfileHash: input.activeRuleProfileHash,
+          evidenceRows: evidenceByComponent.get(component.componentId) ?? [],
+        });
+        mkdirSync(dirname(target), { recursive: true });
+        writeFileSync(target, rendered, "utf8");
+      }
       searchPages.push({ okfPath: `/${okfPath}`, markdown: rendered });
       exportedPaths.push(okfPath);
     }
 
     const searchIndexUri = exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
+    if (!searchIndexUri) removeBundleFile(bundleDir, "search/index.json");
     if (searchIndexUri) exportedPaths.push(searchIndexUri);
     const revisionUri = input.revision ? exportRevisionAsset(bundleDir, input.revision) : undefined;
     if (revisionUri) exportedPaths.push(revisionUri);
@@ -204,8 +217,56 @@ interface TableAliasRow {
   aliases?: unknown;
 }
 
+interface PatchContext {
+  reuseMarkdownComponentIds: Set<string>;
+}
+
+function preparePatchContext(dataDir: string, bundleDir: string, parentRelease?: ReleaseRecord | null, revision?: Record<string, unknown>): PatchContext {
+  const empty = { reuseMarkdownComponentIds: new Set<string>() };
+  if (!parentRelease || !revision) return empty;
+  const parentBundleDir = join(dataDir, "releases", parentRelease.releaseId, "okf_bundle");
+  if (!existsSync(parentBundleDir)) return empty;
+  cpSync(parentBundleDir, bundleDir, { recursive: true, force: true });
+
+  const diff = recordValue(revision.diff);
+  const componentDiff = recordValue(diff.componentIds);
+  const removedComponentIds = stringArray(componentDiff.removed);
+  const changedComponentIds = stringArray(diff.changedComponents);
+  const addedComponentIds = new Set(stringArray(componentDiff.added));
+  const parentOkfPaths = parentMarkdownPathByComponent(parentRelease.manifest);
+  for (const componentId of [...removedComponentIds, ...changedComponentIds]) {
+    const okfPath = parentOkfPaths.get(componentId);
+    if (okfPath) rmSync(join(bundleDir, ...okfPath.split(posix.sep)), { force: true });
+  }
+
+  const rewrite = new Set([...addedComponentIds, ...changedComponentIds]);
+  const reuseMarkdownComponentIds = new Set(
+    stringArray(componentDiff.unchanged).filter((componentId) => !rewrite.has(componentId)),
+  );
+  return { reuseMarkdownComponentIds };
+}
+
 function okfPathForComponent(component: AssetComponent): string | null {
   const candidate = (component.artifactId || component.legacyPath).replace(/\\/g, "/");
+  if (!candidate.endsWith(".md")) return null;
+  const withoutWiki = candidate.startsWith("wiki/") ? candidate.slice("wiki/".length) : candidate;
+  if (basename(withoutWiki) === "index.md") return null;
+  return withoutWiki.split("/").filter(Boolean).join(posix.sep);
+}
+
+function parentMarkdownPathByComponent(manifest: Record<string, unknown>): Map<string, string> {
+  const components = Array.isArray(manifest.components) ? manifest.components : [];
+  const entries = components.flatMap((item) => {
+    const component = recordValue(item);
+    const componentId = stringValue(component.componentId);
+    const okfPath = okfPathForManifestComponent(component);
+    return componentId && okfPath ? [[componentId, okfPath] as const] : [];
+  });
+  return new Map(entries);
+}
+
+function okfPathForManifestComponent(component: Record<string, unknown>): string | null {
+  const candidate = (stringValue(component.artifactId) || stringValue(component.legacyPath)).replace(/\\/g, "/");
   if (!candidate.endsWith(".md")) return null;
   const withoutWiki = candidate.startsWith("wiki/") ? candidate.slice("wiki/".length) : candidate;
   if (basename(withoutWiki) === "index.md") return null;
@@ -375,6 +436,16 @@ function writeJsonAsset(bundleDir: string, uri: string, value: unknown): void {
   writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function removeAbsentAssets(bundleDir: string, assets: Array<[uri: string, currentUri: string | undefined]>): void {
+  for (const [uri, currentUri] of assets) {
+    if (!currentUri) removeBundleFile(bundleDir, uri);
+  }
+}
+
+function removeBundleFile(bundleDir: string, uri: string): void {
+  rmSync(join(bundleDir, ...uri.split(posix.sep)), { force: true });
+}
+
 function packageSourceVersionIds(packages: AssetPackage[]): string[] {
   return unique(packages.flatMap((pkg) => pkg.sourceVersionIds)).sort();
 }
@@ -486,6 +557,14 @@ function yamlString(value: string): string {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function unique(values: string[]): string[] {

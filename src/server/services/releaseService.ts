@@ -163,6 +163,7 @@ export class ReleaseService {
       });
       const okfExport = await createOkfExportService(this.db, this.dataDir).exportRelease({
         release,
+        parentRelease,
         packages,
         components: trustedComponents,
         publishedAt,
@@ -605,6 +606,7 @@ function componentFingerprint(component: AssetComponent): string {
     title: component.title,
     storageUri: component.storageUri,
     sourceRefs: component.sourceRefs,
+    quality: stableQualityValue(component.quality),
   });
 }
 
@@ -617,7 +619,19 @@ function stableComponentFingerprint(component: Record<string, unknown>): string 
     title: component.title,
     storageUri: component.storageUri,
     sourceRefs: stringArray(component.sourceRefs),
+    quality: stableQualityValue(component.quality),
   });
+}
+
+function stableQualityValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableQualityValue);
+  if (!value || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "lastTrustedAuditAt") continue;
+    out[key] = stableQualityValue(child);
+  }
+  return out;
 }
 
 function summarizePackages(packages: AssetPackage[], components: AssetComponent[] = [], activeRuleProfileHash = ""): Record<string, unknown> {

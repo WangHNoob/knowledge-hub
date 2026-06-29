@@ -136,6 +136,30 @@ describe("ReleaseService", () => {
     }
   }, 15000);
 
+  it("reuses unchanged markdown files from the parent OKF bundle", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_reuse" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+
+    try {
+      const firstDraft = await service.createDraft({ version: "2026.06.15.reuse.1", packageIds: ["pkg_reuse"], requestedBy: "admin" });
+      const first = await service.publish(firstDraft.releaseId, "admin");
+      const firstPage = readFileSync(join(fixture.dataDir, "releases", first.releaseId, "okf_bundle", "systems", "demo.md"), "utf8");
+
+      const secondDraft = await service.createDraft({ version: "2026.06.15.reuse.2", packageIds: ["pkg_reuse"], requestedBy: "admin" });
+      expect(secondDraft.parentReleaseId).toBe(first.releaseId);
+      const second = await service.publish(secondDraft.releaseId, "admin");
+      expect(second.manifest.revision).toMatchObject({
+        parentReleaseId: first.releaseId,
+        mode: "revision",
+        summary: { componentsAdded: 0, componentsRemoved: 0, componentsChanged: 0, componentsUnchanged: 3 }
+      });
+      const secondPage = readFileSync(join(fixture.dataDir, "releases", second.releaseId, "okf_bundle", "systems", "demo.md"), "utf8");
+      expect(secondPage).toBe(firstPage);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
+
   it("backfills publish evidence from source refs before OKF export", async () => {
     const fixture = await setupReleaseFixture({ packageId: "pkg_backfill", withEvidence: false });
     const service = createReleaseService(fixture.db, fixture.dataDir);
