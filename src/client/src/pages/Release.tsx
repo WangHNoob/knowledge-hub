@@ -1,4 +1,4 @@
-import { CheckCircle2, FileText, GitBranch, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileText, GitBranch, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
@@ -6,12 +6,14 @@ import {
   createRelease,
   deleteRelease,
   getCurrentRelease,
+  listFlywheelEvents,
   listPackages,
   listReleases,
   listReviewTasks,
   publishRelease,
   rollbackRelease,
   updateRelease,
+  type FlywheelEvent,
   type KnowledgeLintSummary,
   type ReleaseAuditSummary,
   type ReleaseRecord
@@ -33,6 +35,7 @@ export function Release() {
   const tasks = useQuery({ queryKey: ["review", "blocking"], queryFn: () => listReviewTasks("blocking") });
   const releases = useQuery({ queryKey: ["releases"], queryFn: listReleases });
   const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
+  const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
 
   const selectedPackageIdSet = useMemo(() => new Set(selectedPackageIds), [selectedPackageIds]);
@@ -60,6 +63,10 @@ export function Release() {
     () => selectedPackages.reduce((sum, pkg) => sum + Number(pkg.qualitySummary.componentCount ?? 0), 0),
     [selectedPackages]
   );
+  const autoPublishEvents = useMemo(
+    () => buildAutoPublishEvents(flywheelEvents.data ?? [], releases.data ?? []),
+    [flywheelEvents.data, releases.data]
+  );
   const createMutation = useMutation({
     mutationFn: () => createRelease(version.trim(), selectedPackageIds, current.data?.releaseId ?? null),
     onSuccess: async (release) => {
@@ -75,6 +82,7 @@ export function Release() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["releases"] }),
         queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
     }
@@ -85,6 +93,7 @@ export function Release() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["releases"] }),
         queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
     }
@@ -112,8 +121,8 @@ export function Release() {
     }
   });
 
-  if (packages.isLoading || releases.isLoading || current.isLoading || tasks.isLoading) return <Loading title="正在读取发布工作台" />;
-  if (packages.error || releases.error || current.error || tasks.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error} />;
+  if (packages.isLoading || releases.isLoading || current.isLoading || tasks.isLoading || flywheelEvents.isLoading) return <Loading title="正在读取发布工作台" />;
+  if (packages.error || releases.error || current.error || tasks.error || flywheelEvents.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error ?? flywheelEvents.error} />;
 
   return (
     <Page title="发布" subtitle="发布版本是 Agent 正式消费的不可变知识视图。">
@@ -241,6 +250,12 @@ export function Release() {
               <ReleaseAuditSummaryView release={current.data} />
             </>
           )}
+          <AutoPublishEventsPanel
+            events={autoPublishEvents}
+            onNavigateReview={() => navigate("review")}
+            onNavigateBuilder={() => navigate("builder")}
+            onNavigateAssets={(packageId) => navigate("assets", { packageId })}
+          />
           <h3>发布历史</h3>
           <div className="release-history">
             {(releases.data ?? []).map((release) => (
@@ -300,6 +315,77 @@ export function Release() {
         )}
       </div>
     </Page>
+  );
+}
+
+function AutoPublishEventsPanel({
+  events,
+  onNavigateReview,
+  onNavigateBuilder,
+  onNavigateAssets,
+}: {
+  events: AutoPublishEventView[];
+  onNavigateReview: () => void;
+  onNavigateBuilder: () => void;
+  onNavigateAssets: (packageId: string) => void;
+}) {
+  const latest = events.slice(0, 5);
+  const currentStatus = latest[0]?.type ?? null;
+  return (
+    <section className="auto-publish-panel">
+      <div className="detail-head">
+        <div>
+          <h3>{currentStatus === "skipped" ? <AlertTriangle size={17} /> : <CheckCircle2 size={17} />} 自动发布状态</h3>
+          <p>系统自动尝试发布 revision 时，会把成功或跳过原因写在这里。</p>
+        </div>
+        <Badge label={currentStatus === "skipped" ? "需要处理" : currentStatus === "succeeded" ? "正常" : "暂无事件"} tone={currentStatus === "skipped" ? "warn" : currentStatus === "succeeded" ? "ok" : undefined} />
+      </div>
+
+      {latest.length === 0 ? (
+        <p className="subtle">还没有自动发布事件。完成构建或反馈驱动重建后，这里会显示是否触发了自动发布。</p>
+      ) : (
+        <div className="auto-publish-list">
+          {latest.map((event) => (
+            <article className={`auto-publish-event ${event.type}`} key={event.eventId}>
+              <header>
+                <div>
+                  <strong>{event.type === "skipped" ? "自动发布已跳过" : "自动发布成功"}</strong>
+                  <span>{event.releaseVersion || event.releaseId || "未关联发布草案"} · {formatTime(event.createdAt)}</span>
+                </div>
+                <Badge label={event.type === "skipped" ? "blocked" : "published"} tone={event.type === "skipped" ? "warn" : "ok"} />
+              </header>
+
+              <div className="asset-link">
+                {event.releaseId && <IdChip label={event.releaseId} title="发布版本 ID" />}
+                {event.runId && <IdChip label={event.runId} title="构建 run ID" />}
+                {event.packageId && <IdChip label={event.packageId} title="在知识资产中查看该资产包" onClick={() => onNavigateAssets(event.packageId)} />}
+              </div>
+
+              {event.type === "skipped" ? (
+                <div className="auto-publish-reasons">
+                  {event.reasons.map((reason) => (
+                    <p key={reason}>
+                      <strong>{autoPublishReasonLabel(reason)}</strong>
+                      <span>{autoPublishReasonAction(reason)}</span>
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="notice">本次 revision 满足自动发布条件，已经成为 Agent 当前可消费版本。</p>
+              )}
+
+              <div className="auto-publish-actions">
+                {event.type === "skipped" && (
+                  <button className="secondary-action" onClick={onNavigateReview}>处理审核任务</button>
+                )}
+                {event.runId && <button className="secondary-action" onClick={onNavigateBuilder}>查看构建记录</button>}
+                {event.packageId && <button className="secondary-action" onClick={() => onNavigateAssets(event.packageId)}>查看资产包</button>}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -568,6 +654,77 @@ function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function buildAutoPublishEvents(events: FlywheelEvent[], releases: ReleaseRecord[]): AutoPublishEventView[] {
+  const releaseById = new Map(releases.map((release) => [release.releaseId, release]));
+  return events
+    .filter((event) => event.eventType === "release.auto_publish_skipped" || event.eventType === "release.auto_publish_succeeded")
+    .map((event) => {
+      const payload = objectValue(event.payload);
+      const releaseId = stringField(payload.releaseId);
+      return {
+        eventId: event.eventId,
+        type: event.eventType === "release.auto_publish_succeeded" ? "succeeded" : "skipped",
+        releaseId,
+        releaseVersion: releaseById.get(releaseId)?.version ?? "",
+        runId: stringField(payload.runId),
+        packageId: stringField(payload.packageId),
+        reasons: parseAutoPublishReasons(stringField(payload.reason)),
+        createdAt: event.createdAt,
+      };
+    });
+}
+
+function parseAutoPublishReasons(reason: string): string[] {
+  const normalized = reason
+    .replace(/^Auto publish is not eligible:\s*/u, "")
+    .trim();
+  if (!normalized) return ["unknown"];
+  return normalized
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function autoPublishReasonLabel(reason: string): string {
+  switch (reason) {
+    case "changed_components_have_blocking_tasks":
+      return "变更组件还有阻断审核";
+    case "trust_score_declined_or_missing":
+      return "可信度下降或缺失";
+    case "removed_components_present":
+      return "本次包含组件删除";
+    case "missing_parent_release":
+      return "缺少发布基线";
+    case "no_component_changes":
+      return "没有组件变更";
+    case "unknown":
+      return "未记录具体原因";
+    default:
+      return reason;
+  }
+}
+
+function autoPublishReasonAction(reason: string): string {
+  switch (reason) {
+    case "changed_components_have_blocking_tasks":
+      return "先到审核中心完成阻断任务，再重新发布或等待下一次自动发布。";
+    case "trust_score_declined_or_missing":
+      return "检查变更资产的可信度明细，补证据或完成人工标注后再发布。";
+    case "removed_components_present":
+      return "删除知识会影响 Agent 消费，需要管理员手动确认发布。";
+    case "missing_parent_release":
+      return "先发布一个基线版本，后续 revision 才能自动比较差异。";
+    case "no_component_changes":
+      return "没有需要发布的变化，通常不需要处理。";
+    default:
+      return "查看关联构建 run、资产包和审核任务后决定是否手动发布。";
+  }
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 interface OkfManifest {
   bundleUri: string;
   reportUri: string;
@@ -600,4 +757,15 @@ interface AutoPublishInfo {
   eligible: boolean;
   mode: string;
   reasons: string[];
+}
+
+interface AutoPublishEventView {
+  eventId: string;
+  type: "skipped" | "succeeded";
+  releaseId: string;
+  releaseVersion: string;
+  runId: string;
+  packageId: string;
+  reasons: string[];
+  createdAt: string;
 }

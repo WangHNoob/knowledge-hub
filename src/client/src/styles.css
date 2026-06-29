@@ -1951,6 +1951,101 @@ code {
   word-break: break-all;
 }
 
+.auto-publish-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.auto-publish-panel h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+}
+
+.auto-publish-list {
+  display: grid;
+  gap: 10px;
+}
+
+.auto-publish-event {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.auto-publish-event.skipped {
+  border-color: rgba(201, 162, 39, 0.28);
+  background: rgba(201, 162, 39, 0.06);
+}
+
+.auto-publish-event.succeeded {
+  border-color: rgba(95, 127, 72, 0.24);
+}
+
+.auto-publish-event header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.auto-publish-event header div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.auto-publish-event header strong,
+.auto-publish-event header span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.auto-publish-event header span {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.auto-publish-reasons {
+  display: grid;
+  gap: 8px;
+}
+
+.auto-publish-reasons p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(201, 162, 39, 0.2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.auto-publish-reasons strong {
+  color: var(--ink);
+}
+
+.auto-publish-reasons span {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.auto-publish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .okf-summary {
   display: grid;
   gap: 12px;
