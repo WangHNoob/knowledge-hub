@@ -11,6 +11,7 @@ import { createKnowledgeService } from "./services/knowledgeService";
 import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
+import { registerFeedbackAutomation } from "./services/feedbackAutomationService";
 import { registerReleaseAutomation } from "./services/releaseAutomationService";
 import { createSourceBundleService } from "./services/sourceBundleService";
 import { createStorageMaintenanceService } from "./services/storageMaintenanceService";
@@ -76,6 +77,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     releaseService: ctx.releaseService,
     diagnostics,
   });
+  const unsubscribeFeedbackAutomation = registerFeedbackAutomation({
+    db: options.db,
+    kbBuilderService: ctx.kbBuilderService,
+    diagnostics,
+  });
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -113,6 +119,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   app.addHook("onClose", async () => {
     unsubscribeReleaseAutomation();
+    unsubscribeFeedbackAutomation();
     await options.db.close();
   });
   return app;

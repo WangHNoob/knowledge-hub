@@ -122,6 +122,7 @@
 | OKF bundle 文件复用 | 已复制父 bundle 作为基底，仅重写 added/changed Markdown，并清理 removed Markdown 与缺失全局资产 |
 | 自动发布资格判断 | 已支持 `publish(autoMode=true)`：要求 revision、有变化组件、无 removed component、变化组件无 blocking、trust 未下降 |
 | 构建完成触发 revision 草案 | 已监听 `build.completed`，对 scoped build 自动创建基于 current release 的 revision draft，并防重复 |
+| Agent 反馈触发 scoped rebuild | 已监听 `agent.feedback.rebuild_proposed`，复用审核任务启动单组件 scoped rebuild，并通过 `rebuildTaskId` 防重复 |
 
 后续继续做“Agent 反馈驱动增量重建执行”：
 

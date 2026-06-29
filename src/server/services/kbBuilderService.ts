@@ -138,6 +138,7 @@ export class KbBuilderPipelineService {
         only: options.only,
         requestedBy: options.requestedBy,
         traceId: options.traceId,
+        rebuildTaskId: options.rebuildTaskId,
         modelConfig: redactModelConfig(modelConfig),
         incremental: incrementalConfig(version.parentVersionId, sourceChanges),
         ruleProfile: {
@@ -344,6 +345,8 @@ export class KbBuilderPipelineService {
   }
 
   async startRebuildFromReviewTask(taskId: string, requestedBy: string, traceId?: string): Promise<KnowledgeBuildRun> {
+    const existing = await this.findExistingRebuildRun(taskId);
+    if (existing) return existing;
     const { rows } = await this.adapter.query(
       `SELECT
          t.task_id,
@@ -385,6 +388,7 @@ export class KbBuilderPipelineService {
       only,
       qualityProfileId: "default",
       traceId,
+      rebuildTaskId: taskId,
       generateAliases: false,
     });
     await this.adapter.query(
@@ -394,6 +398,19 @@ export class KbBuilderPipelineService {
       [taskId, `已启动 scoped rebuild: ${run.runId}${only ? ` (${only})` : ""}`],
     );
     return run;
+  }
+
+  private async findExistingRebuildRun(taskId: string): Promise<KnowledgeBuildRun | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM knowledge_build_runs
+       WHERE config_json ->> 'rebuildTaskId' = $1
+         AND status IN ('running', 'completed')
+       ORDER BY started_at DESC
+       LIMIT 1`,
+      [taskId],
+    );
+    return rows.length ? mapRun(rows[0]) : null;
   }
 
   async getActiveQualityProfile(): Promise<QualityGateProfile> {

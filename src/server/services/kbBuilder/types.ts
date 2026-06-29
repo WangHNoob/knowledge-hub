@@ -19,6 +19,7 @@ export interface BuildPipelineOptions {
   only: string | null;
   qualityProfileId: string;
   traceId?: string;
+  rebuildTaskId?: string;
   /** Explicit maintenance mode: may write LLM-drafted aliases into the persistent translation table. Off by default. */
   generateAliases?: boolean;
 }

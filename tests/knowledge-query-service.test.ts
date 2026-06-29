@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createKnowledgeQueryService } from "../src/server/services/knowledgeQueryService";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
 import { createKbBuilderPipelineService } from "../src/server/services/kbBuilderService";
+import { registerFeedbackAutomation } from "../src/server/services/feedbackAutomationService";
 import { createReleaseService } from "../src/server/services/releaseService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
 import { createTestDb, type TestDbHandle } from "./helpers/testDb";
@@ -360,6 +361,8 @@ describe("KnowledgeQueryService", () => {
   it("routes explicit Agent feedback reports into review tasks", async () => {
     const fixture = await setupPublishedKnowledgeFixture();
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    const builder = createKbBuilderPipelineService(fixture.db, fixture.dataDir);
+    const unsubscribe = registerFeedbackAutomation({ db: fixture.db, kbBuilderService: builder });
     try {
       const badHit = await service.runTool("kb_report_bad_hit", {
         query: "Battle stamina",
@@ -404,16 +407,36 @@ describe("KnowledgeQueryService", () => {
       );
       expect(rebuildEvents).toHaveLength(1);
 
-      const builder = createKbBuilderPipelineService(fixture.db, fixture.dataDir);
+      const startedEvent = await waitForRebuildStartedEvent(fixture.db, String(rebuildTasks[0].task_id));
       const run = await builder.startRebuildFromReviewTask(String(rebuildTasks[0].task_id), "admin");
+      expect(run.runId).toBe(startedEvent.run_id);
       expect(run.config.only).toBe("gamedocs/battle.md");
       await waitForBuildRun(builder, run.runId);
     } finally {
+      unsubscribe();
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
     }
   }, 15000);
 });
+
+async function waitForRebuildStartedEvent(db: TestDbHandle["db"], taskId: string) {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const { rows } = await db.adapter.query(
+      `SELECT event_id, entity_id AS run_id, payload_json
+       FROM knowledge_events
+       WHERE event_type = 'agent.feedback.rebuild_started'
+         AND payload_json ->> 'taskId' = $1
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [taskId],
+    );
+    if (rows[0]) return rows[0];
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for rebuild_started event ${taskId}`);
+}
 
 async function waitForBuildRun(builder: ReturnType<typeof createKbBuilderPipelineService>, runId: string) {
   const deadline = Date.now() + 10000;

@@ -11,6 +11,7 @@ export type KnowledgeEventType =
   | "component.trust_changed"
   | "agent.feedback.received"
   | "agent.feedback.rebuild_proposed"
+  | "agent.feedback.rebuild_started"
   | "release.revision_proposed"
   | "release.published";
 
