@@ -7,14 +7,16 @@ import {
   deleteBuildRun,
   listBuildRuns,
   listBundleVersions,
+  listFlywheelEvents,
   stopBuildRun,
   testModelConnectivity,
   type BuildModelConfig,
+  type FlywheelEvent,
   type KnowledgeBuildRun
 } from "../api";
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
-import { BuildRunCard } from "../components/BuildRunCard";
+import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRunCard";
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
@@ -51,6 +53,11 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     queryFn: listBuildRuns,
     refetchInterval: 2000
   });
+  const flywheelEvents = useQuery({
+    queryKey: ["agent", "flywheel-events"],
+    queryFn: listFlywheelEvents,
+    refetchInterval: 3000
+  });
 
   useEffect(() => {
     if (!selectedVersion && versions.data?.[0]) setSelectedVersion(versions.data[0].versionId);
@@ -82,6 +89,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
           });
           void queryClient.invalidateQueries({ queryKey: ["packages"] });
           void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+          void queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] });
         }
       }
     }
@@ -114,6 +122,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       ]);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["packages"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
@@ -152,6 +161,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
 
   const activeRuns = (runs.data ?? []).filter((run) => run.status === "running");
   const selectedRuns = (runs.data ?? []).filter((run) => !selectedVersion || run.sourceVersionId === selectedVersion);
+  const automationByRunId = useMemo(() => buildReleaseAutomationByRunId(flywheelEvents.data ?? []), [flywheelEvents.data]);
   const canStart = Boolean(selectedVersion) && !buildMutation.isPending && stages.length > 0 && (
     provider === "deterministic" || Boolean(baseUrl.trim() && model.trim() && apiKey.trim())
   );
@@ -363,6 +373,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                 <BuildRunCard
                   key={run.runId}
                   run={run}
+                  releaseAutomation={automationByRunId.get(run.runId) ?? null}
                   onStop={() => stopRunMutation.mutate(run.runId)}
                   onDelete={() => deleteRunMutation.mutate(run.runId)}
                   onShowPackage={onShowPackage}
@@ -426,4 +437,35 @@ function createModelConfig(
     model: model.trim(),
     apiKey: apiKey.trim()
   };
+}
+
+function buildReleaseAutomationByRunId(events: FlywheelEvent[]): Map<string, BuildReleaseAutomation> {
+  const result = new Map<string, BuildReleaseAutomation>();
+  for (const event of events) {
+    if (event.eventType !== "release.auto_publish_succeeded" && event.eventType !== "release.auto_publish_skipped") continue;
+    const payload = objectValue(event.payload);
+    const runId = stringField(payload.runId);
+    if (!runId || result.has(runId)) continue;
+    result.set(runId, {
+      status: event.eventType === "release.auto_publish_succeeded" ? "succeeded" : "skipped",
+      releaseId: stringField(payload.releaseId),
+      reasons: parseAutoPublishReasons(stringField(payload.reason)),
+      createdAt: event.createdAt,
+    });
+  }
+  return result;
+}
+
+function parseAutoPublishReasons(reason: string): string[] {
+  const normalized = reason.replace(/^Auto publish is not eligible:\s*/u, "").trim();
+  if (!normalized) return [];
+  return normalized.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }

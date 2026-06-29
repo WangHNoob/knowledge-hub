@@ -1,4 +1,4 @@
-import { ArrowRight, Square, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, Square, Trash2 } from "lucide-react";
 
 import type { KnowledgeBuildRun } from "../api";
 import { runStatusLabel, formatTime } from "../utils/format";
@@ -6,12 +6,14 @@ import { Badge } from "./Atoms";
 
 export function BuildRunCard({
   run,
+  releaseAutomation,
   onStop,
   onDelete,
   onShowPackage,
   busy
 }: {
   run: KnowledgeBuildRun;
+  releaseAutomation?: BuildReleaseAutomation | null;
   onStop: () => void;
   onDelete: () => void;
   onShowPackage: (packageId: string) => void;
@@ -98,10 +100,62 @@ export function BuildRunCard({
           )}
         </>
       )}
+      {run.status === "completed" && <ReleaseAutomationStatus automation={releaseAutomation ?? null} />}
       {run.error && <p className="error">{run.error}</p>}
       <small>{formatTime(run.startedAt)}{run.finishedAt ? ` → ${formatTime(run.finishedAt)}` : ""}</small>
     </article>
   );
+}
+
+function ReleaseAutomationStatus({ automation }: { automation: BuildReleaseAutomation | null }) {
+  if (!automation) {
+    return (
+      <div className="build-release-status none">
+        <Clock3 size={15} />
+        <div>
+          <strong>未记录自动发布</strong>
+          <span>可能是旧构建、手动流程，或自动发布事件尚未写入。</span>
+        </div>
+      </div>
+    );
+  }
+  const succeeded = automation.status === "succeeded";
+  return (
+    <div className={`build-release-status ${automation.status}`}>
+      {succeeded ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+      <div>
+        <strong>{succeeded ? "构建后已自动发布" : "构建后自动发布跳过"}</strong>
+        <span>
+          {automation.releaseId || "未关联发布草案"}
+          {automation.createdAt ? ` · ${formatTime(automation.createdAt)}` : ""}
+        </span>
+        {!succeeded && automation.reasons.length > 0 && (
+          <ul>
+            {automation.reasons.map((reason) => <li key={reason}>{releaseReasonLabel(reason)}</li>)}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function releaseReasonLabel(reason: string): string {
+  switch (reason) {
+    case "changed_components_have_blocking_tasks":
+      return "变更组件还有阻断审核";
+    case "trust_score_declined_or_missing":
+      return "可信度下降或缺失";
+    case "removed_components_present":
+      return "本次包含组件删除，需要人工确认";
+    case "missing_parent_release":
+      return "缺少发布基线";
+    case "no_component_changes":
+      return "没有组件变更";
+    case "unknown":
+      return "未记录具体原因";
+    default:
+      return reason;
+  }
 }
 
 function parseFlywheelSummary(value: unknown): {
@@ -120,6 +174,13 @@ function parseFlywheelSummary(value: unknown): {
     appliedRuleDismissals: numberValue(data.appliedRuleDismissals),
     newAnnotationTasks: numberValue(data.newAnnotationTasks),
   };
+}
+
+export interface BuildReleaseAutomation {
+  status: "succeeded" | "skipped";
+  releaseId: string;
+  reasons: string[];
+  createdAt: string;
 }
 
 function numberValue(value: unknown): number {
