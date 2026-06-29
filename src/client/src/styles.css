@@ -1844,6 +1844,18 @@ code {
   font-size: 12px;
 }
 
+.build-release-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.build-release-actions .secondary-action {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .link-button {
   display: inline-flex;
   align-items: center;

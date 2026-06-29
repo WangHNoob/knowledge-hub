@@ -17,6 +17,7 @@ import {
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
 import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRunCard";
+import { useNav } from "../ui/navigation";
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
@@ -24,6 +25,7 @@ type ModelProvider = "deterministic" | "openai-compatible" | "anthropic";
 type BuilderTab = "build" | "advanced" | "runs";
 
 export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId: string) => void }) {
+  const { navigate } = useNav();
   const queryClient = useQueryClient();
   const bundleId = "default";
   const prefs = useMemo(loadModelPrefs, []);
@@ -377,6 +379,8 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                   onStop={() => stopRunMutation.mutate(run.runId)}
                   onDelete={() => deleteRunMutation.mutate(run.runId)}
                   onShowPackage={onShowPackage}
+                  onShowRelease={(releaseId) => navigate("release", { releaseId })}
+                  onShowReview={() => navigate("review", { severity: "blocking", packageId: run.packageId ?? undefined })}
                   busy={stopRunMutation.isPending || deleteRunMutation.isPending}
                 />
               ))}
@@ -449,6 +453,7 @@ function buildReleaseAutomationByRunId(events: FlywheelEvent[]): Map<string, Bui
     result.set(runId, {
       status: event.eventType === "release.auto_publish_succeeded" ? "succeeded" : "skipped",
       releaseId: stringField(payload.releaseId),
+      packageId: stringField(payload.packageId),
       reasons: parseAutoPublishReasons(stringField(payload.reason)),
       createdAt: event.createdAt,
     });

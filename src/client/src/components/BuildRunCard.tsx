@@ -10,6 +10,8 @@ export function BuildRunCard({
   onStop,
   onDelete,
   onShowPackage,
+  onShowRelease,
+  onShowReview,
   busy
 }: {
   run: KnowledgeBuildRun;
@@ -17,6 +19,8 @@ export function BuildRunCard({
   onStop: () => void;
   onDelete: () => void;
   onShowPackage: (packageId: string) => void;
+  onShowRelease: (releaseId?: string) => void;
+  onShowReview: () => void;
   busy: boolean;
 }) {
   const traceId = typeof run.config.traceId === "string" ? run.config.traceId : "";
@@ -100,14 +104,31 @@ export function BuildRunCard({
           )}
         </>
       )}
-      {run.status === "completed" && <ReleaseAutomationStatus automation={releaseAutomation ?? null} />}
+      {run.status === "completed" && (
+        <ReleaseAutomationStatus
+          automation={releaseAutomation ?? null}
+          onShowPackage={onShowPackage}
+          onShowRelease={onShowRelease}
+          onShowReview={onShowReview}
+        />
+      )}
       {run.error && <p className="error">{run.error}</p>}
       <small>{formatTime(run.startedAt)}{run.finishedAt ? ` → ${formatTime(run.finishedAt)}` : ""}</small>
     </article>
   );
 }
 
-function ReleaseAutomationStatus({ automation }: { automation: BuildReleaseAutomation | null }) {
+function ReleaseAutomationStatus({
+  automation,
+  onShowPackage,
+  onShowRelease,
+  onShowReview,
+}: {
+  automation: BuildReleaseAutomation | null;
+  onShowPackage: (packageId: string) => void;
+  onShowRelease: (releaseId?: string) => void;
+  onShowReview: () => void;
+}) {
   if (!automation) {
     return (
       <div className="build-release-status none">
@@ -134,9 +155,22 @@ function ReleaseAutomationStatus({ automation }: { automation: BuildReleaseAutom
             {automation.reasons.map((reason) => <li key={reason}>{releaseReasonLabel(reason)}</li>)}
           </ul>
         )}
+        <div className="build-release-actions">
+          {!succeeded && automation.reasons.some(needsReviewAction) && (
+            <button className="secondary-action" type="button" onClick={onShowReview}>处理审核任务</button>
+          )}
+          <button className="secondary-action" type="button" onClick={() => onShowRelease(automation.releaseId || undefined)}>查看发布状态</button>
+          {automation.packageId && (
+            <button className="secondary-action" type="button" onClick={() => onShowPackage(automation.packageId)}>查看资产包</button>
+          )}
+        </div>
       </div>
     </div>
   );
+}
+
+function needsReviewAction(reason: string): boolean {
+  return reason === "changed_components_have_blocking_tasks" || reason === "trust_score_declined_or_missing" || reason === "unknown";
 }
 
 function releaseReasonLabel(reason: string): string {
@@ -179,6 +213,7 @@ function parseFlywheelSummary(value: unknown): {
 export interface BuildReleaseAutomation {
   status: "succeeded" | "skipped";
   releaseId: string;
+  packageId: string;
   reasons: string[];
   createdAt: string;
 }
