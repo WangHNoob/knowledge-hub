@@ -22,6 +22,12 @@ function positiveInt(name: string, fallback: number): number {
   return Math.floor(value);
 }
 
+function flag(name: string, fallback = false): boolean {
+  const raw = process.env[name];
+  if (!raw || raw.trim() === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+}
+
 export const config = {
   port: Number(optional("PORT", "4174")),
   host: optional("HOST", "0.0.0.0"),
@@ -36,7 +42,8 @@ export const config = {
   uploadMaxFileBytes: positiveInt("KH_UPLOAD_MAX_FILE_BYTES", 2 * 1024 * 1024 * 1024),
   uploadMaxFiles: positiveInt("KH_UPLOAD_MAX_FILES", 20000),
   uploadMaxFields: positiveInt("KH_UPLOAD_MAX_FIELDS", 200),
-  uploadMaxParts: positiveInt("KH_UPLOAD_MAX_PARTS", 20200)
+  uploadMaxParts: positiveInt("KH_UPLOAD_MAX_PARTS", 20200),
+  autoPublishRevisions: flag("KH_AUTO_PUBLISH_REVISIONS", false)
 };
 
 export const testConfig = {

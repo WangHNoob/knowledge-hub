@@ -13,6 +13,8 @@ export type KnowledgeEventType =
   | "agent.feedback.rebuild_proposed"
   | "agent.feedback.rebuild_started"
   | "release.revision_proposed"
+  | "release.auto_publish_succeeded"
+  | "release.auto_publish_skipped"
   | "release.published";
 
 export interface KnowledgeEvent {

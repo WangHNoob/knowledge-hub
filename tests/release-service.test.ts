@@ -236,7 +236,7 @@ describe("ReleaseService", () => {
     const fixture = await setupReleaseFixture({ packageId: "pkg_event_current" });
     await setupReleaseFixture({ handle: fixture.handle, packageId: "pkg_event_scoped" });
     const service = createReleaseService(fixture.db, fixture.dataDir);
-    const unsubscribe = registerReleaseAutomation({ releaseService: service });
+    const unsubscribe = registerReleaseAutomation({ db: fixture.db, releaseService: service });
 
     try {
       const currentDraft = await service.createDraft({ version: "2026.06.15.event-current", packageIds: ["pkg_event_current"], requestedBy: "admin" });
@@ -255,6 +255,45 @@ describe("ReleaseService", () => {
       const draft = await waitForDraftRevision(fixture.db, current.releaseId, "pkg_event_scoped");
       expect(draft).toMatchObject({ parent_release_id: current.releaseId, status: "draft" });
       expect(String(draft.note)).toContain("run_event_scoped");
+    } finally {
+      unsubscribe();
+      await fixture.cleanup();
+    }
+  }, 15000);
+
+  it("auto publishes eligible revision drafts when release automation is enabled", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_event_auto" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+    const unsubscribe = registerReleaseAutomation({
+      db: fixture.db,
+      releaseService: service,
+      autoPublishRevisions: true,
+    });
+
+    try {
+      const currentDraft = await service.createDraft({ version: "2026.06.15.event-auto.1", packageIds: ["pkg_event_auto"], requestedBy: "admin" });
+      const current = await service.publish(currentDraft.releaseId, "admin");
+      await fixture.db.adapter.query(
+        "UPDATE asset_components SET title = $2 WHERE component_id = $1",
+        ["cmp_pkg_event_auto_page", "Demo Page Auto Updated"],
+      );
+      await emitKnowledgeEvent(fixture.db, {
+        eventType: "build.completed",
+        entityType: "build_run",
+        entityId: "run_event_auto",
+        payload: {
+          runId: "run_event_auto",
+          packageId: "pkg_event_auto",
+          requestedBy: "builder",
+          only: "gamedocs/demo.md",
+        },
+      });
+      const published = await waitForAutoPublish(fixture.db, current.releaseId, "pkg_event_auto");
+      expect(published.status).toBe("published");
+      expect(published.parent_release_id).toBe(current.releaseId);
+      expect((await service.getCurrent())?.releaseId).toBe(published.release_id);
+      const events = await fixture.db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = 'release.auto_publish_succeeded'");
+      expect(events.rows).toHaveLength(1);
     } finally {
       unsubscribe();
       await fixture.cleanup();
@@ -410,4 +449,23 @@ async function waitForDraftRevision(db: TestDbHandle["db"], parentReleaseId: str
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for draft revision ${packageId}`);
+}
+
+async function waitForAutoPublish(db: TestDbHandle["db"], parentReleaseId: string, packageId: string): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const { rows } = await db.adapter.query(
+      `SELECT *
+       FROM releases
+       WHERE status = 'published'
+         AND parent_release_id = $1
+         AND package_ids @> $2::jsonb
+       ORDER BY published_at DESC
+       LIMIT 1`,
+      [parentReleaseId, JSON.stringify([packageId])],
+    );
+    if (rows[0]) return rows[0];
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for auto publish ${packageId}`);
 }

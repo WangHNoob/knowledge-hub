@@ -74,8 +74,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     })
   };
   const unsubscribeReleaseAutomation = registerReleaseAutomation({
+    db: options.db,
     releaseService: ctx.releaseService,
     diagnostics,
+    autoPublishRevisions: config.autoPublishRevisions,
   });
   const unsubscribeFeedbackAutomation = registerFeedbackAutomation({
     db: options.db,

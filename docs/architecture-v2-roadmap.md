@@ -123,10 +123,11 @@
 | 自动发布资格判断 | 已支持 `publish(autoMode=true)`：要求 revision、有变化组件、无 removed component、变化组件无 blocking、trust 未下降 |
 | 构建完成触发 revision 草案 | 已监听 `build.completed`，对 scoped build 自动创建基于 current release 的 revision draft，并防重复 |
 | Agent 反馈触发 scoped rebuild | 已监听 `agent.feedback.rebuild_proposed`，复用审核任务启动单组件 scoped rebuild，并通过 `rebuildTaskId` 防重复 |
+| 可配置 revision 自动发布 | `KH_AUTO_PUBLISH_REVISIONS=true` 时，revision draft 通过 `autoMode` 资格检查后自动发布；失败记录 skipped 事件 |
 
 后续继续做“Agent 反馈驱动增量重建执行”：
 
 1. 进一步统计 examples 的精确命中来源，而不是只展示注入数量。
 2. 审核中心展示“这个问题是否复发、上次人工标注是什么、这次是否被样例影响”。
 3. 让 graph/table/search 等全局资产支持更细粒度 patch，而不是每次 revision 重建聚合资产。
-4. 在事件订阅中增加可配置后台自动发布：仅当 revision draft 通过 `autoMode` 条件时自动 publish，否则保留人工确认。
+4. 在界面中展示自动化链路状态：反馈提案、重建 run、revision 草案、自动发布成功/跳过原因。
