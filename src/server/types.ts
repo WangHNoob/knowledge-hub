@@ -193,6 +193,7 @@ export interface AnnotationExample {
   componentId: string;
   taskId: string;
   ruleId: string;
+  applyMode: "hint" | "override";
   pageType: string;
   contextHash: string;
   contextSnapshot: Record<string, unknown>;

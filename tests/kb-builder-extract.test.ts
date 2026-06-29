@@ -221,6 +221,131 @@ describe("runExtractStage", () => {
     }
   });
 
+  it("applies override annotations before rendering and table normalization", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(dataDir, "table_aliases.json"), JSON.stringify([
+        { table: "Skill", aliases: ["技能表"] }
+      ]));
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: {
+          concept: { dir: "concepts", template: "concept.md" },
+          system: { dir: "systems", template: "system_rule.md" }
+        },
+        entity_types: ["system", "config_table", "concept"],
+        relation_types: ["configured_in", "references"]
+      }));
+      writeFileSync(join(specDir, "concept.md"), "## Overview");
+      writeFileSync(join(specDir, "system_rule.md"), "## Overview\n## Data Dependencies\n| key | required |\n| --- | --- |\n| config_table | yes |");
+      writeFileSync(join(dataDir, "processed", "parsed", "battle.md"), [
+        "---",
+        "type: concept",
+        "title: Battle",
+        "source: gamedocs/battle.md",
+        "facts:",
+        "  old_fact: remove-me",
+        "---",
+        "## Overview",
+        "Original overview.",
+        "",
+        "## Data Dependencies",
+        "（无）"
+      ].join("\n"));
+
+      const specs = loadWikiSpecs(specDir);
+      const result = await runExtractStage({
+        dataDir,
+        specs,
+        model: "deterministic",
+        force: false,
+        only: null,
+        annotationExamples: [{
+          exampleId: "ann_override",
+          applyMode: "override",
+          pageType: "concept",
+          ruleId: "requiredFacts",
+          contextSnapshot: { sourceFile: "gamedocs/battle.md" },
+          correctValue: {
+            setType: "system",
+            setTitle: "Battle System",
+            setFacts: { config_table: "技能表", source: "人工标注" },
+            removeFacts: ["old_fact"],
+            replaceSection: { heading: "Overview", markdown: "Overridden overview." }
+          }
+        }]
+      });
+
+      expect(result.outputPaths.sort()).toEqual(["wiki/_meta/battle.json", "wiki/systems/battle.md"]);
+      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "battle.json"), "utf8"));
+      expect(meta).toMatchObject({
+        type: "system",
+        title: "Battle System",
+        source: "gamedocs/battle.md",
+      });
+      expect(meta.facts).toMatchObject({ config_table: "Skill", source: "人工标注" });
+      expect(meta.facts.old_fact).toBeUndefined();
+      const wiki = readFileSync(join(dataDir, "wiki", "systems", "battle.md"), "utf8");
+      expect(wiki).toContain("Overridden overview.");
+      expect(wiki).toContain("## Data Dependencies\n- Skill");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("invalidates extract cache when override annotations change", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
+    const specDir = join(dataDir, "processed", "wiki_specs");
+    try {
+      mkdirSync(join(dataDir, "processed", "parsed"), { recursive: true });
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(join(specDir, "manifest.json"), JSON.stringify({
+        page_types: { concept: { dir: "concepts", template: "concept.md" } },
+        entity_types: ["concept"],
+        relation_types: ["references"]
+      }));
+      writeFileSync(join(specDir, "concept.md"), "## Overview");
+      writeFileSync(join(dataDir, "processed", "parsed", "battle.md"), "# Battle\n\nOriginal.");
+
+      const specs = loadWikiSpecs(specDir);
+      await runExtractStage({
+        dataDir,
+        specs,
+        model: "deterministic",
+        force: false,
+        only: null,
+        annotationExamples: [{
+          applyMode: "override",
+          pageType: "concept",
+          ruleId: "title",
+          contextSnapshot: { sourceFile: "processed/parsed/battle.md" },
+          correctValue: { setTitle: "First Title" }
+        }]
+      });
+      await runExtractStage({
+        dataDir,
+        specs,
+        model: "deterministic",
+        force: false,
+        only: null,
+        annotationExamples: [{
+          applyMode: "override",
+          pageType: "concept",
+          ruleId: "title",
+          contextSnapshot: { sourceFile: "processed/parsed/battle.md" },
+          correctValue: { setTitle: "Second Title" }
+        }]
+      });
+
+      const meta = JSON.parse(readFileSync(join(dataDir, "wiki", "_meta", "battle.json"), "utf8"));
+      expect(meta.title).toBe("Second Title");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("falls back with a warning when an extraction model returns markdown instead of JSON", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-extract-"));
     const specDir = join(dataDir, "processed", "wiki_specs");

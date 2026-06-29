@@ -21,6 +21,7 @@ export async function annotateReviewTask(input: {
   taskId: string;
   selectedCandidateId?: string;
   correctValue?: unknown;
+  applyMode?: "hint" | "override";
   note?: string;
   dismissRule?: boolean;
   dismissalReason?: string;

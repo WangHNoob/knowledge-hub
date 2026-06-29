@@ -47,10 +47,23 @@ export interface PromptAnnotationExample {
   taskId?: string;
   createdBy?: string;
   createdAt?: string;
+  applyMode?: "hint" | "override";
   pageType: string;
   ruleId: string;
   contextSnapshot: Record<string, unknown>;
   correctValue: Record<string, unknown>;
+}
+
+export interface AnnotationOverride {
+  sourcePath: string;
+  ruleId: string;
+  pageType: string;
+  setType?: string;
+  setTitle?: string;
+  setFacts?: Record<string, string>;
+  removeFacts?: string[];
+  replaceSection?: { heading: string; markdown: string };
+  replaceBody?: string;
 }
 
 export async function runExtractStage(options: ExtractOptions): Promise<StageResult> {
@@ -82,6 +95,7 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   const tableAliases = loadTableAliases(options.dataDir);
   const modelConfig = resolveModelConfig(options);
   const aliasFingerprint = tableAliasFingerprint(options.dataDir);
+  const annotationOverrides = annotationOverridesFromExamples(annotationExamples, warnings);
   for (let index = 0; index < files.length; index += 1) {
     const absolute = files[index];
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
@@ -90,6 +104,7 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     const cacheKey = extractCacheKey({ markdown, rel, specsHash: options.specs.hash, modelConfig, aliasFingerprint, annotationExamples });
     const cached = options.force ? null : readExtractCache(options.dataDir, cacheKey);
     const extracted = cached ?? await extractPage(markdown, rel, client, guidance, warnings);
+    if (!cached) applyAnnotationOverrides(extracted, rel, annotationOverrides, options.specs, warnings);
     normalizeTableRefs(extracted, tableAliases);
     writeExtractCache(options.dataDir, cacheKey, extracted);
     const pageType = options.specs.manifest.pageTypes[extracted.type];
@@ -282,6 +297,159 @@ function factsToRecord(
   return facts;
 }
 
+const OverridePatchSchema = z.object({
+  sourcePath: z.string().trim().min(1).optional().catch(undefined),
+  ruleId: z.string().trim().min(1).optional().catch(undefined),
+  pageType: z.string().trim().min(1).optional().catch(undefined),
+  setType: z.string().trim().min(1).optional().catch(undefined),
+  setTitle: z.string().trim().min(1).optional().catch(undefined),
+  setFacts: z.record(z.string(), z.coerce.string()).optional().catch(undefined),
+  removeFacts: z.array(z.string().trim().min(1)).optional().catch(undefined),
+  replaceSection: z.object({
+    heading: z.string().trim().min(1),
+    markdown: z.coerce.string(),
+  }).optional().catch(undefined),
+  replaceBody: z.coerce.string().optional().catch(undefined),
+}).passthrough();
+
+function annotationOverridesFromExamples(examples: PromptAnnotationExample[], warnings: string[]): AnnotationOverride[] {
+  const overrides: AnnotationOverride[] = [];
+  for (const example of examples) {
+    if (example.applyMode !== "override") continue;
+    const override = annotationOverrideFromExample(example, warnings);
+    if (override) overrides.push(override);
+  }
+  return overrides;
+}
+
+function annotationOverrideFromExample(example: PromptAnnotationExample, warnings: string[]): AnnotationOverride | null {
+  const raw = objectValue(example.correctValue.override) ?? example.correctValue;
+  const parsed = OverridePatchSchema.safeParse(raw);
+  if (!parsed.success) {
+    warnings.push(`annotation ${example.exampleId ?? example.taskId ?? "unknown"}: invalid override patch; used as hint only`);
+    return null;
+  }
+  const context = example.contextSnapshot;
+  const patch = parsed.data;
+  const sourcePath = patch.sourcePath
+    || stringValue(context.sourceFile)
+    || stringValue(context.sourcePath)
+    || stringValue(context.componentRef)
+    || stringValue(context.artifactLegacyPath);
+  const inferredFacts = patch.setFacts ?? inferSetFacts(example, patch);
+  const override: AnnotationOverride = {
+    sourcePath,
+    ruleId: patch.ruleId ?? example.ruleId,
+    pageType: patch.pageType ?? example.pageType,
+  };
+  if (patch.setType) override.setType = patch.setType;
+  if (patch.setTitle) override.setTitle = patch.setTitle;
+  if (inferredFacts && Object.keys(inferredFacts).length > 0) override.setFacts = trimRecord(inferredFacts);
+  if (patch.removeFacts?.length) override.removeFacts = [...new Set(patch.removeFacts.map((item) => item.trim()).filter(Boolean))];
+  if (patch.replaceSection) override.replaceSection = { heading: patch.replaceSection.heading, markdown: patch.replaceSection.markdown };
+  if (patch.replaceBody !== undefined) override.replaceBody = patch.replaceBody;
+  if (!override.sourcePath) {
+    warnings.push(`annotation ${example.exampleId ?? example.taskId ?? "unknown"}: override missing sourcePath; used as hint only`);
+    return null;
+  }
+  if (!hasOverrideAction(override)) {
+    warnings.push(`annotation ${example.exampleId ?? example.taskId ?? "unknown"}: override has no supported action; used as hint only`);
+    return null;
+  }
+  return override;
+}
+
+function inferSetFacts(example: PromptAnnotationExample, patch: z.infer<typeof OverridePatchSchema>): Record<string, string> | undefined {
+  if (example.ruleId !== "requiredFacts" && example.ruleId !== "wiki.required_fact") return undefined;
+  const value = stringValue((patch as Record<string, unknown>).value);
+  if (!value) return undefined;
+  const taskContext = objectValue(example.contextSnapshot.task);
+  const fact = stringValue(example.contextSnapshot.fact)
+    || stringValue(example.contextSnapshot.factKey)
+    || firstMissingFact(stringValue(example.contextSnapshot.description) || stringValue(taskContext?.description));
+  return fact ? { [fact]: value } : undefined;
+}
+
+function firstMissingFact(description: string): string {
+  const match = /Missing facts:\s*([^.;。]+)/iu.exec(description);
+  if (!match) return "";
+  return match[1].split(/[,，]/u).map((item) => item.trim()).find(Boolean) ?? "";
+}
+
+function applyAnnotationOverrides(
+  page: ExtractedPage,
+  rel: string,
+  overrides: AnnotationOverride[],
+  specs: WikiSpecSet,
+  warnings: string[],
+): void {
+  const matched = overrides.filter((override) => annotationOverrideMatches(page, rel, override));
+  for (const override of matched) {
+    if (override.setType) {
+      if (specs.manifest.pageTypes[override.setType]) page.type = override.setType;
+      else warnings.push(`${rel}: annotation override setType "${override.setType}" is not in active page types; skipped`);
+    }
+    if (override.setTitle) page.title = override.setTitle;
+    if (override.removeFacts) {
+      for (const fact of override.removeFacts) delete page.facts[fact];
+    }
+    if (override.setFacts) {
+      page.facts = { ...page.facts, ...override.setFacts };
+    }
+    if (override.replaceBody !== undefined) page.body = override.replaceBody;
+    if (override.replaceSection) page.body = replaceMarkdownSection(page.body, override.replaceSection.heading, override.replaceSection.markdown);
+  }
+}
+
+function annotationOverrideMatches(page: ExtractedPage, rel: string, override: AnnotationOverride): boolean {
+  const source = normalizeSourcePath(override.sourcePath);
+  const candidates = [
+    rel,
+    `processed/parsed/${rel}`,
+    page.source,
+    normalizeSourcePath(page.source),
+  ].map(normalizeSourcePath);
+  return candidates.includes(source) && (!override.pageType || override.pageType === page.type || override.setType === page.type);
+}
+
+function replaceMarkdownSection(body: string, heading: string, markdown: string): string {
+  const lines = body.split(/\r?\n/u);
+  const target = heading.trim().toLowerCase();
+  const headingIndex = lines.findIndex((line) => {
+    const match = /^(#{1,6})\s+(.+?)\s*$/u.exec(line);
+    return Boolean(match && match[2].trim().toLowerCase() === target);
+  });
+  if (headingIndex < 0) return `${body.trimEnd()}\n\n## ${heading.trim()}\n${markdown.trim()}`;
+  let endIndex = headingIndex + 1;
+  while (endIndex < lines.length && !/^(#{1,6})\s+.+?\s*$/u.test(lines[endIndex])) endIndex += 1;
+  return [...lines.slice(0, headingIndex + 1), ...markdown.trim().split(/\r?\n/u), ...lines.slice(endIndex)].join("\n");
+}
+
+function hasOverrideAction(override: AnnotationOverride): boolean {
+  return Boolean(
+    override.setType
+      || override.setTitle
+      || override.setFacts
+      || override.removeFacts?.length
+      || override.replaceSection
+      || override.replaceBody !== undefined,
+  );
+}
+
+function trimRecord(input: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(input)
+    .map(([key, value]) => [key.trim(), String(value).trim()])
+    .filter(([key]) => key));
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function normalizeSourcePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\/+/u, "").replace(/^processed\/parsed\//u, "");
+}
+
 // Steer the model to emit a page `type` from the active legislation profile's
 // page types (otherwise extract silently skips every page as "unknown page type"),
 // and to follow each type's required sections/facts plus the allowed entity/relation types.
@@ -321,6 +489,9 @@ function compactExampleContext(context: Record<string, unknown>): Record<string,
     : {};
   return {
     sourceFile: stringValue(context.sourceFile),
+    sourcePath: stringValue(context.sourcePath),
+    componentRef: stringValue(context.componentRef),
+    artifactLegacyPath: stringValue(context.artifactLegacyPath),
     pageType: stringValue(context.pageType ?? context.okfType),
     title: stringValue(task.title ?? context.title),
     ruleId: stringValue(task.ruleId ?? context.ruleId),
@@ -654,7 +825,7 @@ function extractCacheKey(input: {
   annotationExamples: PromptAnnotationExample[];
 }): string {
   const hash = createHash("sha256");
-  hash.update("extract-cache-v1\0");
+  hash.update("extract-cache-v2\0");
   hash.update(input.rel);
   hash.update("\0");
   hash.update(input.markdown);
@@ -671,6 +842,7 @@ function extractCacheKey(input: {
 
 function annotationExamplesFingerprint(examples: PromptAnnotationExample[]): string {
   return JSON.stringify(examples.map((example) => ({
+    applyMode: example.applyMode ?? "hint",
     pageType: example.pageType,
     ruleId: example.ruleId,
     correctValue: example.correctValue,

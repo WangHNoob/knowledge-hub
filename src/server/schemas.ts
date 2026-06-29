@@ -209,6 +209,7 @@ export const reviewAnnotationSchema = z.object({
   taskId: z.string().min(1),
   selectedCandidateId: z.string().min(1).optional(),
   correctValue: z.unknown().optional(),
+  applyMode: z.enum(["hint", "override"]).default("hint"),
   note: z.string().max(1024).optional(),
   dismissRule: z.boolean().default(false),
   dismissalReason: z.string().max(1024).optional()

@@ -60,6 +60,7 @@ export function Review() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [selectedCandidates, setSelectedCandidates] = useState<Record<string, string>>({});
   const [dismissRules, setDismissRules] = useState<Record<string, boolean>>({});
+  const [applyModes, setApplyModes] = useState<Record<string, "hint" | "override">>({});
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["review", severity || "all", status || "all"],
@@ -83,11 +84,12 @@ export function Review() {
     }
   });
   const annotate = useMutation({
-    mutationFn: (input: { task: ReviewTask; note?: string; answer?: string; selectedCandidateId?: string; dismissRule?: boolean }) =>
+    mutationFn: (input: { task: ReviewTask; note?: string; answer?: string; selectedCandidateId?: string; dismissRule?: boolean; applyMode?: "hint" | "override" }) =>
       annotateReviewTask({
         taskId: input.task.taskId,
         selectedCandidateId: input.selectedCandidateId || undefined,
         correctValue: input.answer?.trim() ? { value: input.answer.trim() } : undefined,
+        applyMode: input.applyMode ?? "hint",
         note: input.note,
         dismissRule: input.dismissRule,
         dismissalReason: input.dismissRule ? input.note : undefined
@@ -144,9 +146,10 @@ export function Review() {
       note: notes[task.taskId],
       answer: answers[task.taskId],
       selectedCandidateId: selectedCandidates[task.taskId],
-      dismissRule: dismissRules[task.taskId]
+      dismissRule: dismissRules[task.taskId],
+      applyMode: applyModes[task.taskId] ?? "hint"
     });
-  }, [annotate, answers, dismissRules, notes, selectedCandidates]);
+  }, [annotate, answers, applyModes, dismissRules, notes, selectedCandidates]);
   const bulk = useCallback((next: "resolved" | "dismissed") => {
     if (tasks.length === 0) return;
     if (window.confirm(`确认把当前列出的 ${tasks.length} 个任务全部标记为「${STATUS_LABEL[next]}」？`)) {
@@ -223,11 +226,13 @@ export function Review() {
             answer={answers[task.taskId] ?? ""}
             selectedCandidateId={selectedCandidates[task.taskId] ?? ""}
             dismissRule={Boolean(dismissRules[task.taskId])}
+            applyMode={applyModes[task.taskId] ?? "hint"}
             isPending={transition.isPending || annotate.isPending || rebuild.isPending}
             onNote={(note) => setNotes((prev) => ({ ...prev, [task.taskId]: note }))}
             onAnswer={(answer) => setAnswers((prev) => ({ ...prev, [task.taskId]: answer }))}
             onCandidate={(candidateId) => setSelectedCandidates((prev) => ({ ...prev, [task.taskId]: candidateId }))}
             onDismissRule={(checked) => setDismissRules((prev) => ({ ...prev, [task.taskId]: checked }))}
+            onApplyMode={(mode) => setApplyModes((prev) => ({ ...prev, [task.taskId]: mode }))}
             onAnnotate={() => annotateTask(task)}
             onStartRebuild={() => rebuild.mutate(task)}
             onTransition={(next) => act(task, next)}
@@ -249,11 +254,13 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   answer,
   selectedCandidateId,
   dismissRule,
+  applyMode,
   isPending,
   onNote,
   onAnswer,
   onCandidate,
   onDismissRule,
+  onApplyMode,
   onAnnotate,
   onStartRebuild,
   onTransition,
@@ -267,11 +274,13 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   answer: string;
   selectedCandidateId: string;
   dismissRule: boolean;
+  applyMode: "hint" | "override";
   isPending: boolean;
   onNote: (note: string) => void;
   onAnswer: (answer: string) => void;
   onCandidate: (candidateId: string) => void;
   onDismissRule: (checked: boolean) => void;
+  onApplyMode: (mode: "hint" | "override") => void;
   onAnnotate: () => void;
   onStartRebuild: () => void;
   onTransition: (next: "open" | "resolved" | "dismissed") => void;
@@ -366,7 +375,17 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
                 <span>此规则对此组件不适用，后续跳过</span>
               </label>
             )}
-            <button className="primary-action" type="button" disabled={isPending || (!answer.trim() && !selectedCandidateId)} onClick={onAnnotate}>提交标注并沉淀样例</button>
+            <label className="switch-field compact">
+              <input
+                type="checkbox"
+                checked={applyMode === "override"}
+                onChange={(event) => onApplyMode(event.target.checked ? "override" : "hint")}
+              />
+              <span>确定性覆盖：下次构建强制回写到对应 wiki</span>
+            </label>
+            <button className="primary-action" type="button" disabled={isPending || (!answer.trim() && !selectedCandidateId)} onClick={onAnnotate}>
+              {applyMode === "override" ? "提交标注并回写构建规则" : "提交标注并沉淀样例"}
+            </button>
           </div>
         )}
         {task.status === "open" ? (

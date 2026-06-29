@@ -369,6 +369,7 @@ export class KnowledgeService {
     taskId: string;
     selectedCandidateId?: string;
     correctValue?: unknown;
+    applyMode?: "hint" | "override";
     note?: string;
     dismissRule?: boolean;
     dismissalReason?: string;
@@ -380,8 +381,13 @@ export class KnowledgeService {
       ? task.candidates.find((candidate) => candidate.id === input.selectedCandidateId)
       : null;
     const correctValue = normalizeAnnotationValue(input.correctValue ?? selected?.value ?? input.note ?? "");
+    const applyMode = input.applyMode ?? "hint";
+    const componentRef = await this.findComponentRef(task.componentId);
     const contextSnapshot = {
       ...task.contextSnapshot,
+      sourceFile: String(task.contextSnapshot.sourceFile ?? componentRef.sourcePath),
+      componentRef: String(task.contextSnapshot.componentRef ?? componentRef.legacyPath),
+      artifactLegacyPath: String(task.contextSnapshot.artifactLegacyPath ?? componentRef.legacyPath),
       task: {
         title: task.title,
         description: task.description,
@@ -393,20 +399,20 @@ export class KnowledgeService {
     const contextHash = hashJson(contextSnapshot);
     const now = new Date().toISOString();
     const exampleId = `ann_${slug(task.componentId)}_${nanoid(6)}`;
-    const componentRef = await this.findComponentLegacyPath(task.componentId);
 
     await this.adapter.query("BEGIN");
     try {
       await this.adapter.query(
         `INSERT INTO annotation_examples
-          (example_id, package_id, component_id, task_id, rule_id, page_type, context_hash, context_snapshot, correct_value, created_by, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          (example_id, package_id, component_id, task_id, rule_id, apply_mode, page_type, context_hash, context_snapshot, correct_value, created_by, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           exampleId,
           task.packageId,
           task.componentId,
           task.taskId,
           task.ruleId,
+          applyMode,
           String(task.contextSnapshot.pageType ?? task.contextSnapshot.okfType ?? ""),
           contextHash,
           JSON.stringify(contextSnapshot),
@@ -427,7 +433,7 @@ export class KnowledgeService {
             dismissalId,
             task.packageId,
             task.componentId,
-            componentRef,
+            componentRef.legacyPath,
             task.ruleId,
             input.dismissalReason ?? input.note ?? "",
             true,
@@ -469,6 +475,7 @@ export class KnowledgeService {
       componentId: task.componentId,
       taskId: task.taskId,
       ruleId: task.ruleId,
+      applyMode,
       pageType: String(task.contextSnapshot.pageType ?? task.contextSnapshot.okfType ?? ""),
       contextHash,
       contextSnapshot,
@@ -480,14 +487,31 @@ export class KnowledgeService {
       eventType: "annotation.created",
       entityType: "review_task",
       entityId: task.taskId,
-      payload: { componentId: task.componentId, ruleId: task.ruleId, exampleId, dismissRule: Boolean(input.dismissRule && task.ruleId) },
+      payload: { componentId: task.componentId, ruleId: task.ruleId, exampleId, applyMode, dismissRule: Boolean(input.dismissRule && task.ruleId) },
     });
+    if (applyMode === "override") {
+      await emitKnowledgeEvent(this.db, {
+        eventType: "annotation.writeback_requested",
+        entityType: "review_task",
+        entityId: task.taskId,
+        payload: {
+          componentId: task.componentId,
+          ruleId: task.ruleId,
+          exampleId,
+          sourcePath: componentRef.sourcePath,
+          componentRef: componentRef.legacyPath,
+        },
+      });
+    }
     return { task: updated, example };
   }
 
-  private async findComponentLegacyPath(componentId: string): Promise<string> {
-    const { rows } = await this.adapter.query("SELECT legacy_path FROM asset_components WHERE component_id = $1", [componentId]);
-    return rows.length ? String(rows[0].legacy_path ?? "") : "";
+  private async findComponentRef(componentId: string): Promise<{ legacyPath: string; sourcePath: string }> {
+    const { rows } = await this.adapter.query("SELECT legacy_path, source_refs FROM asset_components WHERE component_id = $1", [componentId]);
+    if (!rows.length) return { legacyPath: "", sourcePath: "" };
+    const sourceRefs = jsonArray(rows[0].source_refs);
+    const sourcePath = sourceRefs.find((ref) => ref.startsWith("gamedocs/") || ref.startsWith("gamedata/")) ?? "";
+    return { legacyPath: String(rows[0].legacy_path ?? ""), sourcePath };
   }
 
   async listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): Promise<EvidenceRecord[]> {
@@ -718,6 +742,18 @@ function jsonObject(value: unknown): Record<string, unknown> {
     }
   }
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function jsonArray(value: unknown): string[] {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(value) ? value.map(String) : [];
 }
 
 function numberFromQuality(quality: Record<string, unknown>, keys: string[]): number | null {

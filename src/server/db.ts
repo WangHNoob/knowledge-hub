@@ -196,6 +196,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       component_id TEXT NOT NULL REFERENCES ${p}asset_components(component_id) ON DELETE CASCADE,
       task_id TEXT NOT NULL DEFAULT '',
       rule_id TEXT NOT NULL DEFAULT '',
+      apply_mode TEXT NOT NULL DEFAULT 'hint',
       page_type TEXT NOT NULL DEFAULT '',
       context_hash TEXT NOT NULL,
       context_snapshot JSONB NOT NULL DEFAULT '{}',
@@ -352,7 +353,9 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotation_value JSONB NOT NULL DEFAULT '{}';
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_by TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_at TIMESTAMPTZ;
+    ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS apply_mode TEXT NOT NULL DEFAULT 'hint';
     ALTER TABLE ${p}rule_dismissals ADD COLUMN IF NOT EXISTS component_ref TEXT NOT NULL DEFAULT '';
+    CREATE INDEX IF NOT EXISTS idx_annotation_examples_override ON ${p}annotation_examples(apply_mode, page_type, rule_id, created_at DESC);
   `);
 
   // 默认资料集
