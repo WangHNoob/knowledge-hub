@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelEvent, type KnowledgeEnvelope } from "../api";
+import { getFlywheelConvergenceSummary, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
 import { formatPercent, formatTime } from "../utils/format";
@@ -41,6 +41,7 @@ export function AgentFeedback() {
   const [envelope, setEnvelope] = useState<KnowledgeEnvelope | null>(null);
   const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
   const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
+  const convergence = useQuery({ queryKey: ["agent-flywheel-convergence"], queryFn: getFlywheelConvergenceSummary, refetchInterval: 5000 });
   const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({
@@ -50,6 +51,7 @@ export function AgentFeedback() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["agent-events"] }),
         queryClient.invalidateQueries({ queryKey: ["agent-flywheel-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent-flywheel-convergence"] }),
         queryClient.invalidateQueries({ queryKey: ["mcp-audit"] }),
         queryClient.invalidateQueries({ queryKey: ["review"] })
       ]);
@@ -71,8 +73,8 @@ export function AgentFeedback() {
   const pressureRows = useMemo(() => buildFeedbackPressure(eventRows), [eventRows]);
   const automationRows = useMemo(() => buildAutomationChains(flywheelEvents.data ?? []), [flywheelEvents.data]);
   const rebuildCandidates = pressureRows.filter((row) => row.negativeCount >= 2).length;
-  if (events.isLoading || flywheelEvents.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
-  if (events.error || flywheelEvents.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? audit.error ?? outputAudits.error} />;
+  if (events.isLoading || flywheelEvents.isLoading || convergence.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
+  if (events.error || flywheelEvents.error || convergence.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? convergence.error ?? audit.error ?? outputAudits.error} />;
   const auditRows = audit.data ?? [];
   const missCount = eventRows.filter((event) => event.status === "miss").length;
   const flaggedCount = eventRows.filter((event) => event.qualityFlags.length > 0).length;
@@ -238,6 +240,7 @@ export function AgentFeedback() {
         {tab === "feedback" && (
           <section className="mcp-panel">
             <h2>反馈回流</h2>
+            {convergence.data && <ConvergencePanel summary={convergence.data} />}
             <AutomationTimeline
               rows={automationRows}
               onNavigateReview={() => navigate("review")}
@@ -297,6 +300,35 @@ export function AgentFeedback() {
         )}
       </div>
     </Page>
+  );
+}
+
+function ConvergencePanel({ summary }: { summary: FlywheelConvergenceSummary }) {
+  const autoTotal = summary.automation.autoPublished + summary.automation.autoSkipped;
+  const autoRate = autoTotal === 0 ? "n/a" : formatPercent(summary.automation.autoPublished / autoTotal);
+  return (
+    <div className="convergence-panel">
+      <div className="detail-head">
+        <div>
+          <h3>飞轮收敛摘要</h3>
+          <p>后端直接统计标注、豁免、反馈任务、scoped rebuild 和自动发布事件，用来判断人介入量是否在下降。</p>
+        </div>
+        <Badge label={summary.reviewLoad.interventionLoad ? "仍需人工" : "低人工负载"} tone={summary.reviewLoad.interventionLoad ? "warn" : "ok"} />
+      </div>
+      <div className="metrics compact convergence-metrics">
+        <Metric label="人介入负载" value={summary.reviewLoad.interventionLoad} hint={`${summary.reviewLoad.openBlocking} blocking / ${summary.reviewLoad.openAnnotation} annotation`} tone={summary.reviewLoad.openBlocking ? "hot" : summary.reviewLoad.interventionLoad ? "warn" : "ok"} />
+        <Metric label="标注样例" value={summary.annotations.examples} hint={`${summary.annotations.components} 组件 · 7日+${summary.annotations.recent7d}`} tone={summary.annotations.examples ? "ok" : undefined} />
+        <Metric label="规则豁免" value={summary.dismissals.active} hint={`${summary.dismissals.rules} 条规则`} tone={summary.dismissals.active ? "warn" : undefined} />
+        <Metric label="负反馈" value={summary.feedback.negative} hint={`${summary.feedback.openGeneratedTasks}/${summary.feedback.generatedTasks} 任务未关`} tone={summary.feedback.openGeneratedTasks ? "warn" : "ok"} />
+        <Metric label="Scoped rebuild" value={summary.rebuilds.scoped} hint={`${summary.rebuilds.completed} 完成 / ${summary.rebuilds.failed} 失败`} tone={summary.rebuilds.failed ? "hot" : summary.rebuilds.running ? "warn" : "ok"} />
+        <Metric label="自动发布率" value={autoRate} hint={`${summary.automation.autoPublished}/${autoTotal || 0} 成功`} tone={summary.automation.autoSkipped ? "warn" : summary.automation.autoPublished ? "ok" : undefined} />
+      </div>
+      <div className="convergence-notes">
+        <p><strong>样例池：</strong>{summary.annotations.latestAt ? `最近标注 ${formatTime(summary.annotations.latestAt)}` : "还没有人工标注样例。"}</p>
+        <p><strong>重建：</strong>{summary.rebuilds.latestAt ? `最近 scoped rebuild ${formatTime(summary.rebuilds.latestAt)}` : "还没有反馈驱动的 scoped rebuild。"}</p>
+        <p><strong>自动化：</strong>{summary.automation.latestAt ? `最近发布自动化事件 ${formatTime(summary.automation.latestAt)}` : "还没有发布自动化事件。"}</p>
+      </div>
+    </div>
   );
 }
 

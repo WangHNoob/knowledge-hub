@@ -2298,6 +2298,33 @@ code {
   gap: 4px;
 }
 
+.convergence-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.convergence-metrics {
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+}
+
+.convergence-notes {
+  display: grid;
+  gap: 8px;
+}
+
+.convergence-notes p {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink-muted);
+}
+
 .history-row {
   display: flex;
   justify-content: space-between;
@@ -3293,6 +3320,7 @@ form button:active:not(:disabled) {
   .governance-grid,
   .governance-score-grid,
   .audit-metrics,
+  .convergence-metrics,
   .audit-grid {
     grid-template-columns: 1fr;
   }

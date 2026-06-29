@@ -556,6 +556,49 @@ export interface FlywheelEvent {
   createdAt: string;
 }
 
+export interface FlywheelConvergenceSummary {
+  annotations: {
+    examples: number;
+    components: number;
+    rules: number;
+    recent7d: number;
+    latestAt: string | null;
+  };
+  dismissals: {
+    active: number;
+    components: number;
+    rules: number;
+    latestAt: string | null;
+  };
+  feedback: {
+    total: number;
+    negative: number;
+    recent7d: number;
+    generatedTasks: number;
+    openGeneratedTasks: number;
+    latestAt: string | null;
+  };
+  rebuilds: {
+    scoped: number;
+    running: number;
+    completed: number;
+    failed: number;
+    latestAt: string | null;
+  };
+  automation: {
+    revisionsProposed: number;
+    autoPublished: number;
+    autoSkipped: number;
+    latestAt: string | null;
+  };
+  reviewLoad: {
+    openBlocking: number;
+    openAnnotation: number;
+    openFeedback: number;
+    interventionLoad: number;
+  };
+}
+
 export interface AttributionSegment {
   segmentId: string;
   text: string;

@@ -586,6 +586,118 @@ export class KnowledgeService {
       createdAt: String(row.created_at),
     }));
   }
+
+  async getFlywheelConvergenceSummary() {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const [
+      { rows: [annotationRow] },
+      { rows: [dismissalRow] },
+      { rows: [feedbackRow] },
+      { rows: [taskRow] },
+      { rows: [rebuildRow] },
+      { rows: [automationRow] },
+    ] = await Promise.all([
+      this.adapter.query(
+        `SELECT
+           COUNT(*)::int AS examples,
+           COUNT(DISTINCT component_id)::int AS components,
+           COUNT(DISTINCT rule_id)::int AS rules,
+           SUM(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END)::int AS recent,
+           MAX(created_at) AS latest_at
+         FROM annotation_examples`,
+        [since],
+      ),
+      this.adapter.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE active = true)::int AS active,
+           COUNT(DISTINCT component_id) FILTER (WHERE active = true)::int AS components,
+           COUNT(DISTINCT rule_id) FILTER (WHERE active = true)::int AS rules,
+           MAX(created_at) FILTER (WHERE active = true) AS latest_at
+         FROM rule_dismissals`,
+      ),
+      this.adapter.query(
+        `SELECT
+           COUNT(*)::int AS total,
+           SUM(CASE WHEN status = 'miss' OR feedback_type <> 'hit' OR jsonb_array_length(COALESCE(quality_flags, '[]'::jsonb)) > 0 THEN 1 ELSE 0 END)::int AS negative,
+           SUM(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END)::int AS recent,
+           MAX(created_at) AS latest_at
+         FROM agent_events`,
+        [since],
+      ),
+      this.adapter.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE rule_id LIKE 'agent_feedback.%')::int AS feedback_tasks,
+           COUNT(*) FILTER (WHERE rule_id LIKE 'agent_feedback.%' AND status = 'open')::int AS open_feedback_tasks,
+           COUNT(*) FILTER (WHERE task_kind = 'annotation')::int AS annotation_tasks,
+           COUNT(*) FILTER (WHERE task_kind = 'annotation' AND status = 'open')::int AS open_annotation_tasks,
+           COUNT(*) FILTER (WHERE status = 'open' AND severity = 'blocking')::int AS open_blocking_tasks
+         FROM review_tasks`,
+      ),
+      this.adapter.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '')::int AS scoped,
+           COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '' AND status = 'running')::int AS running,
+           COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '' AND status = 'completed')::int AS completed,
+           COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '' AND status = 'failed')::int AS failed,
+           MAX(started_at) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '') AS latest_at
+         FROM knowledge_build_runs`,
+      ),
+      this.adapter.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE event_type = 'release.revision_proposed')::int AS revisions_proposed,
+           COUNT(*) FILTER (WHERE event_type = 'release.auto_publish_succeeded')::int AS auto_published,
+           COUNT(*) FILTER (WHERE event_type = 'release.auto_publish_skipped')::int AS auto_skipped,
+           MAX(created_at) FILTER (WHERE event_type IN ('release.revision_proposed', 'release.auto_publish_succeeded', 'release.auto_publish_skipped')) AS latest_at
+         FROM knowledge_events`,
+      ),
+    ]);
+
+    const interventionLoad = Number(taskRow.open_feedback_tasks ?? 0)
+      + Number(taskRow.open_annotation_tasks ?? 0)
+      + Number(taskRow.open_blocking_tasks ?? 0);
+    return {
+      annotations: {
+        examples: Number(annotationRow.examples ?? 0),
+        components: Number(annotationRow.components ?? 0),
+        rules: Number(annotationRow.rules ?? 0),
+        recent7d: Number(annotationRow.recent ?? 0),
+        latestAt: annotationRow.latest_at ? String(annotationRow.latest_at) : null,
+      },
+      dismissals: {
+        active: Number(dismissalRow.active ?? 0),
+        components: Number(dismissalRow.components ?? 0),
+        rules: Number(dismissalRow.rules ?? 0),
+        latestAt: dismissalRow.latest_at ? String(dismissalRow.latest_at) : null,
+      },
+      feedback: {
+        total: Number(feedbackRow.total ?? 0),
+        negative: Number(feedbackRow.negative ?? 0),
+        recent7d: Number(feedbackRow.recent ?? 0),
+        generatedTasks: Number(taskRow.feedback_tasks ?? 0),
+        openGeneratedTasks: Number(taskRow.open_feedback_tasks ?? 0),
+        latestAt: feedbackRow.latest_at ? String(feedbackRow.latest_at) : null,
+      },
+      rebuilds: {
+        scoped: Number(rebuildRow.scoped ?? 0),
+        running: Number(rebuildRow.running ?? 0),
+        completed: Number(rebuildRow.completed ?? 0),
+        failed: Number(rebuildRow.failed ?? 0),
+        latestAt: rebuildRow.latest_at ? String(rebuildRow.latest_at) : null,
+      },
+      automation: {
+        revisionsProposed: Number(automationRow.revisions_proposed ?? 0),
+        autoPublished: Number(automationRow.auto_published ?? 0),
+        autoSkipped: Number(automationRow.auto_skipped ?? 0),
+        latestAt: automationRow.latest_at ? String(automationRow.latest_at) : null,
+      },
+      reviewLoad: {
+        openBlocking: Number(taskRow.open_blocking_tasks ?? 0),
+        openAnnotation: Number(taskRow.open_annotation_tasks ?? 0),
+        openFeedback: Number(taskRow.open_feedback_tasks ?? 0),
+        interventionLoad,
+      },
+    };
+  }
 }
 
 function countBy<T, K extends string>(items: T[], key: (item: T) => K): Record<K, number> {

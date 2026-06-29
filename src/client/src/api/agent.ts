@@ -1,5 +1,5 @@
 import { getJson, postJson } from "./http";
-import type { AgentEvent, AttributionAudit, FlywheelEvent, KnowledgeEnvelope, McpAuditRecord } from "./types";
+import type { AgentEvent, AttributionAudit, FlywheelConvergenceSummary, FlywheelEvent, KnowledgeEnvelope, McpAuditRecord } from "./types";
 
 export async function listAgentEvents(): Promise<AgentEvent[]> {
   return (await getJson<{ events: AgentEvent[] }>("/api/agent/events")).events;
@@ -11,6 +11,10 @@ export async function listMcpAudit(): Promise<McpAuditRecord[]> {
 
 export async function listFlywheelEvents(): Promise<FlywheelEvent[]> {
   return (await getJson<{ events: FlywheelEvent[] }>("/api/agent/flywheel-events")).events;
+}
+
+export async function getFlywheelConvergenceSummary(): Promise<FlywheelConvergenceSummary> {
+  return (await getJson<{ summary: FlywheelConvergenceSummary }>("/api/agent/flywheel-convergence")).summary;
 }
 
 export async function simulateMcpQuery(toolName: string, payload: Record<string, unknown>): Promise<KnowledgeEnvelope> {
