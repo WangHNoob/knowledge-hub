@@ -50,6 +50,15 @@ const AUTO_EVIDENCE_COMPONENT_KINDS = new Set(["wiki_page"]);
 
 interface FlywheelBuildSummary {
   annotationExamplesInjected: number;
+  annotationExampleRefs: Array<{
+    exampleId: string;
+    componentId: string;
+    taskId: string;
+    ruleId: string;
+    pageType: string;
+    createdBy: string;
+    createdAt: string;
+  }>;
   activeRuleDismissals: number;
   appliedRuleDismissals: number;
   newAnnotationTasks: number;
@@ -710,13 +719,18 @@ export class KbBuilderPipelineService {
 
   private async loadAnnotationExamplesForPrompt(limit = 12): Promise<PromptAnnotationExample[]> {
     const { rows } = await this.adapter.query(
-      `SELECT page_type, rule_id, context_snapshot, correct_value
+      `SELECT example_id, component_id, task_id, page_type, rule_id, context_snapshot, correct_value, created_by, created_at
        FROM annotation_examples
        ORDER BY created_at DESC
        LIMIT $1`,
       [limit],
     );
     return rows.map((row) => ({
+      exampleId: String(row.example_id ?? ""),
+      componentId: String(row.component_id ?? ""),
+      taskId: String(row.task_id ?? ""),
+      createdBy: String(row.created_by ?? ""),
+      createdAt: row.created_at ? String(row.created_at) : "",
       pageType: String(row.page_type ?? ""),
       ruleId: String(row.rule_id ?? ""),
       contextSnapshot: jsonValue<Record<string, unknown>>(row.context_snapshot, {}),
@@ -887,6 +901,15 @@ function buildFlywheelSummary(
 ): FlywheelBuildSummary {
   return {
     annotationExamplesInjected: annotationExamples.length,
+    annotationExampleRefs: annotationExamples.map((example) => ({
+      exampleId: example.exampleId ?? "",
+      componentId: example.componentId ?? "",
+      taskId: example.taskId ?? "",
+      ruleId: example.ruleId,
+      pageType: example.pageType,
+      createdBy: example.createdBy ?? "",
+      createdAt: example.createdAt ?? "",
+    })),
     activeRuleDismissals: ruleDismissals.length,
     appliedRuleDismissals: quality.dismissedRules?.length ?? 0,
     newAnnotationTasks: quality.findings.length,

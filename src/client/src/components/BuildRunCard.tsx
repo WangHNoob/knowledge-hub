@@ -78,12 +78,25 @@ export function BuildRunCard({
         </p>
       )}
       {flywheel && (
-        <div className="flywheel-summary">
-          <span><strong>{flywheel.annotationExamplesInjected}</strong> 标注样例</span>
-          <span><strong>{flywheel.activeRuleDismissals}</strong> 条豁免</span>
-          <span><strong>{flywheel.appliedRuleDismissals}</strong> 次命中</span>
-          <span><strong>{flywheel.newAnnotationTasks}</strong> 个新任务</span>
-        </div>
+        <>
+          <div className="flywheel-summary">
+            <span><strong>{flywheel.annotationExamplesInjected}</strong> 标注样例</span>
+            <span><strong>{flywheel.activeRuleDismissals}</strong> 条豁免</span>
+            <span><strong>{flywheel.appliedRuleDismissals}</strong> 次命中</span>
+            <span><strong>{flywheel.newAnnotationTasks}</strong> 个新任务</span>
+          </div>
+          {flywheel.annotationExampleRefs.length > 0 && (
+            <div className="flywheel-examples">
+              {flywheel.annotationExampleRefs.slice(0, 3).map((example) => (
+                <span key={example.exampleId || `${example.componentId}-${example.ruleId}`}>
+                  <strong>{example.ruleId || "annotation"}</strong>
+                  <code>{example.componentId || example.exampleId}</code>
+                </span>
+              ))}
+              {flywheel.annotationExampleRefs.length > 3 && <small>+{flywheel.annotationExampleRefs.length - 3}</small>}
+            </div>
+          )}
+        </>
       )}
       {run.error && <p className="error">{run.error}</p>}
       <small>{formatTime(run.startedAt)}{run.finishedAt ? ` → ${formatTime(run.finishedAt)}` : ""}</small>
@@ -93,6 +106,7 @@ export function BuildRunCard({
 
 function parseFlywheelSummary(value: unknown): {
   annotationExamplesInjected: number;
+  annotationExampleRefs: Array<{ exampleId: string; componentId: string; ruleId: string }>;
   activeRuleDismissals: number;
   appliedRuleDismissals: number;
   newAnnotationTasks: number;
@@ -101,6 +115,7 @@ function parseFlywheelSummary(value: unknown): {
   const data = value as Record<string, unknown>;
   return {
     annotationExamplesInjected: numberValue(data.annotationExamplesInjected),
+    annotationExampleRefs: exampleRefs(data.annotationExampleRefs),
     activeRuleDismissals: numberValue(data.activeRuleDismissals),
     appliedRuleDismissals: numberValue(data.appliedRuleDismissals),
     newAnnotationTasks: numberValue(data.newAnnotationTasks),
@@ -109,4 +124,17 @@ function parseFlywheelSummary(value: unknown): {
 
 function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function exampleRefs(value: unknown): Array<{ exampleId: string; componentId: string; ruleId: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const data = item as Record<string, unknown>;
+    return [{
+      exampleId: typeof data.exampleId === "string" ? data.exampleId : "",
+      componentId: typeof data.componentId === "string" ? data.componentId : "",
+      ruleId: typeof data.ruleId === "string" ? data.ruleId : "",
+    }];
+  });
 }

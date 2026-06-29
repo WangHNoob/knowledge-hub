@@ -292,8 +292,8 @@ describe("ReleaseService", () => {
       expect(published.status).toBe("published");
       expect(published.parent_release_id).toBe(current.releaseId);
       expect((await service.getCurrent())?.releaseId).toBe(published.release_id);
-      const events = await fixture.db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = 'release.auto_publish_succeeded'");
-      expect(events.rows).toHaveLength(1);
+      const event = await waitForKnowledgeEvent(fixture.db, "release.auto_publish_succeeded", String(published.release_id));
+      expect(event.payload_json).toMatchObject({ releaseId: published.release_id, runId: "run_event_auto" });
     } finally {
       unsubscribe();
       await fixture.cleanup();
@@ -468,4 +468,21 @@ async function waitForAutoPublish(db: TestDbHandle["db"], parentReleaseId: strin
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Timed out waiting for auto publish ${packageId}`);
+}
+
+async function waitForKnowledgeEvent(db: TestDbHandle["db"], eventType: string, entityId: string): Promise<Record<string, unknown>> {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const { rows } = await db.adapter.query(
+      `SELECT *
+       FROM knowledge_events
+       WHERE event_type = $1 AND entity_id = $2
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [eventType, entityId],
+    );
+    if (rows[0]) return rows[0];
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for event ${eventType}:${entityId}`);
 }

@@ -42,6 +42,11 @@ type ExtractOptions = {
 };
 
 export interface PromptAnnotationExample {
+  exampleId?: string;
+  componentId?: string;
+  taskId?: string;
+  createdBy?: string;
+  createdAt?: string;
   pageType: string;
   ruleId: string;
   contextSnapshot: Record<string, unknown>;

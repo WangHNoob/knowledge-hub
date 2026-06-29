@@ -1770,6 +1770,33 @@ code {
   line-height: 1;
 }
 
+.flywheel-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.flywheel-examples span,
+.flywheel-examples small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.flywheel-examples strong,
+.flywheel-examples code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .link-button {
   display: inline-flex;
   align-items: center;

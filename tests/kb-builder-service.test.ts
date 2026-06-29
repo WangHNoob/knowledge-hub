@@ -53,6 +53,22 @@ describe("KbBuilderPipelineService", () => {
         createdBy: "admin",
         note: "pipeline fixture"
       });
+      await db.adapter.query(
+        `INSERT INTO asset_packages
+          (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
+         VALUES ('pkg_prev_example','Previous Example','kb_builder_pipeline','draft','fixture','run_prev_example','[]','[]','{}',NOW())`
+      );
+      await db.adapter.query(
+        `INSERT INTO asset_components
+          (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+         VALUES ('cmp_prev_example','pkg_prev_example','wiki/prev.md','wiki','wiki_page','Previous','draft','wiki/prev.md','data/wiki/prev.md','[]','{}')`
+      );
+      await db.adapter.query(
+        `INSERT INTO annotation_examples
+          (example_id, package_id, component_id, task_id, rule_id, page_type, context_hash, context_snapshot, correct_value, created_by, created_at)
+         VALUES ('ann_prev_example','pkg_prev_example','cmp_prev_example','task_prev','wiki.required_fact','system','sha256:prev','{}',$1,'admin',NOW())`,
+        [JSON.stringify({ field: "config_table", value: "Combat/Skill" })],
+      );
 
       const result = await createKbBuilderPipelineService(db, dataDir).build({
         bundleId: "default",
@@ -88,6 +104,19 @@ describe("KbBuilderPipelineService", () => {
       expect(detail.evidenceRecords.some((record) => record.quote.includes("gamedocs/battle.md"))).toBe(true);
       expect(aliases).toHaveLength(1);
       expect(aliases[0]).toMatchObject({ canonical: "Combat/Skill", aliases: ["技能表"] });
+      expect(result.run.config.flywheel).toMatchObject({
+        annotationExamplesInjected: 1,
+        annotationExampleRefs: [
+          {
+            exampleId: "ann_prev_example",
+            componentId: "cmp_prev_example",
+            taskId: "task_prev",
+            ruleId: "wiki.required_fact",
+            pageType: "system",
+            createdBy: "admin",
+          }
+        ]
+      });
     } finally {
       await cleanup();
       rmSync(dataDir, { recursive: true, force: true });
