@@ -14,3 +14,6 @@ logs/
 .svn/
 pnpm-lock.yaml
 pnpm-workspace.yaml
+
+# 数据库种子 dump（过大，不入库）
+seed/db/*.dump
