@@ -9,6 +9,7 @@ export type KnowledgeEventType =
   | "build.quality_fail"
   | "annotation.created"
   | "annotation.writeback_requested"
+  | "annotation.writeback_rebuild_started"
   | "component.trust_changed"
   | "agent.feedback.received"
   | "agent.feedback.rebuild_proposed"

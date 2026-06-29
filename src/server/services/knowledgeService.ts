@@ -498,6 +498,7 @@ export class KnowledgeService {
           componentId: task.componentId,
           ruleId: task.ruleId,
           exampleId,
+          requestedBy: input.actor,
           sourcePath: componentRef.sourcePath,
           componentRef: componentRef.legacyPath,
         },

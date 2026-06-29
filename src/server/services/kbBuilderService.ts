@@ -73,6 +73,13 @@ export function createKbBuilderPipelineService(db: DatabaseHandle, dataDir: stri
 
 type SourceBundleService = ReturnType<typeof createSourceBundleService>;
 
+interface ScopedRebuildTarget {
+  componentId: string;
+  sourceRefs: string[];
+  legacyPath: string;
+  sourceVersionIds: string[];
+}
+
 interface BuildRunContext {
   runId: string;
   options: BuildPipelineOptions;
@@ -380,35 +387,76 @@ export class KbBuilderPipelineService {
     }
     if (String(row.status) !== "open") throw new Error("Only open rebuild candidate tasks can start scoped rebuilds.");
 
-    const sourceVersionIds = jsonValue<string[]>(row.source_version_ids, []);
-    const versionId = sourceVersionIds[0];
+    const run = await this.startScopedRebuildForComponent({
+      componentId: String(row.component_id),
+      requestedBy,
+      traceId,
+      rebuildTaskId: taskId,
+    });
+    await this.adapter.query(
+      `UPDATE review_tasks
+       SET resolution_note = $2
+       WHERE task_id = $1`,
+      [taskId, `已启动 scoped rebuild: ${run.runId}${typeof run.config.only === "string" && run.config.only ? ` (${run.config.only})` : ""}`],
+    );
+    return run;
+  }
+
+  async startScopedRebuildForComponent(input: {
+    componentId: string;
+    requestedBy: string;
+    traceId?: string;
+    rebuildTaskId?: string;
+    sourcePath?: string;
+  }): Promise<KnowledgeBuildRun> {
+    if (input.rebuildTaskId) {
+      const existing = await this.findExistingRebuildRun(input.rebuildTaskId);
+      if (existing) return existing;
+    }
+    const target = await this.findScopedRebuildTarget(input.componentId);
+    const versionId = target.sourceVersionIds[0];
     if (!versionId) throw new Error("The owning package has no source version to rebuild from.");
     const version = await createSourceBundleService(this.db, this.dataDir).getVersion(versionId);
     if (!version) throw new Error(`Unknown source version: ${versionId}`);
 
-    const sourceRefs = jsonValue<string[]>(row.source_refs, []);
-    const only = scopedOnlyFilter(sourceRefs, String(row.legacy_path ?? ""));
+    const only = scopedOnlyFilter([input.sourcePath ?? "", ...target.sourceRefs], target.legacyPath);
     const run = await this.startBuild({
       bundleId: version.bundleId,
       versionId,
-      requestedBy,
+      requestedBy: input.requestedBy,
       stages: STAGE_ORDER,
       model: "deterministic",
       modelConfig: { provider: "deterministic", model: "deterministic" },
       force: true,
       only,
       qualityProfileId: "default",
-      traceId,
-      rebuildTaskId: taskId,
+      traceId: input.traceId,
+      rebuildTaskId: input.rebuildTaskId,
       generateAliases: false,
     });
-    await this.adapter.query(
-      `UPDATE review_tasks
-       SET resolution_note = $2
-       WHERE task_id = $1`,
-      [taskId, `已启动 scoped rebuild: ${run.runId}${only ? ` (${only})` : ""}`],
-    );
     return run;
+  }
+
+  private async findScopedRebuildTarget(componentId: string): Promise<ScopedRebuildTarget> {
+    const { rows } = await this.adapter.query(
+      `SELECT
+         c.component_id,
+         c.source_refs,
+         c.legacy_path,
+         p.source_version_ids
+       FROM asset_components c
+       JOIN asset_packages p ON p.package_id = c.package_id
+       WHERE c.component_id = $1`,
+      [componentId],
+    );
+    if (rows.length === 0) throw new Error(`Unknown component: ${componentId}`);
+    const row = rows[0];
+    return {
+      componentId: String(row.component_id),
+      sourceRefs: jsonValue<string[]>(row.source_refs, []),
+      legacyPath: String(row.legacy_path ?? ""),
+      sourceVersionIds: jsonValue<string[]>(row.source_version_ids, []),
+    };
   }
 
   private async findExistingRebuildRun(taskId: string): Promise<KnowledgeBuildRun | null> {

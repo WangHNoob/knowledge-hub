@@ -11,6 +11,7 @@ import { createKnowledgeService } from "./services/knowledgeService";
 import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
+import { registerAnnotationWritebackAutomation } from "./services/annotationWritebackAutomationService";
 import { registerFeedbackAutomation } from "./services/feedbackAutomationService";
 import { registerReleaseAutomation } from "./services/releaseAutomationService";
 import { createSourceBundleService } from "./services/sourceBundleService";
@@ -84,6 +85,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     kbBuilderService: ctx.kbBuilderService,
     diagnostics,
   });
+  const unsubscribeAnnotationWritebackAutomation = registerAnnotationWritebackAutomation({
+    db: options.db,
+    kbBuilderService: ctx.kbBuilderService,
+    diagnostics,
+  });
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -122,6 +128,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   app.addHook("onClose", async () => {
     unsubscribeReleaseAutomation();
     unsubscribeFeedbackAutomation();
+    unsubscribeAnnotationWritebackAutomation();
     await options.db.close();
   });
   return app;
