@@ -194,8 +194,8 @@ export function AgentFeedback() {
   const automationRows = useMemo(() => buildAutomationChains(flywheelEvents.data ?? []), [flywheelEvents.data]);
   const workbenchRetestIds = useMemo(() => new Set((workbench.data?.retestItems ?? []).map((event) => event.eventId)), [workbench.data?.retestItems]);
   const rebuildCandidates = pressureRows.filter((row) => row.negativeCount >= 2).length;
-  if (events.isLoading || flywheelEvents.isLoading || convergence.isLoading || workbench.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
-  if (events.error || flywheelEvents.error || convergence.error || workbench.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? convergence.error ?? workbench.error ?? audit.error ?? outputAudits.error} />;
+  if (events.isLoading || flywheelEvents.isLoading || convergence.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
+  if (events.error || flywheelEvents.error || convergence.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? convergence.error ?? audit.error ?? outputAudits.error} />;
   const auditRows = audit.data ?? [];
   const missCount = eventRows.filter((event) => event.status === "miss").length;
   const flaggedCount = eventRows.filter((event) => event.qualityFlags.length > 0).length;

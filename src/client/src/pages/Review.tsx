@@ -218,7 +218,7 @@ export function Review() {
   }, [tasks, transition]);
 
   if (isLoading) return <Loading title="正在整理审核任务" />;
-  if (error || workbench.error) return <ErrorState error={error ?? workbench.error} />;
+  if (error) return <ErrorState error={error} />;
 
   return (
     <Page title="审核中心" subtitle="把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。">

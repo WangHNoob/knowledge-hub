@@ -129,8 +129,8 @@ export function Release() {
     }
   });
 
-  if (packages.isLoading || releases.isLoading || current.isLoading || tasks.isLoading || flywheelEvents.isLoading || workbench.isLoading) return <Loading title="正在读取发布工作台" />;
-  if (packages.error || releases.error || current.error || tasks.error || flywheelEvents.error || workbench.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error ?? flywheelEvents.error ?? workbench.error} />;
+  if (packages.isLoading || releases.isLoading || current.isLoading || tasks.isLoading || flywheelEvents.isLoading) return <Loading title="正在读取发布工作台" />;
+  if (packages.error || releases.error || current.error || tasks.error || flywheelEvents.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error ?? flywheelEvents.error} />;
 
   return (
     <Page title="发布" subtitle="发布版本是 Agent 正式消费的不可变知识视图。">
