@@ -30,6 +30,7 @@ const SEVERITY_TONE: Record<string, "hot" | "warn" | undefined> = {
 const STATUS_LABEL: Record<string, string> = { open: "待处理", resolved: "已解决", dismissed: "已忽略" };
 
 function taskCategory(task: ReviewTask): string {
+  if (task.ruleId === "annotation_example.review") return "样例复盘";
   const text = `${task.title} ${task.description} ${task.suggestedAction}`.toLowerCase();
   if (/agent|miss|命中|反馈|mcp/.test(text)) return "Agent 回流";
   if (/evidence|citation|引用|证据|source/.test(text)) return "证据";
@@ -49,6 +50,21 @@ function resolutionLabel(insight: FeedbackInsight): string {
   if (insight.problem === "miss" || insight.problem === "repeated") return "标记已补资产";
   if (insight.problem === "quality") return "标记已修复质量";
   return "标记已处理";
+}
+
+function recordFromRecord(source: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = source[key];
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringFromRecord(source: Record<string, unknown>, key: string): string {
+  const value = source[key];
+  return typeof value === "string" ? value : "";
+}
+
+function numberFromRecord(source: Record<string, unknown>, key: string): number {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export function Review() {
@@ -295,9 +311,10 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onRetest: (insight: FeedbackInsight) => void;
 }) {
   const isAgentTask = isAgentFeedbackTask(task);
+  const isAnnotationReview = task.ruleId === "annotation_example.review";
   const insight = isAgentTask ? insightFromTask(task) : null;
   const componentIds = insight?.componentIds.length ? insight.componentIds : task.componentId ? [task.componentId] : [];
-  const isRebuildCandidate = task.ruleId === "agent_feedback.rebuild_candidate" || task.ruleId === "annotation_example.review";
+  const isRebuildCandidate = task.ruleId === "agent_feedback.rebuild_candidate" || isAnnotationReview;
   return (
     <article className={highlighted ? "task actionable-task targeted" : "task actionable-task"}>
       <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />
@@ -349,7 +366,18 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
         )}
         <LearningStrip task={task} />
         <WritebackStrip task={task} onNavigateBuilder={onNavigateBuilder} onNavigateRelease={onNavigateRelease} />
-        {task.status === "open" && task.taskKind === "annotation" && (
+        {task.status === "open" && task.taskKind === "annotation" && isAnnotationReview && (
+          <AnnotationReviewPanel
+            task={task}
+            selectedCandidateId={selectedCandidateId}
+            note={note}
+            isPending={isPending}
+            onCandidate={onCandidate}
+            onNote={onNote}
+            onAnnotate={onAnnotate}
+          />
+        )}
+        {task.status === "open" && task.taskKind === "annotation" && !isAnnotationReview && (
           <div className="annotation-panel">
             <div className="annotation-head">
               <strong>标注任务</strong>
@@ -401,7 +429,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
               {componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(componentIds[0])}>查看命中资产</button>}
               {insight && <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>}
               {isRebuildCandidate && <button className="primary-action" type="button" disabled={isPending} onClick={onStartRebuild}>启动 scoped build</button>}
-              <button className="primary-action" type="button" disabled={isPending} onClick={() => onTransition("resolved")}>{insight ? resolutionLabel(insight) : "标记已处理"}</button>
+              {!isAnnotationReview && <button className="primary-action" type="button" disabled={isPending} onClick={() => onTransition("resolved")}>{insight ? resolutionLabel(insight) : "标记已处理"}</button>}
               <button className="secondary-action" type="button" disabled={isPending} onClick={() => onTransition("dismissed")}>不影响本版</button>
             </div>
             <input
@@ -420,6 +448,81 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
     </article>
   );
 });
+
+function AnnotationReviewPanel({
+  task,
+  selectedCandidateId,
+  note,
+  isPending,
+  onCandidate,
+  onNote,
+  onAnnotate,
+}: {
+  task: ReviewTask;
+  selectedCandidateId: string;
+  note: string;
+  isPending: boolean;
+  onCandidate: (candidateId: string) => void;
+  onNote: (note: string) => void;
+  onAnnotate: () => void;
+}) {
+  const exampleId = stringFromRecord(task.contextSnapshot, "exampleId");
+  const originalRule = stringFromRecord(task.contextSnapshot, "ruleId") || "unknown rule";
+  const effect = recordFromRecord(task.contextSnapshot, "effect");
+  const chosen = task.candidates.find((candidate) => candidate.id === selectedCandidateId);
+  return (
+    <div className="annotation-panel annotation-review-panel">
+      <div className="annotation-head">
+        <strong>标注样例复盘</strong>
+        <span>{exampleId || "missing example"}</span>
+      </div>
+      <div className="annotation-review-summary">
+        <span>
+          <b>原规则</b>
+          <strong>{originalRule}</strong>
+        </span>
+        <span>
+          <b>创建后复发</b>
+          <strong>{numberFromRecord(effect, "tasksAfter")}</strong>
+        </span>
+        <span>
+          <b>待处理</b>
+          <strong>{numberFromRecord(effect, "openTasksAfter")}</strong>
+        </span>
+        <span>
+          <b>Agent 负反馈</b>
+          <strong>{numberFromRecord(effect, "agentNegativeAfter")}</strong>
+        </span>
+      </div>
+      <div className="annotation-review-decisions">
+        {task.candidates.map((candidate) => (
+          <button
+            key={candidate.id}
+            type="button"
+            className={selectedCandidateId === candidate.id ? "review-decision selected" : "review-decision"}
+            onClick={() => onCandidate(candidate.id)}
+          >
+            <span>
+              <strong>{candidate.label}</strong>
+              {candidate.rationale && <small>{candidate.rationale}</small>}
+            </span>
+            {typeof candidate.confidence === "number" && <b>{Math.round(candidate.confidence * 100)}%</b>}
+          </button>
+        ))}
+      </div>
+      <textarea
+        className="task-note annotation-answer"
+        placeholder="复盘备注：为什么转 override、为什么停用，或为什么继续观察。"
+        value={note}
+        onChange={(event) => onNote(event.target.value)}
+        rows={3}
+      />
+      <button className="primary-action" type="button" disabled={isPending || !chosen} onClick={onAnnotate}>
+        {chosen ? `提交决策：${chosen.label}` : "选择复盘决策"}
+      </button>
+    </div>
+  );
+}
 
 function WritebackStrip({
   task,
