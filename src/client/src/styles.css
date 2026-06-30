@@ -2637,11 +2637,43 @@ button.writeback-step:disabled {
   border-color: rgba(201, 162, 39, 0.22);
 }
 
+.patch-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.patch-count {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+}
+
 .patch-id-list {
   display: flex;
   flex-wrap: wrap;
+  align-content: start;
   gap: 6px;
   min-width: 0;
+  /* 列表可能很长（尤其组件新增/复用）：限高 + 滚动，避免把下方重要内容顶出视口。 */
+  max-height: 132px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.patch-id-list .id-chip {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .audit-grid {

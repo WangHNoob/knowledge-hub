@@ -21,6 +21,7 @@ import {
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
 import { errorMessage, formatTime, qualityScore, releaseVersion } from "../utils/format";
+import { componentLabel } from "../utils/componentLabel";
 import { IdChip, useNav } from "../ui/navigation";
 
 type ReleaseTab = "compose" | "current";
@@ -654,7 +655,7 @@ function RevisionPatchView({
         <PatchGroup title="组件新增" ids={revision.diff.componentIds.added} onClick={onNavigateComponent} />
         <PatchGroup title="组件变更" ids={revision.diff.changedComponents} onClick={onNavigateComponent} />
         <PatchGroup title="组件删除" ids={revision.diff.componentIds.removed} tone="warn" />
-        <PatchGroup title="组件复用" ids={revision.diff.componentIds.unchanged.slice(0, 8)} suffix={revision.diff.componentIds.unchanged.length > 8 ? `+${revision.diff.componentIds.unchanged.length - 8}` : ""} />
+        <PatchGroup title="组件复用" ids={revision.diff.componentIds.unchanged} />
         <PatchGroup title="资料版本新增" ids={revision.diff.sourceVersionIds.added} />
         <PatchGroup title="资料版本移除" ids={revision.diff.sourceVersionIds.removed} tone="warn" />
       </div>
@@ -677,10 +678,14 @@ function PatchGroup({
 }) {
   return (
     <div className={`patch-group ${tone ?? ""}`}>
-      <strong>{title}</strong>
+      <div className="patch-group-head">
+        <strong>{title}</strong>
+        {ids.length > 0 && <span className="patch-count">{ids.length}</span>}
+      </div>
       <div className="patch-id-list">
         {ids.length === 0 ? <span className="subtle">无</span> : ids.map((id) => (
-          onClick ? <IdChip key={id} label={id} onClick={() => onClick(id)} /> : <IdChip key={id} label={id} />
+          // 显示人话名称（wiki/.../x.md 等），完整 ID 放进 tooltip，避免一长串 ID 撑爆列表。
+          <IdChip key={id} label={componentLabel(id)} title={id} onClick={onClick ? () => onClick(id) : undefined} />
         ))}
         {suffix && <span className="subtle">{suffix}</span>}
       </div>
