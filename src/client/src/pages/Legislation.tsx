@@ -2,7 +2,7 @@ import { Boxes, Braces, FileText, Gauge, LayoutDashboard, ListChecks, Plus, Save
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { activateLegislationProfile, createLegislationProfile, getLegislationProfile, getTrustPolicy, listAnnotationExamples, setAnnotationExampleActive } from "../api";
+import { activateLegislationProfile, createAnnotationExampleReviewTask, createLegislationProfile, getLegislationProfile, getTrustPolicy, listAnnotationExamples, setAnnotationExampleActive } from "../api";
 import type { AnnotationExample, KnowledgeRuleConfig, RelationTypeSpec, TrustPolicy } from "../api/types";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
 import { formatPercent, formatTime } from "../utils/format";
@@ -81,6 +81,13 @@ export function Legislation() {
     mutationFn: ({ exampleId, active }: { exampleId: string; active: boolean }) => setAnnotationExampleActive(exampleId, active),
     onSuccess: async () => {
       await annotationExamples.refetch();
+    }
+  });
+  const exampleReviewMutation = useMutation({
+    mutationFn: createAnnotationExampleReviewTask,
+    onSuccess: async (task) => {
+      await annotationExamples.refetch();
+      navigate("review", { taskId: task.taskId });
     }
   });
 
@@ -164,7 +171,9 @@ export function Legislation() {
           <AnnotationExampleSection
             examples={annotationExamples.data ?? []}
             saving={exampleActiveMutation.isPending}
+            reviewing={exampleReviewMutation.isPending}
             onToggle={(example) => exampleActiveMutation.mutate({ exampleId: example.exampleId, active: !example.active })}
+            onReviewExample={(example) => exampleReviewMutation.mutate(example.exampleId)}
             onNavigateReview={(taskId) => navigate("review", { taskId })}
             onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
             onNavigateBuild={(runId) => navigate("builder", { runId })}
@@ -242,14 +251,18 @@ export function Legislation() {
 function AnnotationExampleSection({
   examples,
   saving,
+  reviewing,
   onToggle,
+  onReviewExample,
   onNavigateReview,
   onNavigateAsset,
   onNavigateBuild,
 }: {
   examples: AnnotationExample[];
   saving: boolean;
+  reviewing: boolean;
   onToggle: (example: AnnotationExample) => void;
+  onReviewExample: (example: AnnotationExample) => void;
   onNavigateReview: (taskId: string) => void;
   onNavigateAsset: (packageId: string, componentId: string) => void;
   onNavigateBuild: (runId: string) => void;
@@ -318,6 +331,23 @@ function AnnotationExampleSection({
                     <span><b>Agent 负反馈</b><strong>{example.effect.agentNegativeAfter}</strong></span>
                   </div>
                   <small>{example.effect.summary}</small>
+                  {example.effect.status === "needs_review" && (
+                    <div className="annotation-effect-actions">
+                      {example.effect.openTaskIds[0] ? (
+                        <button className="secondary-action" type="button" onClick={() => onNavigateReview(example.effect.openTaskIds[0])}>
+                          处理待处理任务
+                        </button>
+                      ) : example.effect.reviewTaskId ? (
+                        <button className="secondary-action" type="button" onClick={() => onNavigateReview(example.effect.reviewTaskId)}>
+                          查看复盘任务
+                        </button>
+                      ) : (
+                        <button className="secondary-action" type="button" disabled={reviewing} onClick={() => onReviewExample(example)}>
+                          {reviewing ? "生成中..." : "生成复盘任务"}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="annotation-example-side">

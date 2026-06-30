@@ -263,7 +263,9 @@ export class KnowledgeService {
          COALESCE(effect.tasks_before, 0)::int AS effect_tasks_before,
          COALESCE(effect.tasks_after, 0)::int AS effect_tasks_after,
          COALESCE(effect.open_tasks_after, 0)::int AS effect_open_tasks_after,
-         COALESCE(effect.agent_negative_after, 0)::int AS effect_agent_negative_after
+         COALESCE(effect.open_task_ids, '[]'::jsonb) AS effect_open_task_ids,
+         COALESCE(effect.agent_negative_after, 0)::int AS effect_agent_negative_after,
+         COALESCE(review_task.task_id, '') AS effect_review_task_id
        FROM annotation_examples e
        LEFT JOIN LATERAL (
          SELECT
@@ -278,6 +280,7 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE t.created_at < e.created_at)::int AS tasks_before,
            COUNT(*) FILTER (WHERE t.created_at > e.created_at)::int AS tasks_after,
            COUNT(*) FILTER (WHERE t.created_at > e.created_at AND t.status = 'open')::int AS open_tasks_after,
+           COALESCE(jsonb_agg(t.task_id ORDER BY t.created_at DESC) FILTER (WHERE t.created_at > e.created_at AND t.status = 'open'), '[]'::jsonb) AS open_task_ids,
            (
              SELECT COUNT(*)::int
              FROM agent_events a
@@ -289,6 +292,16 @@ export class KnowledgeService {
          WHERE t.component_id = e.component_id
            AND COALESCE(t.rule_id, '') = COALESCE(e.rule_id, '')
        ) effect ON true
+       LEFT JOIN LATERAL (
+         SELECT task_id
+         FROM review_tasks t
+         WHERE t.component_id = e.component_id
+           AND t.status = 'open'
+           AND t.rule_id = 'annotation_example.review'
+           AND t.context_snapshot ->> 'exampleId' = e.example_id
+         ORDER BY t.created_at DESC
+         LIMIT 1
+       ) review_task ON true
        ORDER BY e.active DESC, e.created_at DESC`,
     );
     return rows.map((row) => ({
@@ -310,7 +323,9 @@ export class KnowledgeService {
         tasksBefore: Number(row.effect_tasks_before ?? 0),
         tasksAfter: Number(row.effect_tasks_after ?? 0),
         openTasksAfter: Number(row.effect_open_tasks_after ?? 0),
+        openTaskIds: jsonArray(row.effect_open_task_ids),
         agentNegativeAfter: Number(row.effect_agent_negative_after ?? 0),
+        reviewTaskId: String(row.effect_review_task_id ?? ""),
       }),
       createdBy: String(row.created_by ?? ""),
       createdAt: String(row.created_at ?? ""),
@@ -326,6 +341,60 @@ export class KnowledgeService {
     const example = (await this.listAnnotationExamples()).find((item) => item.exampleId === exampleId);
     if (!example) throw new Error(`Unknown annotation example: ${exampleId}`);
     return example;
+  }
+
+  async createAnnotationExampleReviewTask(exampleId: string, actor: string): Promise<ReviewTask> {
+    const example = (await this.listAnnotationExamples()).find((item) => item.exampleId === exampleId);
+    if (!example) throw new Error(`Unknown annotation example: ${exampleId}`);
+    if (example.effect.reviewTaskId) {
+      const existing = (await this.listReviewTasks({ status: "open" })).find((task) => task.taskId === example.effect.reviewTaskId);
+      if (existing) return existing;
+    }
+    const taskId = `task_ann_review_${slug(example.componentId)}_${nanoid(6)}`;
+    const now = new Date().toISOString();
+    await this.adapter.query(
+      `INSERT INTO review_tasks
+        (task_id, package_id, component_id, severity, status, task_kind, rule_id, title, description, suggested_action, candidates, confidence, context_snapshot, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [
+        taskId,
+        example.packageId,
+        example.componentId,
+        example.effect.openTasksAfter > 0 ? "warning" : "info",
+        "open",
+        "annotation",
+        "annotation_example.review",
+        `复盘标注样例：${example.ruleId || example.exampleId}`,
+        [
+          `标注样例 ${example.exampleId} 创建后仍触发 ${example.effect.tasksAfter} 个同类任务。`,
+          example.effect.agentNegativeAfter > 0 ? `关联组件后续出现 ${example.effect.agentNegativeAfter} 次 Agent 负反馈。` : "",
+          `效果状态：${example.effect.status}。`,
+        ].filter(Boolean).join(" "),
+        "检查该样例是否需要改写为更明确的 override、停用，或补充来源资料后重新构建。",
+        JSON.stringify([
+          {
+            id: "revise_annotation_example",
+            label: "修订样例",
+            value: { action: "revise_annotation_example", exampleId },
+            confidence: 0.72,
+            rationale: "样例后仍有复发信号，应优先检查样例覆盖范围和正确值。",
+          },
+          {
+            id: "disable_annotation_example",
+            label: "停用样例",
+            value: { action: "disable_annotation_example", exampleId },
+            confidence: 0.55,
+            rationale: "如果样例误导构建，应停用并保留审计记录。",
+          },
+        ]),
+        0.72,
+        JSON.stringify({ exampleId, ruleId: example.ruleId, effect: example.effect, createdBy: actor }),
+        now,
+      ],
+    );
+    const created = (await this.listReviewTasks({ status: "open" })).find((task) => task.taskId === taskId);
+    if (!created) throw new Error(`Failed to create review task for annotation example: ${exampleId}`);
+    return created;
   }
 
   private async enrichReviewTaskLearning(tasks: ReviewTask[]): Promise<ReviewTask[]> {
@@ -754,7 +823,9 @@ export class KnowledgeService {
         tasksBefore: 0,
         tasksAfter: 0,
         openTasksAfter: 0,
+        openTaskIds: [],
         agentNegativeAfter: 0,
+        reviewTaskId: "",
       }),
       createdBy: input.actor,
       createdAt: now,
@@ -1056,7 +1127,9 @@ function annotationExampleEffect(input: {
   tasksBefore: number;
   tasksAfter: number;
   openTasksAfter: number;
+  openTaskIds: string[];
   agentNegativeAfter: number;
+  reviewTaskId: string;
 }): AnnotationExample["effect"] {
   const status = input.openTasksAfter > 0 || input.agentNegativeAfter > 0
     ? "needs_review"

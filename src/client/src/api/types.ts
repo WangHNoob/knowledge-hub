@@ -278,8 +278,10 @@ export interface AnnotationExampleEffect {
   tasksBefore: number;
   tasksAfter: number;
   openTasksAfter: number;
+  openTaskIds: string[];
   agentNegativeAfter: number;
   status: "converging" | "watch" | "needs_review";
+  reviewTaskId: string;
   summary: string;
 }
 

@@ -50,4 +50,16 @@ export function registerLegislationRoutes(app: FastifyInstance, ctx: RouteContex
       }
     }
   );
+
+  app.post<{ Params: { exampleId: string } }>(
+    "/api/legislation/annotation-examples/:exampleId/review",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      try {
+        return { task: await ctx.service.createAnnotationExampleReviewTask(request.params.exampleId, request.user.username) };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "生成标注样例复盘任务失败。" });
+      }
+    }
+  );
 }

@@ -157,7 +157,9 @@ describe("review task transitions", () => {
       tasksBefore: 1,
       tasksAfter: 0,
       openTasksAfter: 0,
+      openTaskIds: [],
       agentNegativeAfter: 0,
+      reviewTaskId: "",
       status: "converging"
     });
 
@@ -196,6 +198,43 @@ describe("review task transitions", () => {
         correctValue: { field: "activity_structure", source: "candidate" }
       }
     });
+
+    const afterRepeatResponse = await app.inject({ method: "GET", url: "/api/legislation/annotation-examples", headers: auth });
+    const afterRepeat = afterRepeatResponse.json().examples.find((item: { taskId: string }) => item.taskId === "task_annotation");
+    expect(afterRepeat.effect).toMatchObject({
+      tasksAfter: 1,
+      openTasksAfter: 1,
+      openTaskIds: ["task_annotation_repeat"],
+      status: "needs_review"
+    });
+
+    const reviewResponse = await app.inject({
+      method: "POST",
+      url: `/api/legislation/annotation-examples/${encodeURIComponent(example.exampleId)}/review`,
+      headers: auth,
+      payload: {}
+    });
+    expect(reviewResponse.statusCode).toBe(200);
+    const reviewTask = reviewResponse.json().task;
+    expect(reviewTask).toMatchObject({
+      componentId: "cmp_rev",
+      taskKind: "annotation",
+      ruleId: "annotation_example.review",
+      status: "open"
+    });
+    expect(reviewTask.contextSnapshot).toMatchObject({ exampleId: example.exampleId, createdBy: "admin" });
+
+    const sameReviewResponse = await app.inject({
+      method: "POST",
+      url: `/api/legislation/annotation-examples/${encodeURIComponent(example.exampleId)}/review`,
+      headers: auth,
+      payload: {}
+    });
+    expect(sameReviewResponse.json().task.taskId).toBe(reviewTask.taskId);
+
+    const afterReviewResponse = await app.inject({ method: "GET", url: "/api/legislation/annotation-examples", headers: auth });
+    const afterReview = afterReviewResponse.json().examples.find((item: { taskId: string }) => item.taskId === "task_annotation");
+    expect(afterReview.effect.reviewTaskId).toBe(reviewTask.taskId);
   });
 
   it("rejects viewers", async () => {

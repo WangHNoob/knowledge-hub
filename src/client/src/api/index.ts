@@ -28,6 +28,7 @@ export { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transition
 export { getQualityProfile, getTrustPolicy, updateQualityProfile } from "./quality";
 export {
   activateLegislationProfile,
+  createAnnotationExampleReviewTask,
   createLegislationProfile,
   getLegislationProfile,
   listAnnotationExamples,

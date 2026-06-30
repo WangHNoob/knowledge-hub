@@ -2819,6 +2819,17 @@ button.writeback-step:disabled {
   overflow-wrap: anywhere;
 }
 
+.annotation-effect-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.annotation-effect-actions .secondary-action {
+  min-height: 32px;
+  font-size: 12px;
+}
+
 .annotation-example-side {
   display: grid;
   justify-items: stretch;

@@ -1,5 +1,5 @@
 import { getJson, postJson } from "./http";
-import type { AnnotationExample, KnowledgeRuleConfig, KnowledgeRuleProfile } from "./types";
+import type { AnnotationExample, KnowledgeRuleConfig, KnowledgeRuleProfile, ReviewTask } from "./types";
 
 export async function getLegislationProfile(): Promise<{ profile: KnowledgeRuleProfile; profiles: KnowledgeRuleProfile[] }> {
   return getJson<{ profile: KnowledgeRuleProfile; profiles: KnowledgeRuleProfile[] }>("/api/legislation/profile");
@@ -22,4 +22,11 @@ export async function setAnnotationExampleActive(exampleId: string, active: bool
     `/api/legislation/annotation-examples/${encodeURIComponent(exampleId)}/active`,
     { active },
   )).example;
+}
+
+export async function createAnnotationExampleReviewTask(exampleId: string): Promise<ReviewTask> {
+  return (await postJson<{ task: ReviewTask }>(
+    `/api/legislation/annotation-examples/${encodeURIComponent(exampleId)}/review`,
+    {},
+  )).task;
 }
