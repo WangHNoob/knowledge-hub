@@ -1210,6 +1210,239 @@ button.writeback-step:disabled {
   gap: 8px;
 }
 
+.flywheel-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(135deg, rgba(143, 168, 79, 0.12), rgba(201, 162, 39, 0.06)),
+    var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.flywheel-command.attention {
+  border-color: rgba(201, 162, 39, 0.36);
+}
+
+.flywheel-command.publish {
+  border-color: rgba(95, 127, 72, 0.28);
+}
+
+.flywheel-command.clear {
+  border-color: rgba(95, 127, 72, 0.22);
+}
+
+.command-kicker {
+  color: var(--olive-dim);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.flywheel-command h2 {
+  margin: 4px 0 6px;
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.flywheel-command p {
+  max-width: 760px;
+  margin: 0;
+  color: var(--ink-muted);
+  line-height: 1.55;
+}
+
+.workbench-metrics {
+  margin-top: 16px;
+}
+
+.workbench-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+  margin-top: 16px;
+}
+
+.workbench-lane {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.lane-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+
+.lane-head svg {
+  color: var(--olive);
+  margin-top: 2px;
+}
+
+.lane-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.lane-head p {
+  margin: 3px 0 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.lane-list {
+  display: grid;
+  gap: 10px;
+}
+
+.lane-empty {
+  margin: 0;
+  padding: 18px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.workbench-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.workbench-card.risk {
+  border-color: rgba(201, 162, 39, 0.26);
+}
+
+.workbench-card .card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workbench-card .card-row > span:not(.badge) {
+  color: var(--ink-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.workbench-card strong {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.workbench-card p {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.workbench-card code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.workbench-card .secondary-action,
+.workbench-card .primary-action {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workbench-health {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.workbench-health h2 {
+  margin: 0 0 4px;
+}
+
+.workbench-health p {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.health-grid span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.health-grid b {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.health-grid strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.health-grid small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
 .feedback-pressure-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
@@ -4107,6 +4340,9 @@ form button:active:not(:disabled) {
   .annotation-lifecycle-grid,
   .annotation-writeback-timeline,
   .build-writeback-row,
+  .flywheel-command,
+  .workbench-board,
+  .health-grid,
   .audit-metrics,
   .convergence-metrics,
   .revision-patch-grid,
@@ -4159,6 +4395,9 @@ form button:active:not(:disabled) {
   .writeback-steps,
   .annotation-writeback-timeline,
   .build-writeback-row,
+  .flywheel-command,
+  .workbench-board,
+  .health-grid,
   .feedback-pressure,
   .feedback-component {
     grid-template-columns: 1fr;

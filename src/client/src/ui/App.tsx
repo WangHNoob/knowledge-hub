@@ -65,7 +65,7 @@ const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
 };
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
-  { id: "dashboard", label: "首页", icon: Activity },
+  { id: "dashboard", label: "飞轮工作台", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
   { id: "legislation", label: "策划立法", icon: ScrollText },
   { id: "builder", label: "知识构建", icon: PackagePlus },
