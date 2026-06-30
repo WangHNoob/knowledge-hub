@@ -6,7 +6,6 @@ import {
   createRelease,
   deleteRelease,
   getCurrentRelease,
-  getFlywheelWorkbench,
   listFlywheelEvents,
   listPackages,
   listReleases,
@@ -22,6 +21,7 @@ import {
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
+import { useWorkbench } from "../hooks/useWorkbench";
 import { errorMessage, formatTime, qualityScore, releaseVersion } from "../utils/format";
 import { componentLabel } from "../utils/componentLabel";
 import { IdChip, useNav } from "../ui/navigation";
@@ -39,7 +39,7 @@ export function Release() {
   const releases = useQuery({ queryKey: ["releases"], queryFn: listReleases });
   const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
   const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
-  const workbench = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench, refetchInterval: 5000 });
+  const workbench = useWorkbench();
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
 
   useEffect(() => {

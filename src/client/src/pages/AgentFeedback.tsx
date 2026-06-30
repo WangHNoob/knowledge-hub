@@ -2,8 +2,9 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { getFlywheelConvergenceSummary, getFlywheelWorkbench, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope } from "../api";
+import { getFlywheelConvergenceSummary, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
+import { useWorkbench } from "../hooks/useWorkbench";
 import { componentLabel } from "../utils/componentLabel";
 import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
 import { formatPercent, formatTime } from "../utils/format";
@@ -156,7 +157,7 @@ export function AgentFeedback() {
   const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
   const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const convergence = useQuery({ queryKey: ["agent-flywheel-convergence"], queryFn: getFlywheelConvergenceSummary, refetchInterval: 5000 });
-  const workbench = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench, refetchInterval: 5000 });
+  const workbench = useWorkbench();
   const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({

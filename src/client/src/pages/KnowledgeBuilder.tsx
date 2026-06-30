@@ -5,7 +5,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildKnowledgePackage,
   deleteBuildRun,
-  getFlywheelWorkbench,
   listBuildRuns,
   listBundleVersions,
   listFlywheelEvents,
@@ -21,6 +20,7 @@ import {
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
 import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRunCard";
+import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
@@ -64,11 +64,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     queryFn: listFlywheelEvents,
     refetchInterval: 3000
   });
-  const workbench = useQuery({
-    queryKey: ["dashboard", "workbench"],
-    queryFn: getFlywheelWorkbench,
-    refetchInterval: 5000
-  });
+  const workbench = useWorkbench();
   const blockingTasks = useQuery({
     queryKey: ["review", "blocking"],
     queryFn: () => listReviewTasks("blocking", "open"),

@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 
 import {
   getDashboard,
-  getFlywheelWorkbench,
   type AgentEvent,
   type FlywheelRiskItem,
   type FlywheelWorkbenchTarget,
@@ -12,6 +11,7 @@ import {
   type ReviewTask
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
 import type { NavParams, View } from "../ui/navigation";
 import { componentLabel } from "../utils/componentLabel";
@@ -20,7 +20,7 @@ import { formatCounts, formatPercent, formatTime } from "../utils/format";
 export function Dashboard() {
   const { navigate } = useNav();
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: getDashboard });
-  const workbenchQuery = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench });
+  const workbenchQuery = useWorkbench();
 
   const isLoading = dashboard.isLoading || workbenchQuery.isLoading;
   const error = dashboard.error ?? workbenchQuery.error;

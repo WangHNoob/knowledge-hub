@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { annotateReviewTask, getFlywheelWorkbench, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
+import { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { useWorkbench } from "../hooks/useWorkbench";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
 import { IdChip, useNav } from "../ui/navigation";
@@ -125,7 +126,7 @@ export function Review() {
     queryKey: ["review", severity || "all", status || "all"],
     queryFn: () => listReviewTasks(severity || undefined, status || undefined)
   });
-  const workbench = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench, refetchInterval: 5000 });
+  const workbench = useWorkbench();
 
   useEffect(() => {
     if (params.severity && params.severity !== severity) setSeverity(params.severity);
