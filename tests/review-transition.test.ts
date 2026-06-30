@@ -289,9 +289,55 @@ describe("review task transitions", () => {
       writebackRequested: true,
       writebackTaskId: reviewTask.taskId
     });
+    expect(lifecycleExample.lifecycle.writeback).toMatchObject({
+      exampleId: example.exampleId,
+      runId: "",
+      autoPublishStatus: "none"
+    });
     expect(lifecycleExample.lifecycle.lastReviewedAt).toBeTruthy();
     expect(lifecycleExample.lifecycle.writebackRequestedAt).toBeTruthy();
     expect(lifecycleExample.lifecycle.summary).toContain("已请求回写");
+
+    await db.adapter.query(
+      `INSERT INTO source_bundle_versions (version_id, bundle_id, label, note, created_by, created_at)
+       VALUES ('ver_trace','default','Trace','x','admin',NOW())
+       ON CONFLICT (version_id) DO NOTHING`
+    );
+    await db.adapter.query(
+      `INSERT INTO knowledge_build_runs
+         (run_id, source_version_id, package_id, adapter, stages, model, wiki_specs_hash, quality_profile_id, status, completed_stages, finished_at, output_uri, config_json)
+       VALUES
+         ('run_trace','ver_trace','pkg_rev','native','["extract"]','deterministic','hash','default','completed','["extract"]',NOW(),'data/kb-build-runs/run_trace','{"only":"gamedocs/pvp.md"}')`
+    );
+    await db.adapter.query(
+      `INSERT INTO knowledge_events (event_id, event_type, entity_type, entity_id, payload_json, created_at)
+       VALUES
+         ('ev_trace_started','annotation.writeback_rebuild_started','build_run','run_trace',$1,NOW()),
+         ('ev_trace_completed','build.completed','build_run','run_trace',$2,NOW())`,
+      [
+        JSON.stringify({ taskId: reviewTask.taskId, exampleId: example.exampleId, runId: "run_trace", only: "gamedocs/pvp.md" }),
+        JSON.stringify({ runId: "run_trace", packageId: "pkg_rev" }),
+      ]
+    );
+
+    const tracedLifecycleResponse = await app.inject({ method: "GET", url: "/api/legislation/annotation-examples", headers: auth });
+    const tracedLifecycleExample = tracedLifecycleResponse.json().examples.find((item: { exampleId: string }) => item.exampleId === example.exampleId);
+    expect(tracedLifecycleExample.lifecycle.writeback).toMatchObject({
+      runId: "run_trace",
+      runStatus: "completed",
+      runPackageId: "pkg_rev",
+      only: "gamedocs/pvp.md"
+    });
+
+    const runsResponse = await app.inject({ method: "GET", url: "/api/build-runs", headers: auth });
+    const traceRun = runsResponse.json().runs.find((item: { runId: string }) => item.runId === "run_trace");
+    expect(traceRun.writebackTraces[0]).toMatchObject({
+      taskId: reviewTask.taskId,
+      exampleId: example.exampleId,
+      runId: "run_trace",
+      taskRuleId: "annotation_example.review",
+      componentId: "cmp_rev"
+    });
   });
 
   it("rejects viewers", async () => {

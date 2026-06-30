@@ -207,6 +207,16 @@ export interface ReviewWritebackSummary {
   autoPublishReason: string;
 }
 
+export interface BuildRunWritebackTrace extends ReviewWritebackSummary {
+  taskId: string;
+  taskTitle: string;
+  taskStatus: ReviewStatus | "";
+  taskSeverity: ReviewSeverity | "";
+  taskRuleId: string;
+  componentId: string;
+  packageId: string;
+}
+
 export interface AnnotationExample {
   exampleId: string;
   packageId: string;
@@ -247,6 +257,7 @@ export interface AnnotationExampleLifecycle {
   writebackRequested: boolean;
   writebackTaskId: string;
   writebackRequestedAt: string | null;
+  writeback: ReviewWritebackSummary | null;
   summary: string;
 }
 
@@ -553,6 +564,7 @@ export interface KnowledgeBuildRun {
   error: string;
   outputUri: string;
   config: Record<string, unknown>;
+  writebackTraces: BuildRunWritebackTrace[];
 }
 
 export interface QualityGateProfile {

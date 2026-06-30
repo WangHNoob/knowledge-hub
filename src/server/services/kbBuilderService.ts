@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 
 import type {
   AssetPackage,
+  BuildRunWritebackTrace,
   DatabaseHandle,
   KnowledgeBuildRun,
   PipelineStage,
@@ -13,6 +14,7 @@ import type {
   QualityFinding,
   KnowledgeRuleConfig,
   KnowledgeRuleProfile,
+  ReviewTask,
   SourceFileChange,
 } from "../types";
 import { createSourceBundleService } from "./sourceBundleService";
@@ -155,6 +157,7 @@ export class KbBuilderPipelineService {
       finishedAt: null,
       error: "",
       outputUri: "",
+      writebackTraces: [],
       config: {
         force: options.force,
         only: options.only,
@@ -339,12 +342,93 @@ export class KbBuilderPipelineService {
 
   async listRuns(): Promise<KnowledgeBuildRun[]> {
     const { rows } = await this.adapter.query("SELECT * FROM knowledge_build_runs ORDER BY started_at DESC");
-    return rows.map(mapRun);
+    return this.enrichRunsWithWritebackTraces(rows.map(mapRun));
   }
 
   async getRun(runId: string): Promise<KnowledgeBuildRun | null> {
     const { rows } = await this.adapter.query("SELECT * FROM knowledge_build_runs WHERE run_id = $1", [runId]);
     return rows.length ? mapRun(rows[0]) : null;
+  }
+
+  private async enrichRunsWithWritebackTraces(runs: KnowledgeBuildRun[]): Promise<KnowledgeBuildRun[]> {
+    const runIds = uniqueSorted(runs.map((run) => run.runId));
+    if (runIds.length === 0) return runs;
+    const placeholders = runIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT event_id, entity_id, payload_json, created_at
+       FROM knowledge_events
+       WHERE event_type = 'annotation.writeback_rebuild_started'
+         AND payload_json ->> 'runId' IN (${placeholders})
+       ORDER BY created_at ASC`,
+      runIds,
+    );
+    const taskIds = uniqueSorted(rows.map((row) => stringValue(jsonValue<Record<string, unknown>>(row.payload_json, {}).taskId)));
+    if (taskIds.length === 0) return runs;
+
+    const [writebacks, taskRows] = await Promise.all([
+      createKnowledgeService(this.db).getReviewWritebackSummaries(taskIds),
+      this.loadTraceReviewTasks(taskIds),
+    ]);
+    const taskById = new Map(taskRows.map((task) => [task.taskId, task] as const));
+    const tracesByRun = new Map<string, BuildRunWritebackTrace[]>();
+    for (const row of rows) {
+      const payload = jsonValue<Record<string, unknown>>(row.payload_json, {});
+      const taskId = stringValue(payload.taskId);
+      const runId = stringValue(payload.runId) || String(row.entity_id ?? "");
+      const writeback = writebacks.get(taskId);
+      if (!taskId || !runId || !writeback) continue;
+      const task = taskById.get(taskId);
+      const trace: BuildRunWritebackTrace = {
+        ...writeback,
+        taskId,
+        taskTitle: task?.title ?? "",
+        taskStatus: task?.status ?? "",
+        taskSeverity: task?.severity ?? "",
+        taskRuleId: task?.ruleId ?? "",
+        componentId: task?.componentId ?? "",
+        packageId: task?.packageId ?? "",
+      };
+      const bucket = tracesByRun.get(runId) ?? [];
+      bucket.push(trace);
+      tracesByRun.set(runId, bucket);
+    }
+    return runs.map((run) => ({ ...run, writebackTraces: tracesByRun.get(run.runId) ?? [] }));
+  }
+
+  private async loadTraceReviewTasks(taskIds: string[]): Promise<ReviewTask[]> {
+    const ids = uniqueSorted(taskIds);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM review_tasks
+       WHERE task_id IN (${placeholders})`,
+      ids,
+    );
+    return rows.map((row) => ({
+      taskId: String(row.task_id ?? ""),
+      packageId: String(row.package_id ?? ""),
+      componentId: String(row.component_id ?? ""),
+      severity: String(row.severity ?? "") as ReviewTask["severity"],
+      status: String(row.status ?? "") as ReviewTask["status"],
+      taskKind: String(row.task_kind ?? "review") === "annotation" ? "annotation" : "review",
+      ruleId: String(row.rule_id ?? ""),
+      title: String(row.title ?? ""),
+      description: String(row.description ?? ""),
+      suggestedAction: String(row.suggested_action ?? ""),
+      candidates: [],
+      confidence: 0,
+      contextSnapshot: {},
+      annotationValue: {},
+      annotatedBy: "",
+      annotatedAt: null,
+      createdAt: String(row.created_at ?? ""),
+      resolvedBy: String(row.resolved_by ?? ""),
+      resolvedAt: row.resolved_at ? String(row.resolved_at) : null,
+      resolutionNote: String(row.resolution_note ?? ""),
+      learning: { recurrenceCount: 0, openSimilarCount: 0, exampleCount: 0, buildExamplesInjected: 0, lastAnnotation: null },
+      writeback: null,
+    }));
   }
 
   async stopRun(runId: string, requestedBy: string): Promise<KnowledgeBuildRun> {
@@ -917,6 +1001,7 @@ function mapRun(row: Record<string, unknown>): KnowledgeBuildRun {
     error: row.error as string,
     outputUri: row.output_uri as string,
     config: jsonValue<Record<string, unknown>>(row.config_json, {}),
+    writebackTraces: [],
   };
 }
 
@@ -1018,6 +1103,10 @@ function compactJson(value: unknown): string {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))].sort();
 }
 
 function scopedOnlyFilter(sourceRefs: string[], legacyPath: string): string | null {

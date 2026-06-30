@@ -326,7 +326,15 @@ export class KnowledgeService {
        ) writeback_event ON true
        ORDER BY e.active DESC, e.created_at DESC`,
     );
-    return rows.map((row) => ({
+    const writebackTaskIds = uniqueSorted(rows.map((row) =>
+      String(row.lifecycle_writeback_task_id || row.lifecycle_review_task_id || ""),
+    ));
+    const writebacks = await this.getReviewWritebackSummaries(writebackTaskIds);
+    return rows.map((row) => {
+      const writebackTaskId = String(row.lifecycle_writeback_task_id ?? "");
+      const reviewTaskId = String(row.lifecycle_review_task_id ?? "");
+      const writeback = writebacks.get(writebackTaskId || reviewTaskId) ?? null;
+      return {
       exampleId: String(row.example_id ?? ""),
       packageId: String(row.package_id ?? ""),
       componentId: String(row.component_id ?? ""),
@@ -353,13 +361,15 @@ export class KnowledgeService {
         lastReviewAction: String(row.lifecycle_review_action ?? ""),
         lastReviewedBy: String(row.lifecycle_reviewed_by ?? ""),
         lastReviewedAt: row.lifecycle_reviewed_at ? String(row.lifecycle_reviewed_at) : null,
-        reviewTaskId: String(row.lifecycle_review_task_id ?? ""),
-        writebackTaskId: String(row.lifecycle_writeback_task_id ?? ""),
+        reviewTaskId,
+        writebackTaskId,
         writebackRequestedAt: row.lifecycle_writeback_requested_at ? String(row.lifecycle_writeback_requested_at) : null,
+        writeback,
       }),
       createdBy: String(row.created_by ?? ""),
       createdAt: String(row.created_at ?? ""),
-    }));
+      };
+    });
   }
 
   async setAnnotationExampleActive(exampleId: string, active: boolean): Promise<AnnotationExample> {
@@ -493,7 +503,7 @@ export class KnowledgeService {
       const flywheel = jsonObject(config.flywheel);
       injectedByPackage.set(String(row.package_id), Number(flywheel.annotationExamplesInjected ?? 0));
     }
-    const writebacks = await this.loadReviewWritebacks(tasks.map((task) => task.taskId));
+    const writebacks = await this.getReviewWritebackSummaries(tasks.map((task) => task.taskId));
 
     return tasks.map((task) => {
       const key = reviewLearningKey(task.componentId, task.ruleId);
@@ -521,7 +531,7 @@ export class KnowledgeService {
     });
   }
 
-  private async loadReviewWritebacks(taskIds: string[]): Promise<Map<string, ReviewTask["writeback"]>> {
+  async getReviewWritebackSummaries(taskIds: string[]): Promise<Map<string, ReviewTask["writeback"]>> {
     const ids = uniqueSorted(taskIds);
     if (ids.length === 0) return new Map();
     const placeholders = ids.map((_, index) => `$${index + 1}`).join(",");
@@ -874,6 +884,7 @@ export class KnowledgeService {
         reviewTaskId: "",
         writebackTaskId: "",
         writebackRequestedAt: null,
+        writeback: null,
       }),
       createdBy: input.actor,
       createdAt: now,
@@ -1295,15 +1306,26 @@ function annotationExampleLifecycle(input: {
   reviewTaskId: string;
   writebackTaskId: string;
   writebackRequestedAt: string | null;
+  writeback: AnnotationExample["lifecycle"]["writeback"];
 }): AnnotationExample["lifecycle"] {
-  const writebackRequested = Boolean(input.writebackTaskId || input.writebackRequestedAt);
+  const writebackRequested = Boolean(input.writeback || input.writebackTaskId || input.writebackRequestedAt);
   const action = annotationReviewActionLabel(input.lastReviewAction);
   const summary = input.lastReviewedAt
-    ? `${input.lastReviewedBy || "unknown"} 已复盘：${action}${writebackRequested ? "，已请求回写" : ""}。`
+    ? `${input.lastReviewedBy || "unknown"} 已复盘：${action}${writebackRequested ? `，${writebackSummarySuffix(input.writeback)}` : ""}。`
     : writebackRequested
       ? "已请求确定性回写，等待构建链路继续处理。"
       : "尚未完成复盘。";
   return { ...input, writebackRequested, summary };
+}
+
+function writebackSummarySuffix(writeback: AnnotationExample["lifecycle"]["writeback"]): string {
+  if (!writeback) return "已请求回写";
+  if (writeback.autoPublishStatus === "published") return "已回写并自动发布";
+  if (writeback.autoPublishStatus === "skipped") return "已回写但自动发布跳过";
+  if (writeback.releaseId) return "已生成发布修订";
+  if (writeback.buildCompletedAt || writeback.runStatus === "completed") return "局部构建已完成";
+  if (writeback.runId) return "局部构建已启动";
+  return "已请求回写";
 }
 
 function annotationReviewActionLabel(action: string): string {

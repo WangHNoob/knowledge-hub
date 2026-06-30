@@ -1118,6 +1118,76 @@ button.writeback-step:disabled {
   overflow-wrap: anywhere;
 }
 
+.build-writeback-trace {
+  border-color: color-mix(in srgb, var(--gold) 32%, var(--line));
+  background:
+    linear-gradient(180deg, rgba(201, 162, 39, 0.08), rgba(201, 162, 39, 0.02)),
+    var(--surface-sunken);
+}
+
+.build-writeback-list {
+  display: grid;
+  gap: 8px;
+}
+
+.build-writeback-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.build-writeback-row > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.build-writeback-row strong,
+.build-writeback-row code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-writeback-row strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.build-writeback-row code {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.build-writeback-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.build-writeback-row-actions .secondary-action {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.build-writeback-row > small {
+  grid-column: 1 / -1;
+  color: var(--ink-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .feedback-components {
   display: grid;
   gap: 8px;
@@ -2965,6 +3035,21 @@ button.writeback-step:disabled {
   overflow-wrap: anywhere;
 }
 
+.annotation-writeback-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.annotation-writeback-timeline .writeback-step {
+  min-height: 76px;
+  padding: 8px;
+}
+
+.annotation-writeback-timeline .writeback-note {
+  grid-column: 1 / -1;
+}
+
 .annotation-effect-actions {
   display: flex;
   gap: 8px;
@@ -3899,6 +3984,8 @@ form button:active:not(:disabled) {
   .annotation-example-values,
   .annotation-effect-grid,
   .annotation-lifecycle-grid,
+  .annotation-writeback-timeline,
+  .build-writeback-row,
   .audit-metrics,
   .convergence-metrics,
   .revision-patch-grid,
@@ -3949,6 +4036,8 @@ form button:active:not(:disabled) {
 @media (max-width: 560px) {
   .automation-steps,
   .writeback-steps,
+  .annotation-writeback-timeline,
+  .build-writeback-row,
   .feedback-pressure,
   .feedback-component {
     grid-template-columns: 1fr;

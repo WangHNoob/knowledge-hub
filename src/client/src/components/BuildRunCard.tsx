@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, Square, Trash2 } from "lucide-react";
 
-import type { KnowledgeBuildRun } from "../api";
+import type { BuildRunWritebackTrace, KnowledgeBuildRun } from "../api";
 import { runStatusLabel, formatTime } from "../utils/format";
 import { Badge } from "./Atoms";
 
@@ -26,6 +26,7 @@ export function BuildRunCard({
   const traceId = typeof run.config.traceId === "string" ? run.config.traceId : "";
   const completed = new Set(run.completedStages ?? []);
   const flywheel = parseFlywheelSummary(run.config.flywheel);
+  const writebackTraces = run.writebackTraces ?? [];
   const totalStages = run.stages.length || 1;
   const doneCount = run.stages.filter((stage) => completed.has(stage)).length;
   const progress = run.status === "completed"
@@ -83,6 +84,24 @@ export function BuildRunCard({
           )}
         </p>
       )}
+      {writebackTraces.length > 0 && (
+        <div className="writeback-strip build-writeback-trace">
+          <div className="writeback-head">
+            <strong>复盘回写触发</strong>
+            <Badge label={`${writebackTraces.length} 条链路`} tone="warn" />
+          </div>
+          <div className="build-writeback-list">
+            {writebackTraces.map((trace) => (
+              <BuildWritebackTraceRow
+                key={`${trace.taskId}-${trace.runId}`}
+                trace={trace}
+                onShowReview={onShowReview}
+                onShowRelease={onShowRelease}
+              />
+            ))}
+          </div>
+        </div>
+      )}
       {flywheel && (
         <>
           <div className="flywheel-summary">
@@ -128,6 +147,39 @@ export function BuildRunCard({
       )}
       {run.error && <p className="error">{run.error}</p>}
       <small>{formatTime(run.startedAt)}{run.finishedAt ? ` → ${formatTime(run.finishedAt)}` : ""}</small>
+    </article>
+  );
+}
+
+function BuildWritebackTraceRow({
+  trace,
+  onShowReview,
+  onShowRelease,
+}: {
+  trace: BuildRunWritebackTrace;
+  onShowReview: (taskId?: string, packageId?: string) => void;
+  onShowRelease: (releaseId?: string, eventId?: string) => void;
+}) {
+  const published = trace.autoPublishStatus === "published" || trace.releaseStatus === "published";
+  const skipped = trace.autoPublishStatus === "skipped";
+  return (
+    <article className="build-writeback-row">
+      <div>
+        <Badge label={trace.taskRuleId || "annotation"} tone={trace.taskSeverity === "blocking" ? "hot" : trace.taskSeverity === "warning" ? "warn" : undefined} />
+        <strong>{trace.taskTitle || trace.taskId}</strong>
+        <code>{trace.componentId || trace.sourcePath || trace.exampleId}</code>
+      </div>
+      <div className="build-writeback-row-actions">
+        <button className="secondary-action" type="button" onClick={() => onShowReview(trace.taskId, trace.packageId)}>查看复盘</button>
+        {trace.releaseId && (
+          <button className="secondary-action" type="button" onClick={() => onShowRelease(trace.releaseId)}>查看发布</button>
+        )}
+        <Badge
+          label={published ? "已发布" : skipped ? "发布跳过" : trace.releaseId ? "revision" : trace.runStatus || "构建中"}
+          tone={published ? "ok" : skipped ? "warn" : undefined}
+        />
+      </div>
+      {skipped && trace.autoPublishReason && <small>自动发布跳过：{trace.autoPublishReason}</small>}
     </article>
   );
 }
