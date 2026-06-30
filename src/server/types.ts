@@ -315,6 +315,51 @@ export interface AgentEventComponent {
   evidenceRecords: number;
 }
 
+export type FlywheelWorkbenchView =
+  | "dashboard"
+  | "sources"
+  | "legislation"
+  | "builder"
+  | "assets"
+  | "aliases"
+  | "review"
+  | "release"
+  | "agent"
+  | "storage"
+  | "diagnostics"
+  | "maintenance";
+
+export interface FlywheelWorkbenchTarget {
+  view: FlywheelWorkbenchView;
+  params?: Record<string, string>;
+}
+
+export interface FlywheelWorkbenchAction extends FlywheelWorkbenchTarget {
+  label: string;
+}
+
+export interface FlywheelRiskItem extends FlywheelWorkbenchTarget {
+  key: string;
+  label: string;
+  tone?: "hot" | "warn" | "ok";
+  title: string;
+  body: string;
+  code: string;
+  meta: string;
+}
+
+export interface FlywheelWorkbench {
+  state: "attention" | "publish" | "clear";
+  headline: string;
+  summary: string;
+  primary: FlywheelWorkbenchAction;
+  annotationTasks: ReviewTask[];
+  retestItems: AgentEvent[];
+  publishItems: ReleaseRecord[];
+  riskItems: FlywheelRiskItem[];
+  runningRuns: KnowledgeBuildRun[];
+}
+
 export interface FlywheelEvent {
   eventId: string;
   eventType: string;

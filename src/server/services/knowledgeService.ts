@@ -18,7 +18,11 @@ import type {
   EvidenceCoverage,
   EvidenceRecord,
   FlywheelEvent,
+  FlywheelRiskItem,
+  FlywheelWorkbench,
+  FlywheelWorkbenchAction,
   McpAuditRecord,
+  KnowledgeBuildRun,
   PackageStatus,
   ReleaseRecord,
   ReviewSeverity,
@@ -93,6 +97,22 @@ export class KnowledgeService {
         ...(await this.getEvidenceCoverage())
       }
     };
+  }
+
+  async getFlywheelWorkbench(input: { runs: KnowledgeBuildRun[] }): Promise<FlywheelWorkbench> {
+    const [tasks, annotations, events, releases] = await Promise.all([
+      this.listReviewTasks({ status: "open" }),
+      this.listAnnotationExamples(),
+      this.listAgentEvents(),
+      this.listReleases(),
+    ]);
+    return createFlywheelWorkbenchModel({
+      tasks,
+      annotations,
+      events,
+      releases,
+      runs: input.runs,
+    });
   }
 
   async getSourceBundleSummary() {
@@ -1227,6 +1247,123 @@ export class KnowledgeService {
       },
     };
   }
+}
+
+function createFlywheelWorkbenchModel(input: {
+  tasks: ReviewTask[];
+  annotations: AnnotationExample[];
+  events: AgentEvent[];
+  runs: KnowledgeBuildRun[];
+  releases: ReleaseRecord[];
+}): FlywheelWorkbench {
+  const annotationTasks = input.tasks
+    .filter((task) => task.taskKind === "annotation" || task.ruleId === "annotation_example.review")
+    .slice(0, 4);
+  const retestItems = input.events
+    .filter((event) => event.feedbackType !== "hit" || event.status === "miss" || event.qualityFlags.length > 0)
+    .slice(0, 4);
+  const publishItems = input.releases
+    .filter((release) => release.status === "draft")
+    .slice(0, 4);
+  const riskItems = buildFlywheelRiskItems(input).slice(0, 4);
+  const runningRuns = input.runs.filter((run) => run.status === "running").slice(0, 4);
+
+  const primary: FlywheelWorkbenchAction = annotationTasks[0]
+    ? { label: "处理首个标注", view: "review" as const, params: { taskId: annotationTasks[0].taskId } }
+    : retestItems[0]
+      ? { label: "复测最新反馈", view: "agent" as const, params: { query: retestItems[0].query } }
+      : publishItems[0]
+        ? { label: "检查待发布版本", view: "release" as const, params: { releaseId: publishItems[0].releaseId } }
+        : runningRuns[0]
+          ? { label: "查看构建进度", view: "builder" as const, params: { runId: runningRuns[0].runId } }
+          : { label: "导入或构建知识", view: "builder" as const, params: {} };
+
+  const headline = annotationTasks.length
+    ? `先处理 ${annotationTasks.length} 个标注任务`
+    : retestItems.length
+      ? `先复测 ${retestItems.length} 条 Agent 反馈`
+      : publishItems.length
+        ? `有 ${publishItems.length} 个版本待发布`
+        : runningRuns.length
+          ? `有 ${runningRuns.length} 个构建正在运行`
+          : "当前没有阻塞项";
+  const summary = annotationTasks.length
+    ? "这些任务最能把人的判断沉淀回规则和样例池，优先处理会让飞轮更快收敛。"
+    : retestItems.length
+      ? "反馈已经进入系统，下一步应该复测原查询，确认命中、证据和可信度是否改善。"
+      : publishItems.length
+        ? "构建结果已经形成草案或修订，检查无阻断后发布给 Agent 消费。"
+        : runningRuns.length
+          ? "等待构建完成后，系统会进入发布或复测环节。"
+          : "可以从导入资料或启动构建开始；后续问题会自动进入这张工作台。";
+
+  return {
+    state: annotationTasks.length || retestItems.length || riskItems.length ? "attention" : publishItems.length ? "publish" : "clear",
+    headline,
+    summary,
+    primary,
+    annotationTasks,
+    retestItems,
+    publishItems,
+    riskItems,
+    runningRuns,
+  };
+}
+
+function buildFlywheelRiskItems(input: {
+  tasks: ReviewTask[];
+  annotations: AnnotationExample[];
+  events: AgentEvent[];
+}): FlywheelRiskItem[] {
+  const blocking = input.tasks
+    .filter((task) => task.severity === "blocking")
+    .map((task): FlywheelRiskItem => ({
+      key: `task-${task.taskId}`,
+      label: "阻断",
+      tone: "hot",
+      title: task.title,
+      body: task.suggestedAction || task.description,
+      code: task.componentId,
+      meta: "审核中心",
+      view: "review",
+      params: { taskId: task.taskId },
+    }));
+  const recurring = input.annotations
+    .filter((example) => example.effect.status === "needs_review")
+    .map((example): FlywheelRiskItem => ({
+      key: `ann-${example.exampleId}`,
+      label: "复发",
+      tone: "warn",
+      title: example.ruleId || "标注样例复盘",
+      body: example.effect.summary,
+      code: example.componentId,
+      meta: `${example.effect.openTasksAfter} 待处理`,
+      view: "legislation",
+      params: {},
+    }));
+  const negativeFeedback = input.events
+    .filter((event) => event.feedbackType !== "hit" && event.hitComponentIds.length > 0)
+    .map((event): FlywheelRiskItem => ({
+      key: `event-${event.eventId}`,
+      label: agentFeedbackLabel(event.feedbackType),
+      tone: event.status === "miss" ? "hot" : "warn",
+      title: event.query || "未解析查询",
+      body: event.suggestedAction || "Agent 反馈显示该知识需要复核。",
+      code: event.hitComponentIds[0],
+      meta: "Agent 回流",
+      view: "agent",
+      params: { query: event.query },
+    }));
+  return [...blocking, ...recurring, ...negativeFeedback];
+}
+
+function agentFeedbackLabel(type: string): string {
+  if (type === "miss") return "未命中";
+  if (type === "low_quality_hit") return "低质命中";
+  if (type === "evidence_insufficient") return "证据不足";
+  if (type === "repeated_query") return "重复查询";
+  if (type === "relation_inference_failed") return "关系失败";
+  return type || "反馈";
 }
 
 function countBy<T, K extends string>(items: T[], key: (item: T) => K): Record<K, number> {

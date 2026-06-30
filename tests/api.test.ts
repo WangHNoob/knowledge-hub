@@ -100,6 +100,21 @@ describe("knowledge hub api", () => {
     expect(body.sources.bundles).toBe(1);
     expect(body.sources.versions).toBe(0);
     expect(body.sources.latest).toBeNull();
+
+    const workbenchDenied = await app.inject({ method: "GET", url: "/api/dashboard/workbench" });
+    expect(workbenchDenied.statusCode).toBe(401);
+
+    const workbench = await app.inject({
+      method: "GET",
+      url: "/api/dashboard/workbench",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(workbench.statusCode).toBe(200);
+    expect(workbench.json().headline).toBe("当前没有阻塞项");
+    expect(workbench.json().primary.view).toBe("builder");
+    expect(workbench.json().annotationTasks).toEqual([]);
+    expect(workbench.json().retestItems).toEqual([]);
+    expect(workbench.json().publishItems).toEqual([]);
   });
 
   it("serves legislation profile read, create, and activate endpoints", async () => {

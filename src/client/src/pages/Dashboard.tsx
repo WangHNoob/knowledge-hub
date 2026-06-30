@@ -1,18 +1,13 @@
 import { ArrowRight, CircleDot, GitBranch, SearchCheck, ShieldAlert } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import {
   getDashboard,
-  listAgentEvents,
-  listAnnotationExamples,
-  listBuildRuns,
-  listReleases,
-  listReviewTasks,
+  getFlywheelWorkbench,
   type AgentEvent,
-  type AnnotationExample,
-  type KnowledgeBuildRun,
+  type FlywheelRiskItem,
+  type FlywheelWorkbenchTarget,
   type ReleaseRecord,
   type ReviewTask
 } from "../api";
@@ -25,25 +20,15 @@ import { formatCounts, formatPercent, formatTime } from "../utils/format";
 export function Dashboard() {
   const { navigate } = useNav();
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: getDashboard });
-  const reviewTasks = useQuery({ queryKey: ["review", "open", "workbench"], queryFn: () => listReviewTasks(undefined, "open") });
-  const annotations = useQuery({ queryKey: ["annotation-examples", "workbench"], queryFn: listAnnotationExamples });
-  const agentEvents = useQuery({ queryKey: ["agent-events", "workbench"], queryFn: listAgentEvents });
-  const runs = useQuery({ queryKey: ["build-runs", "workbench"], queryFn: listBuildRuns });
-  const releases = useQuery({ queryKey: ["releases", "workbench"], queryFn: listReleases });
+  const workbenchQuery = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench });
 
-  const isLoading = dashboard.isLoading || reviewTasks.isLoading || annotations.isLoading || agentEvents.isLoading || runs.isLoading || releases.isLoading;
-  const error = dashboard.error ?? reviewTasks.error ?? annotations.error ?? agentEvents.error ?? runs.error ?? releases.error;
+  const isLoading = dashboard.isLoading || workbenchQuery.isLoading;
+  const error = dashboard.error ?? workbenchQuery.error;
   const data = dashboard.data;
-  const workbench = useMemo(() => createWorkbenchModel({
-    tasks: reviewTasks.data ?? [],
-    annotations: annotations.data ?? [],
-    events: agentEvents.data ?? [],
-    runs: runs.data ?? [],
-    releases: releases.data ?? []
-  }), [agentEvents.data, annotations.data, releases.data, reviewTasks.data, runs.data]);
+  const workbench = workbenchQuery.data;
 
   if (isLoading) return <Loading title="正在整理飞轮工作台" />;
-  if (error || !data) return <ErrorState error={error} />;
+  if (error || !data || !workbench) return <ErrorState error={error} />;
 
   return (
     <Page title="飞轮工作台" subtitle="把 Agent 反馈、标注、重建、发布收敛成可直接处理的任务队列。">
@@ -53,7 +38,7 @@ export function Dashboard() {
           <h2>{workbench.headline}</h2>
           <p>{workbench.summary}</p>
         </div>
-        <button className="primary-action" type="button" onClick={() => navigate(workbench.primary.view, workbench.primary.params)}>
+        <button className="primary-action" type="button" onClick={() => navigateTarget(navigate, workbench.primary)}>
           {workbench.primary.label}
           <ArrowRight size={16} />
         </button>
@@ -108,7 +93,7 @@ export function Dashboard() {
           caption="低可信、缺证据、负反馈复发会进入这里。"
         >
           {workbench.riskItems.map((item) => (
-            <RiskCard key={item.key} item={item} onOpen={() => navigate(item.view, item.params)} />
+            <RiskCard key={item.key} item={item} onOpen={() => navigateTarget(navigate, item)} />
           ))}
         </WorkbenchLane>
       </section>
@@ -209,7 +194,7 @@ function ReleaseCard({ release, onOpen }: { release: ReleaseRecord; onOpen: () =
   );
 }
 
-function RiskCard({ item, onOpen }: { item: RiskItem; onOpen: () => void }) {
+function RiskCard({ item, onOpen }: { item: FlywheelRiskItem; onOpen: () => void }) {
   return (
     <article className="workbench-card risk">
       <div className="card-row">
@@ -224,130 +209,13 @@ function RiskCard({ item, onOpen }: { item: RiskItem; onOpen: () => void }) {
   );
 }
 
-type NavTarget = { view: View; params?: NavParams };
-
-interface RiskItem {
-  key: string;
-  label: string;
-  tone: "hot" | "warn" | "ok" | undefined;
-  title: string;
-  body: string;
-  code: string;
-  meta: string;
-  view: NavTarget["view"];
-  params: NavTarget["params"];
-}
-
-function createWorkbenchModel(input: {
-  tasks: ReviewTask[];
-  annotations: AnnotationExample[];
-  events: AgentEvent[];
-  runs: KnowledgeBuildRun[];
-  releases: ReleaseRecord[];
-}) {
-  const annotationTasks = input.tasks
-    .filter((task) => task.taskKind === "annotation" || task.ruleId === "annotation_example.review")
-    .slice(0, 4);
-  const retestItems = input.events
-    .filter((event) => event.feedbackType !== "hit" || event.status === "miss" || event.qualityFlags.length > 0)
-    .slice(0, 4);
-  const publishItems = input.releases
-    .filter((release) => release.status === "draft")
-    .slice(0, 4);
-  const riskItems = buildRiskItems(input).slice(0, 4);
-  const running = input.runs.filter((run) => run.status === "running");
-
-  const primary = annotationTasks[0]
-    ? { label: "处理首个标注", view: "review" as const, params: { taskId: annotationTasks[0].taskId } }
-    : retestItems[0]
-      ? { label: "复测最新反馈", view: "agent" as const, params: { query: retestItems[0].query } }
-      : publishItems[0]
-        ? { label: "检查待发布版本", view: "release" as const, params: { releaseId: publishItems[0].releaseId } }
-        : running[0]
-          ? { label: "查看构建进度", view: "builder" as const, params: { runId: running[0].runId } }
-          : { label: "导入或构建知识", view: "builder" as const, params: {} };
-
-  const headline = annotationTasks.length
-    ? `先处理 ${annotationTasks.length} 个标注任务`
-    : retestItems.length
-      ? `先复测 ${retestItems.length} 条 Agent 反馈`
-      : publishItems.length
-        ? `有 ${publishItems.length} 个版本待发布`
-        : running.length
-          ? `有 ${running.length} 个构建正在运行`
-          : "当前没有阻塞项";
-  const summary = annotationTasks.length
-    ? "这些任务最能把人的判断沉淀回规则和样例池，优先处理会让飞轮更快收敛。"
-    : retestItems.length
-      ? "反馈已经进入系统，下一步应该复测原查询，确认命中、证据和可信度是否改善。"
-      : publishItems.length
-        ? "构建结果已经形成草案或修订，检查无阻断后发布给 Agent 消费。"
-        : running.length
-          ? "等待构建完成后，系统会进入发布或复测环节。"
-          : "可以从导入资料或启动构建开始；后续问题会自动进入这张工作台。";
-
-  return {
-    state: annotationTasks.length || retestItems.length || riskItems.length ? "attention" : publishItems.length ? "publish" : "clear",
-    headline,
-    summary,
-    primary,
-    annotationTasks,
-    retestItems,
-    publishItems,
-    riskItems
-  };
-}
-
-function buildRiskItems(input: {
-  tasks: ReviewTask[];
-  annotations: AnnotationExample[];
-  events: AgentEvent[];
-}): RiskItem[] {
-  const blocking = input.tasks
-    .filter((task) => task.severity === "blocking")
-    .map((task): RiskItem => ({
-      key: `task-${task.taskId}`,
-      label: "阻断",
-      tone: "hot",
-      title: task.title,
-      body: task.suggestedAction || task.description,
-      code: task.componentId,
-      meta: "审核中心",
-      view: "review",
-      params: { taskId: task.taskId }
-    }));
-  const recurring = input.annotations
-    .filter((example) => example.effect.status === "needs_review")
-    .map((example): RiskItem => ({
-      key: `ann-${example.exampleId}`,
-      label: "复发",
-      tone: "warn",
-      title: example.ruleId || "标注样例复盘",
-      body: example.effect.summary,
-      code: example.componentId,
-      meta: `${example.effect.openTasksAfter} 待处理`,
-      view: "legislation",
-      params: {}
-    }));
-  const negativeFeedback = input.events
-    .filter((event) => event.feedbackType !== "hit" && event.hitComponentIds.length > 0)
-    .map((event): RiskItem => ({
-      key: `event-${event.eventId}`,
-      label: agentFeedbackLabel(event.feedbackType),
-      tone: event.status === "miss" ? "hot" : "warn",
-      title: event.query || "未解析查询",
-      body: event.suggestedAction || "Agent 反馈显示该知识需要复核。",
-      code: event.hitComponentIds[0],
-      meta: "Agent 回流",
-      view: "agent",
-      params: { query: event.query }
-    }));
-  return [...blocking, ...recurring, ...negativeFeedback];
-}
-
 function confidenceLabel(confidence: number): string {
   if (!confidence) return "未评分";
   return `confidence ${Math.round(confidence * 100)}%`;
+}
+
+function navigateTarget(navigate: (view: View, params?: NavParams) => void, target: FlywheelWorkbenchTarget) {
+  navigate(target.view as View, target.params as NavParams | undefined);
 }
 
 function agentFeedbackLabel(type: string): string {

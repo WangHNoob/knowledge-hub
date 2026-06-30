@@ -1,7 +1,7 @@
 export * from "./types";
 export { getToken, setToken } from "./http";
 export { login } from "./auth";
-export { getDashboard } from "./dashboard";
+export { getDashboard, getFlywheelWorkbench } from "./dashboard";
 export {
   browseLocalFiles,
   getBundleVersion,
