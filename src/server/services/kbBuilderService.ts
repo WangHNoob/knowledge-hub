@@ -60,6 +60,10 @@ interface FlywheelBuildSummary {
     pageType: string;
     createdBy: string;
     createdAt: string;
+    sourcePath: string;
+    componentRef: string;
+    valuePreview: string;
+    influence: string;
   }>;
   activeRuleDismissals: number;
   appliedRuleDismissals: number;
@@ -963,12 +967,57 @@ function buildFlywheelSummary(
       pageType: example.pageType,
       createdBy: example.createdBy ?? "",
       createdAt: example.createdAt ?? "",
+      sourcePath: annotationExampleSourcePath(example),
+      componentRef: annotationExampleComponentRef(example),
+      valuePreview: compactJson(example.correctValue),
+      influence: annotationExampleInfluence(example),
     })),
     activeRuleDismissals: ruleDismissals.length,
     appliedRuleDismissals: quality.dismissedRules?.length ?? 0,
     newAnnotationTasks: quality.findings.length,
     dismissedRules: quality.dismissedRules ?? [],
   };
+}
+
+function annotationExampleSourcePath(example: PromptAnnotationExample): string {
+  return stringValue(example.contextSnapshot.sourceFile)
+    || stringValue(example.contextSnapshot.sourcePath)
+    || stringValue(example.contextSnapshot.componentRef)
+    || stringValue(example.contextSnapshot.artifactLegacyPath);
+}
+
+function annotationExampleComponentRef(example: PromptAnnotationExample): string {
+  return stringValue(example.contextSnapshot.componentRef)
+    || stringValue(example.contextSnapshot.artifactLegacyPath)
+    || example.componentId
+    || "";
+}
+
+function annotationExampleInfluence(example: PromptAnnotationExample): string {
+  const mode = example.applyMode === "override" ? "确定性覆盖" : "提示样例";
+  const action = overrideActionLabel(example.correctValue);
+  return action ? `${mode} · ${action}` : mode;
+}
+
+function overrideActionLabel(value: Record<string, unknown>): string {
+  const raw = jsonValue<Record<string, unknown>>(value.override, value);
+  if (typeof raw.setType === "string") return `设置类型 ${raw.setType}`;
+  if (typeof raw.setTitle === "string") return "设置标题";
+  if (raw.setFacts && typeof raw.setFacts === "object") return `补 facts ${Object.keys(raw.setFacts).join(", ")}`;
+  if (Array.isArray(raw.removeFacts)) return `移除 facts ${raw.removeFacts.join(", ")}`;
+  if (raw.replaceSection && typeof raw.replaceSection === "object") return "替换章节";
+  if (typeof raw.replaceBody === "string") return "替换正文";
+  if (typeof raw.value === "string") return "补字段值";
+  return "";
+}
+
+function compactJson(value: unknown): string {
+  const text = JSON.stringify(value ?? {});
+  return text.length > 220 ? `${text.slice(0, 217)}...` : text;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function scopedOnlyFilter(sourceRefs: string[], legacyPath: string): string | null {

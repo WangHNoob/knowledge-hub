@@ -87,19 +87,33 @@ export function BuildRunCard({
         <>
           <div className="flywheel-summary">
             <span><strong>{flywheel.annotationExamplesInjected}</strong> 标注样例</span>
+            <span><strong>{flywheel.annotationOverridesInjected}</strong> 覆盖规则</span>
             <span><strong>{flywheel.activeRuleDismissals}</strong> 条豁免</span>
             <span><strong>{flywheel.appliedRuleDismissals}</strong> 次命中</span>
             <span><strong>{flywheel.newAnnotationTasks}</strong> 个新任务</span>
           </div>
           {flywheel.annotationExampleRefs.length > 0 && (
-            <div className="flywheel-examples">
-              {flywheel.annotationExampleRefs.slice(0, 3).map((example) => (
-                <span key={example.exampleId || `${example.componentId}-${example.ruleId}`}>
-                  <strong>{example.ruleId || "annotation"}</strong>
-                  <code>{example.componentId || example.exampleId}</code>
-                </span>
-              ))}
-              {flywheel.annotationExampleRefs.length > 3 && <small>+{flywheel.annotationExampleRefs.length - 3}</small>}
+            <div className="flywheel-explain">
+              <div className="flywheel-explain-head">
+                <strong>标注样例命中解释</strong>
+                <small>本次构建注入了这些人工标注；override 会在 extract 阶段确定性覆盖对应 wiki。</small>
+              </div>
+              <div className="flywheel-examples">
+                {flywheel.annotationExampleRefs.map((example) => (
+                  <article key={example.exampleId || `${example.componentId}-${example.ruleId}`} className={example.applyMode === "override" ? "override" : ""}>
+                    <div>
+                      <Badge label={example.applyMode} tone={example.applyMode === "override" ? "warn" : undefined} />
+                      <strong>{example.ruleId || "annotation"}</strong>
+                    </div>
+                    <code title={example.sourcePath || example.componentRef || example.componentId || example.exampleId}>
+                      {example.sourcePath || example.componentRef || example.componentId || example.exampleId}
+                    </code>
+                    <span>{example.influence || (example.applyMode === "override" ? "确定性覆盖" : "提示样例")}</span>
+                    {example.valuePreview && <small title={example.valuePreview}>{example.valuePreview}</small>}
+                    <em>{example.createdBy || "unknown"}{example.createdAt ? ` · ${formatTime(example.createdAt)}` : ""}</em>
+                  </article>
+                ))}
+              </div>
             </div>
           )}
         </>
@@ -194,7 +208,8 @@ function releaseReasonLabel(reason: string): string {
 
 function parseFlywheelSummary(value: unknown): {
   annotationExamplesInjected: number;
-  annotationExampleRefs: Array<{ exampleId: string; componentId: string; ruleId: string }>;
+  annotationOverridesInjected: number;
+  annotationExampleRefs: AnnotationExampleRef[];
   activeRuleDismissals: number;
   appliedRuleDismissals: number;
   newAnnotationTasks: number;
@@ -203,6 +218,7 @@ function parseFlywheelSummary(value: unknown): {
   const data = value as Record<string, unknown>;
   return {
     annotationExamplesInjected: numberValue(data.annotationExamplesInjected),
+    annotationOverridesInjected: numberValue(data.annotationOverridesInjected),
     annotationExampleRefs: exampleRefs(data.annotationExampleRefs),
     activeRuleDismissals: numberValue(data.activeRuleDismissals),
     appliedRuleDismissals: numberValue(data.appliedRuleDismissals),
@@ -224,7 +240,22 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function exampleRefs(value: unknown): Array<{ exampleId: string; componentId: string; ruleId: string }> {
+interface AnnotationExampleRef {
+  exampleId: string;
+  componentId: string;
+  taskId: string;
+  ruleId: string;
+  applyMode: "hint" | "override";
+  pageType: string;
+  createdBy: string;
+  createdAt: string;
+  sourcePath: string;
+  componentRef: string;
+  valuePreview: string;
+  influence: string;
+}
+
+function exampleRefs(value: unknown): AnnotationExampleRef[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
@@ -232,7 +263,16 @@ function exampleRefs(value: unknown): Array<{ exampleId: string; componentId: st
     return [{
       exampleId: typeof data.exampleId === "string" ? data.exampleId : "",
       componentId: typeof data.componentId === "string" ? data.componentId : "",
+      taskId: typeof data.taskId === "string" ? data.taskId : "",
       ruleId: typeof data.ruleId === "string" ? data.ruleId : "",
+      applyMode: data.applyMode === "override" ? "override" : "hint",
+      pageType: typeof data.pageType === "string" ? data.pageType : "",
+      createdBy: typeof data.createdBy === "string" ? data.createdBy : "",
+      createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
+      sourcePath: typeof data.sourcePath === "string" ? data.sourcePath : "",
+      componentRef: typeof data.componentRef === "string" ? data.componentRef : "",
+      valuePreview: typeof data.valuePreview === "string" ? data.valuePreview : "",
+      influence: typeof data.influence === "string" ? data.influence : "",
     }];
   });
 }

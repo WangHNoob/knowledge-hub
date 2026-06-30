@@ -1894,31 +1894,93 @@ button.writeback-step:disabled {
   line-height: 1;
 }
 
-.flywheel-examples {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.flywheel-examples span,
-.flywheel-examples small {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
+.flywheel-explain {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--surface-sunken);
+}
+
+.flywheel-explain-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.flywheel-explain-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.flywheel-explain-head small {
   color: var(--ink-muted);
-  padding: 4px 7px;
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.flywheel-examples {
+  display: grid;
+  gap: 8px;
+}
+
+.flywheel-examples article {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(160px, 1fr) minmax(120px, 0.8fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 8px;
+}
+
+.flywheel-examples article.override {
+  border-color: color-mix(in srgb, var(--gold) 38%, var(--line));
+}
+
+.flywheel-examples article > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .flywheel-examples strong,
-.flywheel-examples code {
+.flywheel-examples code,
+.flywheel-examples span,
+.flywheel-examples small,
+.flywheel-examples em {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+}
+
+.flywheel-examples code {
+  color: var(--ink);
+}
+
+.flywheel-examples span,
+.flywheel-examples small,
+.flywheel-examples em {
+  color: var(--ink-muted);
+}
+
+.flywheel-examples small,
+.flywheel-examples em {
+  grid-column: 1 / -1;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.flywheel-examples em {
+  font-style: normal;
+  color: var(--ink-faint);
+  font-size: 11px;
 }
 
 .build-release-status {
@@ -3630,6 +3692,10 @@ form button:active:not(:disabled) {
   }
 
   .writeback-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .flywheel-examples article {
     grid-template-columns: 1fr;
   }
 

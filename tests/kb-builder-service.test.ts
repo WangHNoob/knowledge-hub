@@ -114,6 +114,8 @@ describe("KbBuilderPipelineService", () => {
             ruleId: "wiki.required_fact",
             pageType: "system",
             createdBy: "admin",
+            valuePreview: "{\"field\":\"config_table\",\"value\":\"Combat/Skill\"}",
+            influence: "提示样例 · 补字段值",
           }
         ]
       });
