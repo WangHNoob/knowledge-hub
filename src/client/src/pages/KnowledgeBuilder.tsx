@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   buildKnowledgePackage,
   deleteBuildRun,
+  getFlywheelWorkbench,
   listBuildRuns,
   listBundleVersions,
   listFlywheelEvents,
@@ -13,6 +14,7 @@ import {
   testModelConnectivity,
   type BuildModelConfig,
   type FlywheelEvent,
+  type FlywheelWorkbench,
   type KnowledgeBuildRun,
   type ReviewTask
 } from "../api";
@@ -61,6 +63,11 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     queryKey: ["agent", "flywheel-events"],
     queryFn: listFlywheelEvents,
     refetchInterval: 3000
+  });
+  const workbench = useQuery({
+    queryKey: ["dashboard", "workbench"],
+    queryFn: getFlywheelWorkbench,
+    refetchInterval: 5000
   });
   const blockingTasks = useQuery({
     queryKey: ["review", "blocking"],
@@ -238,6 +245,14 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       )}
 
       <Tabs items={tabs} active={tab} onChange={setTab} />
+      {workbench.data && (
+        <BuilderWorkbenchContext
+          workbench={workbench.data}
+          onOpenReview={(taskId) => navigate("review", taskId ? { taskId } : {})}
+          onOpenAgent={(query) => navigate("agent", { query })}
+          onOpenRelease={(releaseId) => navigate("release", releaseId ? { releaseId } : {})}
+        />
+      )}
 
       <div className="tab-panel" key={tab}>
         {tab === "build" && (
@@ -405,6 +420,37 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
         )}
       </div>
     </Page>
+  );
+}
+
+function BuilderWorkbenchContext({
+  workbench,
+  onOpenReview,
+  onOpenAgent,
+  onOpenRelease,
+}: {
+  workbench: FlywheelWorkbench;
+  onOpenReview: (taskId?: string) => void;
+  onOpenAgent: (query: string) => void;
+  onOpenRelease: (releaseId?: string) => void;
+}) {
+  const annotation = workbench.annotationTasks[0];
+  const retest = workbench.retestItems[0];
+  const release = workbench.publishItems[0];
+  if (!annotation && !retest && !release && workbench.runningRuns.length === 0) return null;
+  return (
+    <section className="builder-workbench-context">
+      <div>
+        <span className="command-kicker">构建后的下一步</span>
+        <strong>{workbench.headline}</strong>
+        <p>{workbench.summary}</p>
+      </div>
+      <div className="task-primary-actions">
+        {annotation && <button className="secondary-action" type="button" onClick={() => onOpenReview(annotation.taskId)}>处理标注</button>}
+        {!annotation && retest && <button className="secondary-action" type="button" onClick={() => onOpenAgent(retest.query)}>复测反馈</button>}
+        {!annotation && !retest && release && <button className="secondary-action" type="button" onClick={() => onOpenRelease(release.releaseId)}>检查发布</button>}
+      </div>
+    </section>
   );
 }
 
