@@ -329,7 +329,7 @@ export function AgentFeedback() {
             {envelope && (
               <div className="envelope-view">
                 <div className="metrics compact">
-                  <Metric label="Release" value={envelope.release.version} hint={envelope.release.releaseId} />
+                  <Metric label="Release" value={envelope.release?.version ?? "未关联发布"} hint={envelope.release?.releaseId ?? "no release"} />
                   <Metric label="组件命中" value={envelope.trace.componentIds.length} hint={envelope.trace.componentIds.join(", ") || "none"} />
                   <Metric
                     label="平均可信度"

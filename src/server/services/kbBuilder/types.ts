@@ -20,6 +20,11 @@ export interface BuildPipelineOptions {
   qualityProfileId: string;
   traceId?: string;
   rebuildTaskId?: string;
+  /**
+   * Internal writeback mode: scoped annotation rebuilds merge changed artifacts back
+   * into the owning package instead of creating a partial package.
+   */
+  mergeIntoPackageId?: string;
   /** Explicit maintenance mode: may write LLM-drafted aliases into the persistent translation table. Off by default. */
   generateAliases?: boolean;
 }

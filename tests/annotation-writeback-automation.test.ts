@@ -42,6 +42,12 @@ describe("annotation writeback automation", () => {
          VALUES ('cmp_ann_writeback','pkg_ann_writeback','wiki/systems/battle.md','wiki','wiki_page','Battle','draft','wiki/systems/battle.md','data/wiki/systems/battle.md',$1,'{}')`,
         [JSON.stringify(["gamedocs/battle.md"])],
       );
+      await db.adapter.query(
+        `INSERT INTO asset_components
+          (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+         VALUES ('cmp_ann_other','pkg_ann_writeback','wiki/activities/arena.md','wiki','wiki_page','Arena','draft','wiki/activities/arena.md','data/wiki/activities/arena.md',$1,'{}')`,
+        [JSON.stringify(["gamedocs/arena.md"])],
+      );
 
       const event = await emitKnowledgeEvent(db, {
         eventType: "annotation.writeback_requested",
@@ -60,8 +66,17 @@ describe("annotation writeback automation", () => {
         only: "gamedocs/battle.md",
         rebuildTaskId: "task_ann_writeback",
         requestedBy: "admin",
+        mergeIntoPackageId: "pkg_ann_writeback",
       });
+      await waitForRunFinished(builder, run.runId);
+      const completedRun = await builder.getRun(run.runId);
+      expect(completedRun?.status).toBe("completed");
+      expect(completedRun?.packageId).toBe("pkg_ann_writeback");
       expect(run.model).toBe("deterministic");
+
+      const detail = await createKnowledgeService(db).getPackageDetail("pkg_ann_writeback");
+      expect(detail.components.some((component) => component.componentId === "cmp_ann_other")).toBe(true);
+      expect(detail.components.some((component) => component.legacyPath.startsWith("wiki/activities/"))).toBe(true);
 
       const duplicate = await builder.startScopedRebuildForComponent({
         componentId: "cmp_ann_writeback",
@@ -82,6 +97,7 @@ describe("annotation writeback automation", () => {
         runId: run.runId,
         only: "gamedocs/battle.md",
         sourcePath: "gamedocs/battle.md",
+        runPackageId: "pkg_ann_writeback",
       });
       expect(["running", "completed"]).toContain(task?.writeback?.runStatus);
     } finally {
@@ -116,4 +132,17 @@ async function waitForWritebackStartedEvent(
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Timed out waiting for annotation writeback rebuild ${taskId}`);
+}
+
+async function waitForRunFinished(
+  builder: ReturnType<typeof createKbBuilderPipelineService>,
+  runId: string,
+): Promise<KnowledgeBuildRun> {
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    const run = await builder.getRun(runId);
+    if (run && run.status !== "running") return run;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for build run ${runId}`);
 }

@@ -82,6 +82,7 @@ type SourceBundleService = ReturnType<typeof createSourceBundleService>;
 
 interface ScopedRebuildTarget {
   componentId: string;
+  packageId: string;
   sourceRefs: string[];
   legacyPath: string;
   sourceVersionIds: string[];
@@ -165,6 +166,7 @@ export class KbBuilderPipelineService {
         requestedBy: options.requestedBy,
         traceId: options.traceId,
         rebuildTaskId: options.rebuildTaskId,
+        mergeIntoPackageId: options.mergeIntoPackageId,
         modelConfig: redactModelConfig(modelConfig),
         incremental: incrementalConfig(version.parentVersionId, sourceChanges),
         ruleProfile: {
@@ -267,11 +269,17 @@ export class KbBuilderPipelineService {
       });
       const flywheelSummary = buildFlywheelSummary(annotationExamples, ruleDismissals, quality);
 
-      const packageId = `pkg_${runId}`;
+      const packageId = options.mergeIntoPackageId || `pkg_${runId}`;
       const artifacts = await this.withStage(runId, options, "collect", async () => collectPipelineArtifacts(workspace.dataDir, workspace.workspaceDir, quality.componentQuality));
       const pkg = await this.withStage(runId, options, "persist", async () => {
-        const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality, ruleProfile, flywheelSummary);
-        flywheelSummary.newAnnotationTasks = await this.insertReviewTasks(packageId, artifacts, quality.findings, workspace.dataDir, modelConfig);
+        const sourceRefs = workspace.files.map((file) => file.logicalPath);
+        const persistedArtifacts = options.mergeIntoPackageId
+          ? selectScopedArtifacts(artifacts, sourceRefs, options.only)
+          : artifacts;
+        const inserted = options.mergeIntoPackageId
+          ? await this.upsertScopedPackageArtifacts(packageId, runId, options.versionId, sourceRefs, persistedArtifacts, quality, ruleProfile, flywheelSummary)
+          : await this.insertPackageAndArtifacts(packageId, runId, options.versionId, sourceRefs, artifacts, quality, ruleProfile, flywheelSummary);
+        flywheelSummary.newAnnotationTasks = await this.insertReviewTasks(packageId, persistedArtifacts, quality.findings, workspace.dataDir, modelConfig);
         await this.updateRunFlywheelSummary(runId, flywheelSummary);
         return inserted;
       });
@@ -521,6 +529,7 @@ export class KbBuilderPipelineService {
       qualityProfileId: "default",
       traceId: input.traceId,
       rebuildTaskId: input.rebuildTaskId,
+      mergeIntoPackageId: target.packageId,
       generateAliases: false,
     });
     return run;
@@ -530,6 +539,7 @@ export class KbBuilderPipelineService {
     const { rows } = await this.adapter.query(
       `SELECT
          c.component_id,
+         c.package_id,
          c.source_refs,
          c.legacy_path,
          p.source_version_ids
@@ -542,6 +552,7 @@ export class KbBuilderPipelineService {
     const row = rows[0];
     return {
       componentId: String(row.component_id),
+      packageId: String(row.package_id),
       sourceRefs: jsonValue<string[]>(row.source_refs, []),
       legacyPath: String(row.legacy_path ?? ""),
       sourceVersionIds: jsonValue<string[]>(row.source_version_ids, []),
@@ -816,6 +827,111 @@ export class KbBuilderPipelineService {
     }
   }
 
+  private async upsertScopedPackageArtifacts(
+    packageId: string,
+    runId: string,
+    versionId: string,
+    sourceRefs: string[],
+    artifacts: CollectedArtifact[],
+    quality: QualityGateResult,
+    ruleProfile: KnowledgeRuleProfile,
+    flywheelSummary: FlywheelBuildSummary,
+  ): Promise<AssetPackage> {
+    const now = new Date().toISOString();
+    const pkg = await this.requirePackage(packageId);
+    const qualitySummary = {
+      ...pkg.qualitySummary,
+      lastScopedRebuild: {
+        runId,
+        versionId,
+        sourceRefs,
+        updatedArtifacts: artifacts.map((artifact) => artifact.legacyPath),
+        overallScore: quality.overallScore,
+        blockingCount: quality.blockingCount,
+        warningCount: quality.warningCount,
+        updatedAt: now,
+      },
+      legislationProfile: {
+        profileId: ruleProfile.profileId,
+        hash: ruleProfile.hash,
+      },
+      flywheel: flywheelSummary,
+    };
+
+    await this.adapter.query("BEGIN");
+    try {
+      await this.adapter.query(
+        `UPDATE asset_packages
+         SET quality_summary = $2
+         WHERE package_id = $1`,
+        [packageId, JSON.stringify(qualitySummary)],
+      );
+
+      const componentRows: Array<{ componentId: string; artifact: CollectedArtifact; sourceRefs: string[] }> = [];
+      for (const artifact of artifacts) {
+        const componentId = componentIdFor(packageId, artifact.legacyPath);
+        const componentSourceRefs = artifact.sourceRefs.length ? artifact.sourceRefs : sourceRefs;
+        const componentQuality: Record<string, unknown> = {
+          ...artifact.quality,
+          legislationProfile: {
+            profileId: ruleProfile.profileId,
+            hash: ruleProfile.hash,
+          },
+          lastScopedRebuild: {
+            runId,
+            updatedAt: now,
+          },
+        };
+        componentQuality.trust = computeTrustScore({
+          component: {
+            artifactId: artifact.artifactId,
+            kind: artifact.kind,
+            legacyPath: artifact.legacyPath,
+            quality: componentQuality,
+            sourceRefs: componentSourceRefs,
+          },
+          now,
+        });
+        await this.adapter.query(
+          `INSERT INTO asset_components
+            (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           ON CONFLICT (component_id) DO UPDATE SET
+             artifact_id = EXCLUDED.artifact_id,
+             group_name = EXCLUDED.group_name,
+             kind = EXCLUDED.kind,
+             title = EXCLUDED.title,
+             status = EXCLUDED.status,
+             legacy_path = EXCLUDED.legacy_path,
+             storage_uri = EXCLUDED.storage_uri,
+             source_refs = EXCLUDED.source_refs,
+             quality = EXCLUDED.quality`,
+          [
+            componentId,
+            packageId,
+            artifact.artifactId,
+            artifact.group,
+            artifact.kind,
+            artifact.title,
+            "draft",
+            artifact.legacyPath,
+            artifact.storageUri,
+            JSON.stringify(componentSourceRefs),
+            JSON.stringify(componentQuality),
+          ],
+        );
+        componentRows.push({ componentId, artifact, sourceRefs: componentSourceRefs });
+      }
+      await this.insertAutomaticEvidence(packageId, versionId, componentRows, now);
+      await this.adapter.query("COMMIT");
+    } catch (error) {
+      await this.adapter.query("ROLLBACK");
+      throw error;
+    }
+
+    return this.requirePackage(packageId);
+  }
+
   private async insertReviewTasks(
     packageId: string,
     artifacts: CollectedArtifact[],
@@ -1014,6 +1130,17 @@ function mergeQualityRules(profile: QualityGateConfig, rules: KnowledgeRuleConfi
       ...rules.qualityRules,
     },
   };
+}
+
+function selectScopedArtifacts(artifacts: CollectedArtifact[], sourceRefs: string[], only: string | null): CollectedArtifact[] {
+  const refs = new Set([...sourceRefs, only ?? ""].map((value) => value.trim()).filter(Boolean));
+  const onlyBase = only ? only.split(/[\\/]/u).pop()?.replace(/\.[^.]+$/u, "").toLowerCase() ?? "" : "";
+  return artifacts.filter((artifact) => {
+    if (!["wiki_page", "processed_doc", "extract_meta"].includes(artifact.kind)) return false;
+    if (artifact.sourceRefs.some((ref) => refs.has(ref))) return true;
+    if (onlyBase && artifact.legacyPath.toLowerCase().includes(onlyBase)) return true;
+    return false;
+  });
 }
 
 function componentIdFor(packageId: string, legacyPath: string): string {
