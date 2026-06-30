@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { getFlywheelConvergenceSummary, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type KnowledgeEnvelope } from "../api";
+import { getFlywheelConvergenceSummary, getFlywheelWorkbench, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { componentLabel } from "../utils/componentLabel";
 import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
@@ -156,6 +156,7 @@ export function AgentFeedback() {
   const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
   const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const convergence = useQuery({ queryKey: ["agent-flywheel-convergence"], queryFn: getFlywheelConvergenceSummary, refetchInterval: 5000 });
+  const workbench = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench, refetchInterval: 5000 });
   const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({
@@ -166,6 +167,7 @@ export function AgentFeedback() {
         queryClient.invalidateQueries({ queryKey: ["agent-events"] }),
         queryClient.invalidateQueries({ queryKey: ["agent-flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["agent-flywheel-convergence"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
         queryClient.invalidateQueries({ queryKey: ["mcp-audit"] }),
         queryClient.invalidateQueries({ queryKey: ["review"] })
       ]);
@@ -189,9 +191,10 @@ export function AgentFeedback() {
   const eventRows = events.data ?? [];
   const pressureRows = useMemo(() => buildFeedbackPressure(eventRows), [eventRows]);
   const automationRows = useMemo(() => buildAutomationChains(flywheelEvents.data ?? []), [flywheelEvents.data]);
+  const workbenchRetestIds = useMemo(() => new Set((workbench.data?.retestItems ?? []).map((event) => event.eventId)), [workbench.data?.retestItems]);
   const rebuildCandidates = pressureRows.filter((row) => row.negativeCount >= 2).length;
-  if (events.isLoading || flywheelEvents.isLoading || convergence.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
-  if (events.error || flywheelEvents.error || convergence.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? convergence.error ?? audit.error ?? outputAudits.error} />;
+  if (events.isLoading || flywheelEvents.isLoading || convergence.isLoading || workbench.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
+  if (events.error || flywheelEvents.error || convergence.error || workbench.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? convergence.error ?? workbench.error ?? audit.error ?? outputAudits.error} />;
   const auditRows = audit.data ?? [];
   const missCount = eventRows.filter((event) => event.status === "miss").length;
   const flaggedCount = eventRows.filter((event) => event.qualityFlags.length > 0).length;
@@ -397,6 +400,21 @@ export function AgentFeedback() {
         {tab === "feedback" && (
           <section className="mcp-panel">
             <h2>反馈回流</h2>
+            {workbench.data && (
+              <FeedbackWorkbenchPanel
+                retestItems={workbench.data.retestItems}
+                riskItems={workbench.data.riskItems}
+                onRetest={retest}
+                onNavigateReview={(taskId) => navigate("review", taskId ? { taskId } : {})}
+                onNavigateAgent={(query) => {
+                  setTab("simulate");
+                  setToolName("kb_search");
+                  setForm({ query, topic: query });
+                  setWhereRows([]);
+                  setEnvelope(null);
+                }}
+              />
+            )}
             {convergence.data && <ConvergencePanel summary={convergence.data} />}
             <AutomationTimeline
               rows={automationRows}
@@ -424,8 +442,9 @@ export function AgentFeedback() {
                 <AgentFeedbackCard
                   key={event.eventId}
                   event={event}
+                  queued={workbenchRetestIds.has(event.eventId)}
                   onRetest={retest}
-                  onNavigateReview={() => navigate("review")}
+                  onNavigateReview={(taskId) => navigate("review", taskId ? { taskId } : {})}
                   onNavigateAsset={(componentId) => navigate("assets", { componentId })}
                 />
               ))}
@@ -672,6 +691,60 @@ function AutomationTimeline({
   );
 }
 
+function FeedbackWorkbenchPanel({
+  retestItems,
+  riskItems,
+  onRetest,
+  onNavigateReview,
+  onNavigateAgent,
+}: {
+  retestItems: AgentEvent[];
+  riskItems: FlywheelRiskItem[];
+  onRetest: (insight: FeedbackInsight) => void;
+  onNavigateReview: (taskId?: string) => void;
+  onNavigateAgent: (query: string) => void;
+}) {
+  const agentRisks = riskItems.filter((item) => item.view === "agent").slice(0, 3);
+  if (retestItems.length === 0 && agentRisks.length === 0) return null;
+  return (
+    <div className="feedback-workbench">
+      <div className="detail-head">
+        <div>
+          <h3>工作台待处理</h3>
+          <p>这些反馈已经被飞轮工作台判定为下一批优先复测或复核对象。</p>
+        </div>
+        <Badge label={`${retestItems.length} 待复测`} tone={retestItems.length ? "warn" : "ok"} />
+      </div>
+      <div className="feedback-workbench-grid">
+        {retestItems.slice(0, 4).map((event) => {
+          const insight = insightFromEvent(event);
+          return (
+            <article className="feedback-workbench-card" key={event.eventId}>
+              <Badge label={event.status === "miss" ? "未命中" : event.feedbackType || "反馈"} tone={event.status === "miss" ? "hot" : "warn"} />
+              <strong>{event.query || "未解析查询"}</strong>
+              <span>{insight.nextStep}</span>
+              <div className="task-primary-actions">
+                <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测</button>
+                {event.taskId && <button className="secondary-action" type="button" onClick={() => onNavigateReview(event.taskId)}>看任务</button>}
+              </div>
+            </article>
+          );
+        })}
+        {agentRisks.map((item) => (
+          <article className="feedback-workbench-card" key={item.key}>
+            <Badge label={item.label} tone={item.tone} />
+            <strong>{item.title}</strong>
+            <span>{item.body}</span>
+            <div className="task-primary-actions">
+              <button className="secondary-action" type="button" onClick={() => onNavigateAgent(String(item.params?.query ?? item.title))}>定位查询</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: string; body: string }> {
   const items: Array<{ title: string; body: string }> = [];
   if (envelope.trace.componentIds.length === 0) {
@@ -693,23 +766,26 @@ function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: strin
 
 function AgentFeedbackCard({
   event,
+  queued,
   onRetest,
   onNavigateReview,
   onNavigateAsset,
 }: {
   event: AgentEvent;
+  queued: boolean;
   onRetest: (insight: FeedbackInsight) => void;
-  onNavigateReview: () => void;
+  onNavigateReview: (taskId?: string) => void;
   onNavigateAsset: (componentId: string) => void;
 }) {
   const insight = insightFromEvent(event);
   return (
-    <article className="event actionable-event">
+    <article className={queued ? "event actionable-event queued" : "event actionable-event"}>
       <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
       <div>
         <div className="task-title-row">
           <strong>{insight.headline}</strong>
           <Badge label={event.status === "miss" ? "未命中" : "已命中"} tone={event.status === "miss" ? "hot" : "ok"} />
+          {queued && <Badge label="工作台待复测" tone="warn" />}
         </div>
         <div className="feedback-brief">
           <div>
@@ -760,7 +836,7 @@ function AgentFeedbackCard({
         )}
         <div className="task-primary-actions">
           <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>
-          <button className="secondary-action" type="button" onClick={onNavigateReview}>去审核中心处理</button>
+          <button className="secondary-action" type="button" onClick={() => onNavigateReview(event.taskId)}>去审核中心处理</button>
           {insight.componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(insight.componentIds[0])}>查看首个命中资产</button>}
         </div>
       </div>

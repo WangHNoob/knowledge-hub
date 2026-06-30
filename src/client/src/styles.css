@@ -1504,6 +1504,56 @@ button.writeback-step:disabled {
   width: 100%;
 }
 
+.feedback-workbench {
+  border: 1px solid color-mix(in srgb, var(--gold-dim), var(--line) 45%);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin: 0 0 16px;
+  background: color-mix(in srgb, var(--panel), var(--gold-dim) 7%);
+}
+
+.feedback-workbench-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 10px;
+}
+
+.feedback-workbench-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  background: var(--surface);
+}
+
+.feedback-workbench-card strong,
+.feedback-workbench-card span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feedback-workbench-card > strong {
+  white-space: nowrap;
+}
+
+.feedback-workbench-card > span {
+  display: -webkit-box;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.actionable-event.queued {
+  border-color: color-mix(in srgb, var(--gold-dim), var(--line) 35%);
+  background: color-mix(in srgb, var(--panel), var(--gold-dim) 5%);
+}
+
 .automation-grid {
   display: grid;
   gap: 12px;
