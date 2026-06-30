@@ -700,24 +700,77 @@ function buildManifest(input: {
 }
 
 function buildReleaseDiff(parent: ReleaseRecord | null, packages: AssetPackage[], components: AssetComponent[]): ReleaseDiff {
+  // 组件身份必须用 artifactId（= legacyPath，跨构建稳定），不能用 componentId：
+  // componentId 形如 cmp_<packageId>_<path>_<hash>，每次构建都换新 packageId，
+  // 用它做 diff 会把"同一逻辑页面"判成"父删一个 + 本次增一个"，导致 added/removed
+  // 恒等于全集、changed 恒为空——自动发布永远卡 removed_components_present。
+  // 这里按 artifactId 求增删改，但 diff 的各 bucket 仍输出**本次构建的 componentId**
+  // （removed 没有对应的本次组件，输出父 componentId），以兼容下游按 componentId 的
+  // blocking 任务 / 可信度查询与前端展示。
   const parentManifest = parent?.manifest ?? {};
   const parentPackageIds = stringArray(parentManifest.packageIds);
   const nextPackageIds = packages.map((pkg) => pkg.packageId);
-  const parentComponentIds = stringArray(parentManifest.componentIds);
-  const nextComponentIds = components.map((component) => component.componentId);
   const parentSourceVersionIds = stringArray(parentManifest.sourceVersionIds);
   const nextSourceVersionIds = uniqueSorted(packages.flatMap((pkg) => pkg.sourceVersionIds));
-  const parentComponents = componentFingerprintMap(parentManifest.components);
-  const nextComponents = new Map(components.map((component) => [component.componentId, componentFingerprint(component)]));
-  const sharedComponentIds = intersect(parentComponentIds, nextComponentIds);
-  const changedComponents = sharedComponentIds.filter((componentId) => parentComponents.get(componentId) !== nextComponents.get(componentId)).sort();
+
+  const parentByArtifact = parentComponentIndex(parentManifest.components);
+  const nextByArtifact = new Map(components.map((component) => [component.artifactId, component] as const));
+
+  const parentArtifactIds = [...parentByArtifact.keys()];
+  const nextArtifactIds = [...nextByArtifact.keys()];
+  const sharedArtifactIds = parentArtifactIds.filter((artifactId) => nextByArtifact.has(artifactId));
+
+  // 各 bucket 用 componentId 表达：added/unchanged/changed → 本次 componentId；removed → 父 componentId。
+  const addedIds = nextArtifactIds
+    .filter((artifactId) => !parentByArtifact.has(artifactId))
+    .map((artifactId) => nextByArtifact.get(artifactId)!.componentId).sort();
+  const removedIds = parentArtifactIds
+    .filter((artifactId) => !nextByArtifact.has(artifactId))
+    .map((artifactId) => parentByArtifact.get(artifactId)!.componentId).sort();
+  const changedComponents = sharedArtifactIds
+    .filter((artifactId) => parentByArtifact.get(artifactId)!.fingerprint !== contentFingerprint(nextByArtifact.get(artifactId)!))
+    .map((artifactId) => nextByArtifact.get(artifactId)!.componentId).sort();
+  const changedSet = new Set(changedComponents);
+  const unchangedSharedIds = sharedArtifactIds
+    .map((artifactId) => nextByArtifact.get(artifactId)!.componentId).sort();
+  const unchangedComponents = unchangedSharedIds.filter((componentId) => !changedSet.has(componentId));
+
   return {
     packageIds: diffBucket(parentPackageIds, nextPackageIds),
-    componentIds: diffBucket(parentComponentIds, nextComponentIds),
+    componentIds: { added: addedIds, removed: removedIds, unchanged: unchangedSharedIds },
     sourceVersionIds: diffBucket(parentSourceVersionIds, nextSourceVersionIds),
     changedComponents,
-    unchangedComponents: sharedComponentIds.filter((componentId) => !changedComponents.includes(componentId)).sort(),
+    unchangedComponents,
   };
+}
+
+// 把父发布 manifest.components 建成 artifactId → { componentId, 内容指纹 } 索引。
+function parentComponentIndex(value: unknown): Map<string, { componentId: string; fingerprint: string }> {
+  const index = new Map<string, { componentId: string; fingerprint: string }>();
+  if (!Array.isArray(value)) return index;
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const component = item as Record<string, unknown>;
+    const artifactId = typeof component.artifactId === "string" ? component.artifactId : "";
+    const componentId = typeof component.componentId === "string" ? component.componentId : "";
+    if (!artifactId || !componentId) continue;
+    index.set(artifactId, { componentId, fingerprint: contentFingerprint(component) });
+  }
+  return index;
+}
+
+// 内容指纹：刻意**排除 packageId**（每次构建都变），只看跨构建稳定的内容字段，
+// 这样"同一页面内容没变"在两次构建间能判为 unchanged 而非 changed。
+function contentFingerprint(component: AssetComponent | Record<string, unknown>): string {
+  return stableStringify({
+    artifactId: (component as Record<string, unknown>).artifactId,
+    group: (component as Record<string, unknown>).group,
+    kind: (component as Record<string, unknown>).kind,
+    title: (component as Record<string, unknown>).title,
+    storageUri: (component as Record<string, unknown>).storageUri,
+    sourceRefs: stringArray((component as Record<string, unknown>).sourceRefs),
+    quality: stableQualityValue((component as Record<string, unknown>).quality),
+  });
 }
 
 function buildReleaseRevision(release: ReleaseRecord, diff: ReleaseDiff): ReleaseRevision {
@@ -743,30 +796,35 @@ function trustDeclinesAgainstParent(
   components: AssetComponent[],
   changedComponentIds: string[],
 ): Array<{ componentId: string; previousScore: number | null; nextScore: number | null }> {
+  const componentById = new Map(components.map((component) => [component.componentId, component] as const));
   const nextById = new Map(components.map((component) => [component.componentId, scoreFromQuality(component.quality)] as const));
-  const previousById = parentComponentTrustScores(parentRelease);
+  // 父分数按 artifactId 索引（componentId 跨构建不稳定，无法直接对应）。
+  const previousByArtifact = parentComponentTrustScores(parentRelease);
   const declines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }> = [];
   for (const componentId of changedComponentIds) {
+    const artifactId = componentById.get(componentId)?.artifactId ?? "";
     const nextScore = nextById.get(componentId) ?? null;
-    const previousScore = previousById.get(componentId) ?? null;
+    const hasPrevious = Boolean(artifactId) && previousByArtifact.has(artifactId);
+    const previousScore = artifactId ? previousByArtifact.get(artifactId) ?? null : null;
     if (nextScore === null) declines.push({ componentId, previousScore, nextScore });
-    else if (!previousById.has(componentId)) continue;
+    else if (!hasPrevious) continue; // 全新组件（父发布无此 artifact），无基线可比，不算下降
     else if (previousScore === null) declines.push({ componentId, previousScore, nextScore });
     else if (nextScore + 0.0001 < previousScore) declines.push({ componentId, previousScore, nextScore });
   }
   return declines;
 }
 
+// 父发布各组件的可信度分数，按 artifactId（稳定）索引。
 function parentComponentTrustScores(parentRelease: ReleaseRecord | null): Map<string, number | null> {
   if (!parentRelease) return new Map();
   const components = Array.isArray(parentRelease.manifest.components) ? parentRelease.manifest.components : [];
   const entries = components.flatMap((item) => {
     const component = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
-    const componentId = typeof component.componentId === "string" ? component.componentId : "";
+    const artifactId = typeof component.artifactId === "string" ? component.artifactId : "";
     const quality = component.quality && typeof component.quality === "object" && !Array.isArray(component.quality)
       ? component.quality as Record<string, unknown>
       : {};
-    return componentId ? [[componentId, scoreFromQuality(quality)] as const] : [];
+    return artifactId ? [[artifactId, scoreFromQuality(quality)] as const] : [];
   });
   return new Map(entries);
 }
@@ -779,48 +837,6 @@ function diffBucket(previous: string[], next: string[]): DiffBucket {
     removed: previous.filter((id) => !nextSet.has(id)).sort(),
     unchanged: next.filter((id) => previousSet.has(id)).sort(),
   };
-}
-
-function intersect(left: string[], right: string[]): string[] {
-  const rightSet = new Set(right);
-  return left.filter((id) => rightSet.has(id));
-}
-
-function componentFingerprintMap(value: unknown): Map<string, string> {
-  if (!Array.isArray(value)) return new Map();
-  const entries = value.flatMap((item) => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-    const component = item as Record<string, unknown>;
-    const componentId = typeof component.componentId === "string" ? component.componentId : "";
-    return componentId ? [[componentId, stableComponentFingerprint(component)] as const] : [];
-  });
-  return new Map(entries);
-}
-
-function componentFingerprint(component: AssetComponent): string {
-  return stableComponentFingerprint({
-    packageId: component.packageId,
-    artifactId: component.artifactId,
-    group: component.group,
-    kind: component.kind,
-    title: component.title,
-    storageUri: component.storageUri,
-    sourceRefs: component.sourceRefs,
-    quality: stableQualityValue(component.quality),
-  });
-}
-
-function stableComponentFingerprint(component: Record<string, unknown>): string {
-  return stableStringify({
-    packageId: component.packageId,
-    artifactId: component.artifactId,
-    group: component.group,
-    kind: component.kind,
-    title: component.title,
-    storageUri: component.storageUri,
-    sourceRefs: stringArray(component.sourceRefs),
-    quality: stableQualityValue(component.quality),
-  });
 }
 
 function stableQualityValue(value: unknown): unknown {

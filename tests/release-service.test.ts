@@ -87,15 +87,20 @@ describe("ReleaseService", () => {
       expect(existsSync(join(first.dataDir, "releases", pub1.releaseId, "okf_report.json"))).toBe(true);
       expect(pub1.publishedAt).toBeTruthy();
 
+      // pkg_second 与 pkg_demo 是不同的 package（不同 componentId），但承载同一批
+      // artifact（wiki/systems/demo.md 等）。diff 按稳定的 artifactId 比对，因此这是
+      // 一次"内容未变、仅换包重建"的修订：组件应判为 unchanged，而非全删全增。
+      // （回归此前 componentId-based diff 把同一页面误判成 removed+added 的 bug。）
       const rel2 = await service.createDraft({ version: "2026.06.15.002", packageIds: ["pkg_second"], requestedBy: "admin" });
       expect(rel2.parentReleaseId).toBe(pub1.releaseId);
-      await expect(service.publish(rel2.releaseId, "admin", { autoMode: true })).rejects.toThrow(/removed_components_present/u);
+      // 内容未变 → 没有 changed 组件 → autoMode 因 no_component_changes 跳过（不再是 removed_components_present）。
+      await expect(service.publish(rel2.releaseId, "admin", { autoMode: true })).rejects.toThrow(/no_component_changes/u);
       const pub2 = await service.publish(rel2.releaseId, "admin");
       expect(pub2.parentReleaseId).toBe(pub1.releaseId);
       expect(pub2.manifest.revision).toMatchObject({
         parentReleaseId: pub1.releaseId,
         mode: "revision",
-        summary: { packagesAdded: 1, packagesRemoved: 1, componentsAdded: 3, componentsRemoved: 3, componentsChanged: 0 }
+        summary: { packagesAdded: 1, packagesRemoved: 1, componentsAdded: 0, componentsRemoved: 0, componentsChanged: 0, componentsUnchanged: 3 }
       });
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub2.releaseId, "okf_bundle", "meta", "revision.json"), "utf8"))).toMatchObject({
         okfAssetType: "release_revision",
@@ -187,6 +192,46 @@ describe("ReleaseService", () => {
         mode: "auto",
         reasons: [],
         changedComponentIds: ["cmp_pkg_auto_ok_page"],
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
+
+  it("diffs revisions by stable artifactId, not packageId-bearing componentId", async () => {
+    // 回归：每次构建都产生新 package（新 componentId = cmp_<packageId>_...），
+    // 若按 componentId diff，父组件会被全判 removed、本次全判 added，自动发布永远卡
+    // removed_components_present。这里父=pkg_v1、修订=pkg_v2，承载同一批 artifact，
+    // 仅其中一页内容改动，应判为 1 changed、0 removed、0 added。
+    const fixture = await setupReleaseFixture({ packageId: "pkg_v1" });
+    await setupReleaseFixture({ handle: fixture.handle, packageId: "pkg_v2" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+
+    try {
+      const v1Draft = await service.createDraft({ version: "2026.06.20.v1", packageIds: ["pkg_v1"], requestedBy: "admin" });
+      const v1 = await service.publish(v1Draft.releaseId, "admin");
+
+      // pkg_v2 是"重建"出的新包：改其中一页的 title（artifact 内容变化），其余 artifact 不变。
+      await fixture.db.adapter.query(
+        "UPDATE asset_components SET title = $2 WHERE component_id = $1",
+        ["cmp_pkg_v2_page", "Demo Page Rebuilt"],
+      );
+
+      const v2Draft = await service.createDraft({ version: "2026.06.20.v2", packageIds: ["pkg_v2"], requestedBy: "admin" });
+      expect(v2Draft.parentReleaseId).toBe(v1.releaseId);
+      const v2 = await service.publish(v2Draft.releaseId, "admin", { autoMode: true });
+
+      // 关键断言：按 artifactId diff → 不是全删全增。
+      expect(v2.manifest.revision).toMatchObject({
+        mode: "revision",
+        summary: { componentsAdded: 0, componentsRemoved: 0, componentsChanged: 1, componentsUnchanged: 2 },
+      });
+      // changed 的是"本次"的 componentId（pkg_v2），可被下游 blocking/trust 查询命中。
+      expect(v2.manifest.autoPublish).toMatchObject({
+        eligible: true,
+        mode: "auto",
+        reasons: [],
+        changedComponentIds: ["cmp_pkg_v2_page"],
       });
     } finally {
       await fixture.cleanup();
