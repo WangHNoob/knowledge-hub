@@ -279,7 +279,7 @@ export function Release() {
           <h3>发布历史</h3>
           <div className="release-history">
             {(releases.data ?? []).map((release) => (
-              <article className="history-row" key={release.releaseId}>
+              <article className={release.releaseId === params.releaseId ? "history-row targeted" : "history-row"} key={release.releaseId}>
                 <div>
                   <strong>{release.version}</strong>
                   <span>{release.releaseId}</span>

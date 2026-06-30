@@ -2826,7 +2826,8 @@ button.writeback-step:disabled {
 
 .auto-publish-event.targeted,
 .task.targeted,
-.event.targeted {
+.event.targeted,
+.history-row.targeted {
   border-color: var(--gold);
   box-shadow: 0 0 0 3px rgba(201, 162, 39, 0.16), var(--shadow-soft);
 }
