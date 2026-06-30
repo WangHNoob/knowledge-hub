@@ -235,6 +235,50 @@ describe("review task transitions", () => {
     const afterReviewResponse = await app.inject({ method: "GET", url: "/api/legislation/annotation-examples", headers: auth });
     const afterReview = afterReviewResponse.json().examples.find((item: { taskId: string }) => item.taskId === "task_annotation");
     expect(afterReview.effect.reviewTaskId).toBe(reviewTask.taskId);
+
+    const promoteResponse = await app.inject({
+      method: "POST",
+      url: "/api/review/tasks/annotate",
+      headers: auth,
+      payload: {
+        taskId: reviewTask.taskId,
+        selectedCandidateId: "promote_annotation_override",
+        note: "复盘后转为确定性覆盖"
+      }
+    });
+    expect(promoteResponse.statusCode).toBe(200);
+    expect(promoteResponse.json().task).toMatchObject({
+      taskId: reviewTask.taskId,
+      status: "resolved",
+      annotatedBy: "admin",
+      annotationValue: {
+        action: "promote_annotation_override",
+        exampleId: example.exampleId,
+        previousApplyMode: "hint",
+        previousActive: false
+      }
+    });
+    expect(promoteResponse.json().example).toMatchObject({
+      exampleId: example.exampleId,
+      applyMode: "override",
+      active: true
+    });
+
+    const exampleRows = await db.adapter.query("SELECT * FROM annotation_examples WHERE example_id = $1", [example.exampleId]);
+    expect(exampleRows.rows[0].apply_mode).toBe("override");
+    expect(exampleRows.rows[0].active).toBe(true);
+
+    const reviewEvents = await db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = $1", ["annotation.review_resolved"]);
+    expect(reviewEvents.rows[0].payload_json).toMatchObject({
+      taskId: reviewTask.taskId,
+      action: "promote_annotation_override",
+      componentId: "cmp_rev"
+    });
+    const writebackEvents = await db.adapter.query(
+      "SELECT * FROM knowledge_events WHERE event_type = $1 AND entity_id = $2",
+      ["annotation.writeback_requested", reviewTask.taskId]
+    );
+    expect(writebackEvents.rows).toHaveLength(1);
   });
 
   it("rejects viewers", async () => {

@@ -297,7 +297,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   const isAgentTask = isAgentFeedbackTask(task);
   const insight = isAgentTask ? insightFromTask(task) : null;
   const componentIds = insight?.componentIds.length ? insight.componentIds : task.componentId ? [task.componentId] : [];
-  const isRebuildCandidate = task.ruleId === "agent_feedback.rebuild_candidate";
+  const isRebuildCandidate = task.ruleId === "agent_feedback.rebuild_candidate" || task.ruleId === "annotation_example.review";
   return (
     <article className={highlighted ? "task actionable-task targeted" : "task actionable-task"}>
       <Badge label={task.severity} tone={SEVERITY_TONE[task.severity]} />

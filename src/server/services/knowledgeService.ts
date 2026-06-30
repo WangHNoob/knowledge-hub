@@ -373,11 +373,11 @@ export class KnowledgeService {
         "检查该样例是否需要改写为更明确的 override、停用，或补充来源资料后重新构建。",
         JSON.stringify([
           {
-            id: "revise_annotation_example",
-            label: "修订样例",
-            value: { action: "revise_annotation_example", exampleId },
-            confidence: 0.72,
-            rationale: "样例后仍有复发信号，应优先检查样例覆盖范围和正确值。",
+            id: "promote_annotation_override",
+            label: "转为确定性覆盖",
+            value: { action: "promote_annotation_override", exampleId },
+            confidence: 0.76,
+            rationale: "样例后仍有复发信号，优先改为 override，后续构建强制采用该人工答案。",
           },
           {
             id: "disable_annotation_example",
@@ -385,6 +385,13 @@ export class KnowledgeService {
             value: { action: "disable_annotation_example", exampleId },
             confidence: 0.55,
             rationale: "如果样例误导构建，应停用并保留审计记录。",
+          },
+          {
+            id: "keep_annotation_hint",
+            label: "保留观察",
+            value: { action: "keep_annotation_hint", exampleId },
+            confidence: 0.45,
+            rationale: "如果复发来自资料本身或其他规则，可保留当前 hint 样例，改由资料修正或局部重建验证。",
           },
         ]),
         0.72,
@@ -715,6 +722,9 @@ export class KnowledgeService {
     const selected = input.selectedCandidateId
       ? task.candidates.find((candidate) => candidate.id === input.selectedCandidateId)
       : null;
+    if (task.ruleId === "annotation_example.review") {
+      return this.resolveAnnotationExampleReviewTask(input, task, selected?.value);
+    }
     const correctValue = normalizeAnnotationValue(input.correctValue ?? selected?.value ?? input.note ?? "");
     const applyMode = input.applyMode ?? "hint";
     const componentRef = await this.findComponentRef(task.componentId);
@@ -852,6 +862,102 @@ export class KnowledgeService {
       });
     }
     return { task: updated, example };
+  }
+
+  private async resolveAnnotationExampleReviewTask(
+    input: {
+      taskId: string;
+      correctValue?: unknown;
+      note?: string;
+      actor: string;
+    },
+    task: ReviewTask,
+    selectedValue?: unknown,
+  ): Promise<{ task: ReviewTask; example: AnnotationExample | null }> {
+    const value = jsonObject(input.correctValue ?? selectedValue ?? {});
+    const action = annotationExampleReviewAction(value);
+    const exampleId = stringValue(value.exampleId) || stringValue(task.contextSnapshot.exampleId);
+    if (!exampleId) throw new Error("Annotation example review task is missing exampleId.");
+    const examples = await this.listAnnotationExamples();
+    const before = examples.find((item) => item.exampleId === exampleId);
+    if (!before) throw new Error(`Unknown annotation example: ${exampleId}`);
+    if (before.componentId !== task.componentId) throw new Error("Annotation example does not match the review task component.");
+
+    const now = new Date().toISOString();
+    const annotationValue = {
+      action,
+      exampleId,
+      previousApplyMode: before.applyMode,
+      previousActive: before.active,
+    };
+
+    await this.adapter.query("BEGIN");
+    try {
+      if (action === "promote_annotation_override") {
+        await this.adapter.query(
+          "UPDATE annotation_examples SET apply_mode = 'override', active = true WHERE example_id = $1",
+          [exampleId],
+        );
+      } else if (action === "disable_annotation_example") {
+        await this.adapter.query(
+          "UPDATE annotation_examples SET active = false WHERE example_id = $1",
+          [exampleId],
+        );
+      }
+      await this.adapter.query(
+        `UPDATE review_tasks
+         SET status = 'resolved',
+             resolved_by = $2,
+             resolved_at = $3,
+             resolution_note = $4,
+             annotation_value = $5,
+             annotated_by = $2,
+             annotated_at = $3
+         WHERE task_id = $1`,
+        [
+          task.taskId,
+          input.actor,
+          now,
+          input.note ?? annotationExampleReviewResolution(action),
+          JSON.stringify(annotationValue),
+        ],
+      );
+      await this.adapter.query("COMMIT");
+    } catch (error) {
+      await this.adapter.query("ROLLBACK");
+      throw error;
+    }
+
+    const [updated, after] = await Promise.all([
+      this.listReviewTasks({}),
+      this.listAnnotationExamples(),
+    ]);
+    const updatedTask = updated.find((item) => item.taskId === task.taskId);
+    if (!updatedTask) throw new Error(`Unknown review task after annotation review: ${task.taskId}`);
+    const example = after.find((item) => item.exampleId === exampleId) ?? null;
+    await emitKnowledgeEvent(this.db, {
+      eventType: "annotation.review_resolved",
+      entityType: "annotation_example",
+      entityId: exampleId,
+      payload: { taskId: task.taskId, action, componentId: task.componentId, ruleId: before.ruleId, resolvedBy: input.actor },
+    });
+    if (action === "promote_annotation_override") {
+      const componentRef = await this.findComponentRef(task.componentId);
+      await emitKnowledgeEvent(this.db, {
+        eventType: "annotation.writeback_requested",
+        entityType: "review_task",
+        entityId: task.taskId,
+        payload: {
+          componentId: task.componentId,
+          ruleId: before.ruleId,
+          exampleId,
+          requestedBy: input.actor,
+          sourcePath: componentRef.sourcePath,
+          componentRef: componentRef.legacyPath,
+        },
+      });
+    }
+    return { task: updatedTask, example };
   }
 
   private async findComponentRef(componentId: string): Promise<{ legacyPath: string; sourcePath: string }> {
@@ -1142,6 +1248,19 @@ function annotationExampleEffect(input: {
       ? "样例后暂无同类复发，当前表现为收敛。"
       : "样例后仍有同类历史任务，但目前没有待处理项。";
   return { ...input, status, summary };
+}
+
+function annotationExampleReviewAction(value: Record<string, unknown>): "promote_annotation_override" | "disable_annotation_example" | "keep_annotation_hint" {
+  const action = stringValue(value.action);
+  if (action === "promote_annotation_override" || action === "revise_annotation_example") return "promote_annotation_override";
+  if (action === "disable_annotation_example") return "disable_annotation_example";
+  return "keep_annotation_hint";
+}
+
+function annotationExampleReviewResolution(action: "promote_annotation_override" | "disable_annotation_example" | "keep_annotation_hint"): string {
+  if (action === "promote_annotation_override") return "已将标注样例转为确定性覆盖，并请求后续局部重建验证。";
+  if (action === "disable_annotation_example") return "已停用标注样例，后续构建不再注入。";
+  return "已保留标注样例为 hint，继续观察后续构建与 Agent 反馈。";
 }
 
 function uniqueSorted(values: string[]): string[] {

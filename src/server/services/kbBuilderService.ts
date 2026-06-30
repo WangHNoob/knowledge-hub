@@ -386,8 +386,8 @@ export class KbBuilderPipelineService {
     );
     if (rows.length === 0) throw new Error(`Unknown review task: ${taskId}`);
     const row = rows[0];
-    if (String(row.rule_id) !== "agent_feedback.rebuild_candidate") {
-      throw new Error("Only agent feedback rebuild candidate tasks can start scoped rebuilds.");
+    if (!["agent_feedback.rebuild_candidate", "annotation_example.review"].includes(String(row.rule_id))) {
+      throw new Error("Only agent feedback rebuild candidate or annotation review tasks can start scoped rebuilds.");
     }
     if (String(row.status) !== "open") throw new Error("Only open rebuild candidate tasks can start scoped rebuilds.");
 
