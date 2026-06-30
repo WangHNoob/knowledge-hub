@@ -789,6 +789,38 @@ code {
   min-width: 0;
 }
 
+.review-workbench-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  background: var(--panel);
+}
+
+.review-workbench-context.focused {
+  border-color: color-mix(in srgb, var(--gold-dim), var(--line) 30%);
+  background: color-mix(in srgb, var(--panel), var(--gold-dim) 6%);
+}
+
+.review-workbench-context > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.review-workbench-context strong {
+  font-size: 15px;
+}
+
+.review-workbench-context p {
+  margin: 0;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+
 .feedback-brief {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));

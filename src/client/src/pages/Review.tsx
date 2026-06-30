@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
+import { annotateReviewTask, getFlywheelWorkbench, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
@@ -125,6 +125,7 @@ export function Review() {
     queryKey: ["review", severity || "all", status || "all"],
     queryFn: () => listReviewTasks(severity || undefined, status || undefined)
   });
+  const workbench = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench, refetchInterval: 5000 });
 
   useEffect(() => {
     if (params.severity && params.severity !== severity) setSeverity(params.severity);
@@ -217,7 +218,7 @@ export function Review() {
   }, [tasks, transition]);
 
   if (isLoading) return <Loading title="正在整理审核任务" />;
-  if (error) return <ErrorState error={error} />;
+  if (error || workbench.error) return <ErrorState error={error ?? workbench.error} />;
 
   return (
     <Page title="审核中心" subtitle="把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。">
@@ -257,6 +258,15 @@ export function Review() {
       )}
 
       <section className="review-flow">
+        {workbench.data && (
+          <ReviewWorkbenchContext
+            workbench={workbench.data}
+            focusedTaskId={params.taskId}
+            onNavigateAgent={(query) => navigate("agent", { query })}
+            onNavigateBuilder={() => navigate("builder")}
+            onNavigateRelease={(releaseId) => navigate("release", releaseId ? { releaseId } : {})}
+          />
+        )}
         <div className="metrics compact">
           <Metric label="待处理" value={taskStats.open} hint="当前筛选范围" tone={taskStats.open ? "warn" : "ok"} />
           <Metric label="阻断" value={taskStats.blocking} hint="先处理，影响发布" tone={taskStats.blocking ? "hot" : "ok"} />
@@ -305,6 +315,41 @@ export function Review() {
         {tasks.length === 0 && <p className="subtle">没有符合条件的审核任务。</p>}
       </div>
     </Page>
+  );
+}
+
+function ReviewWorkbenchContext({
+  workbench,
+  focusedTaskId,
+  onNavigateAgent,
+  onNavigateBuilder,
+  onNavigateRelease,
+}: {
+  workbench: FlywheelWorkbench;
+  focusedTaskId?: string;
+  onNavigateAgent: (query: string) => void;
+  onNavigateBuilder: () => void;
+  onNavigateRelease: (releaseId?: string) => void;
+}) {
+  const focusedInWorkbench = focusedTaskId
+    ? workbench.annotationTasks.some((task) => task.taskId === focusedTaskId)
+      || workbench.riskItems.some((item) => item.params?.taskId === focusedTaskId)
+    : false;
+  const firstRetest = workbench.retestItems[0];
+  const firstDraft = workbench.publishItems[0];
+  return (
+    <div className={focusedInWorkbench ? "review-workbench-context focused" : "review-workbench-context"}>
+      <div>
+        <span className="command-kicker">飞轮主线</span>
+        <strong>{workbench.headline}</strong>
+        <p>{focusedInWorkbench ? "当前任务来自工作台优先队列，处理后应继续复测或发布验证。" : workbench.summary}</p>
+      </div>
+      <div className="task-primary-actions">
+        {firstRetest && <button className="secondary-action" type="button" onClick={() => onNavigateAgent(firstRetest.query)}>复测最新反馈</button>}
+        {firstDraft && <button className="secondary-action" type="button" onClick={() => onNavigateRelease(firstDraft.releaseId)}>检查待发布</button>}
+        {!firstRetest && !firstDraft && <button className="secondary-action" type="button" onClick={onNavigateBuilder}>查看构建</button>}
+      </div>
+    </div>
   );
 }
 
