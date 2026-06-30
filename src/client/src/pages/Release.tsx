@@ -6,6 +6,7 @@ import {
   createRelease,
   deleteRelease,
   getCurrentRelease,
+  getFlywheelWorkbench,
   listFlywheelEvents,
   listPackages,
   listReleases,
@@ -14,6 +15,7 @@ import {
   rollbackRelease,
   updateRelease,
   type FlywheelEvent,
+  type FlywheelWorkbench,
   type KnowledgeLintSummary,
   type ReleaseAuditSummary,
   type ReleaseRecord
@@ -37,6 +39,7 @@ export function Release() {
   const releases = useQuery({ queryKey: ["releases"], queryFn: listReleases });
   const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
   const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
+  const workbench = useQuery({ queryKey: ["dashboard", "workbench"], queryFn: getFlywheelWorkbench, refetchInterval: 5000 });
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
 
   useEffect(() => {
@@ -126,8 +129,8 @@ export function Release() {
     }
   });
 
-  if (packages.isLoading || releases.isLoading || current.isLoading || tasks.isLoading || flywheelEvents.isLoading) return <Loading title="正在读取发布工作台" />;
-  if (packages.error || releases.error || current.error || tasks.error || flywheelEvents.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error ?? flywheelEvents.error} />;
+  if (packages.isLoading || releases.isLoading || current.isLoading || tasks.isLoading || flywheelEvents.isLoading || workbench.isLoading) return <Loading title="正在读取发布工作台" />;
+  if (packages.error || releases.error || current.error || tasks.error || flywheelEvents.error || workbench.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error ?? flywheelEvents.error ?? workbench.error} />;
 
   return (
     <Page title="发布" subtitle="发布版本是 Agent 正式消费的不可变知识视图。">
@@ -139,6 +142,17 @@ export function Release() {
           { id: "current", label: "当前与历史", count: releases.data?.length }
         ]}
       />
+      {workbench.data && (
+        <ReleaseWorkbenchContext
+          workbench={workbench.data}
+          focusedReleaseId={params.releaseId}
+          onShowRelease={(releaseId) => {
+            setTab("current");
+            navigate("release", releaseId ? { releaseId } : {});
+          }}
+          onOpenReview={() => navigate("review")}
+        />
+      )}
       <div className={`release-workbench ${tab}`} key={tab}>
         {tab === "compose" && (
           <>
@@ -321,6 +335,38 @@ export function Release() {
         )}
       </div>
     </Page>
+  );
+}
+
+function ReleaseWorkbenchContext({
+  workbench,
+  focusedReleaseId,
+  onShowRelease,
+  onOpenReview,
+}: {
+  workbench: FlywheelWorkbench;
+  focusedReleaseId?: string;
+  onShowRelease: (releaseId?: string) => void;
+  onOpenReview: () => void;
+}) {
+  const focused = focusedReleaseId
+    ? workbench.publishItems.some((release) => release.releaseId === focusedReleaseId)
+    : false;
+  const firstDraft = workbench.publishItems[0];
+  const blocking = workbench.riskItems.filter((item) => item.label === "阻断").length;
+  if (!firstDraft && blocking === 0) return null;
+  return (
+    <section className={focused ? "release-workbench-context focused" : "release-workbench-context"}>
+      <div>
+        <span className="command-kicker">飞轮发布位</span>
+        <strong>{firstDraft ? `${workbench.publishItems.length} 个版本待发布` : "发布前仍有阻断项"}</strong>
+        <p>{firstDraft ? "这些 draft / revision 已经进入工作台，检查无阻断后应尽快推给 Agent 消费。" : "先回审核中心处理 blocking，再创建或发布版本。"}</p>
+      </div>
+      <div className="task-primary-actions">
+        {firstDraft && <button className="secondary-action" type="button" onClick={() => onShowRelease(firstDraft.releaseId)}>定位待发布</button>}
+        {blocking > 0 && <button className="secondary-action" type="button" onClick={onOpenReview}>处理阻断</button>}
+      </div>
+    </section>
   );
 }
 
