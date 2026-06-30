@@ -71,7 +71,7 @@ export function Dashboard() {
           caption="沿用原查询复测，判断修改是否真的让 MCP 命中收敛。"
         >
           {workbench.retestItems.map((item) => (
-            <AgentCard key={item.eventId} event={item} onRetest={() => navigate("agent", { query: item.query })} onReview={() => navigate("review", { taskId: item.taskId })} />
+            <AgentCard key={item.eventId} event={item} onRetest={() => navigate("agent", { eventId: item.eventId, query: item.query })} onReview={() => navigate("review", { taskId: item.taskId })} />
           ))}
         </WorkbenchLane>
 

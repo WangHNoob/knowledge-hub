@@ -174,14 +174,15 @@ export function AgentFeedback() {
     }
   });
   useEffect(() => {
-    if (!params.toolName && !params.query) return;
+    if (!params.toolName && !params.query && !params.eventId) return;
+    if (params.eventId) setTab("feedback");
     if (params.toolName) setToolName(params.toolName);
     setWhereRows([]);
     setEnvelope(null);
     if (params.query) setForm({ query: params.query, topic: params.query });
     else setForm({});
     setTab("simulate");
-  }, [params.toolName, params.query]);
+  }, [params.toolName, params.query, params.eventId]);
 
   const retest = (insight: FeedbackInsight) => {
     selectTool(insight.toolName || "kb_search");
@@ -443,6 +444,7 @@ export function AgentFeedback() {
                   key={event.eventId}
                   event={event}
                   queued={workbenchRetestIds.has(event.eventId)}
+                  highlighted={event.eventId === params.eventId}
                   onRetest={retest}
                   onNavigateReview={(taskId) => navigate("review", taskId ? { taskId } : {})}
                   onNavigateAsset={(componentId) => navigate("assets", { componentId })}
@@ -767,19 +769,27 @@ function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: strin
 function AgentFeedbackCard({
   event,
   queued,
+  highlighted,
   onRetest,
   onNavigateReview,
   onNavigateAsset,
 }: {
   event: AgentEvent;
   queued: boolean;
+  highlighted: boolean;
   onRetest: (insight: FeedbackInsight) => void;
   onNavigateReview: (taskId?: string) => void;
   onNavigateAsset: (componentId: string) => void;
 }) {
   const insight = insightFromEvent(event);
+  const className = [
+    "event",
+    "actionable-event",
+    queued ? "queued" : "",
+    highlighted ? "targeted" : "",
+  ].filter(Boolean).join(" ");
   return (
-    <article className={queued ? "event actionable-event queued" : "event actionable-event"}>
+    <article className={className}>
       <Badge label={event.feedbackType || event.status} tone={event.status === "miss" ? "hot" : event.qualityFlags.length ? "warn" : "ok"} />
       <div>
         <div className="task-title-row">
