@@ -259,7 +259,11 @@ export class KnowledgeService {
          e.*,
          COALESCE(injected.injected_build_count, 0)::int AS injected_build_count,
          injected.last_injected_at,
-         injected.last_injected_run_id
+         injected.last_injected_run_id,
+         COALESCE(effect.tasks_before, 0)::int AS effect_tasks_before,
+         COALESCE(effect.tasks_after, 0)::int AS effect_tasks_after,
+         COALESCE(effect.open_tasks_after, 0)::int AS effect_open_tasks_after,
+         COALESCE(effect.agent_negative_after, 0)::int AS effect_agent_negative_after
        FROM annotation_examples e
        LEFT JOIN LATERAL (
          SELECT
@@ -269,6 +273,22 @@ export class KnowledgeService {
          FROM knowledge_build_runs r
          WHERE r.config_json -> 'flywheel' -> 'annotationExampleRefs' @> jsonb_build_array(jsonb_build_object('exampleId', e.example_id))
        ) injected ON true
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*) FILTER (WHERE t.created_at < e.created_at)::int AS tasks_before,
+           COUNT(*) FILTER (WHERE t.created_at > e.created_at)::int AS tasks_after,
+           COUNT(*) FILTER (WHERE t.created_at > e.created_at AND t.status = 'open')::int AS open_tasks_after,
+           (
+             SELECT COUNT(*)::int
+             FROM agent_events a
+             WHERE a.created_at > e.created_at
+               AND a.feedback_type <> 'hit'
+               AND a.hit_component_ids ? e.component_id
+           ) AS agent_negative_after
+         FROM review_tasks t
+         WHERE t.component_id = e.component_id
+           AND COALESCE(t.rule_id, '') = COALESCE(e.rule_id, '')
+       ) effect ON true
        ORDER BY e.active DESC, e.created_at DESC`,
     );
     return rows.map((row) => ({
@@ -286,6 +306,12 @@ export class KnowledgeService {
       injectedBuildCount: Number(row.injected_build_count ?? 0),
       lastInjectedAt: row.last_injected_at ? String(row.last_injected_at) : null,
       lastInjectedRunId: String(row.last_injected_run_id ?? ""),
+      effect: annotationExampleEffect({
+        tasksBefore: Number(row.effect_tasks_before ?? 0),
+        tasksAfter: Number(row.effect_tasks_after ?? 0),
+        openTasksAfter: Number(row.effect_open_tasks_after ?? 0),
+        agentNegativeAfter: Number(row.effect_agent_negative_after ?? 0),
+      }),
       createdBy: String(row.created_by ?? ""),
       createdAt: String(row.created_at ?? ""),
     }));
@@ -724,6 +750,12 @@ export class KnowledgeService {
       injectedBuildCount: 0,
       lastInjectedAt: null,
       lastInjectedRunId: "",
+      effect: annotationExampleEffect({
+        tasksBefore: 0,
+        tasksAfter: 0,
+        openTasksAfter: 0,
+        agentNegativeAfter: 0,
+      }),
       createdBy: input.actor,
       createdAt: now,
     };
@@ -1018,6 +1050,25 @@ function numberFromQuality(quality: Record<string, unknown>, keys: string[]): nu
 
 function reviewLearningKey(componentId: string, ruleId: string): string {
   return `${componentId}\u0000${ruleId}`;
+}
+
+function annotationExampleEffect(input: {
+  tasksBefore: number;
+  tasksAfter: number;
+  openTasksAfter: number;
+  agentNegativeAfter: number;
+}): AnnotationExample["effect"] {
+  const status = input.openTasksAfter > 0 || input.agentNegativeAfter > 0
+    ? "needs_review"
+    : input.tasksAfter === 0
+      ? "converging"
+      : "watch";
+  const summary = status === "needs_review"
+    ? "样例后仍有待处理任务或 Agent 负反馈，需要复盘。"
+    : status === "converging"
+      ? "样例后暂无同类复发，当前表现为收敛。"
+      : "样例后仍有同类历史任务，但目前没有待处理项。";
+  return { ...input, status, summary };
 }
 
 function uniqueSorted(values: string[]): string[] {

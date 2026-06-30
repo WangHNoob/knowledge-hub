@@ -2759,6 +2759,66 @@ button.writeback-step:disabled {
   overflow-wrap: anywhere;
 }
 
+.annotation-effect {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.annotation-effect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.annotation-effect-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.annotation-effect-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.annotation-effect-grid span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.annotation-effect-grid b {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.annotation-effect-grid strong {
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.annotation-effect small {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .annotation-example-side {
   display: grid;
   justify-items: stretch;
@@ -3680,6 +3740,7 @@ form button:active:not(:disabled) {
   .governance-score-grid,
   .annotation-example-card,
   .annotation-example-values,
+  .annotation-effect-grid,
   .audit-metrics,
   .convergence-metrics,
   .revision-patch-grid,

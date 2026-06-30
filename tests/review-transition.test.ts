@@ -153,6 +153,13 @@ describe("review task transitions", () => {
     expect(examplesResponse.statusCode).toBe(200);
     const example = examplesResponse.json().examples.find((item: { taskId: string }) => item.taskId === "task_annotation");
     expect(example).toMatchObject({ active: true, applyMode: "hint", taskId: "task_annotation" });
+    expect(example.effect).toMatchObject({
+      tasksBefore: 1,
+      tasksAfter: 0,
+      openTasksAfter: 0,
+      agentNegativeAfter: 0,
+      status: "converging"
+    });
 
     const disableResponse = await app.inject({
       method: "POST",

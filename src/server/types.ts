@@ -222,8 +222,18 @@ export interface AnnotationExample {
   injectedBuildCount: number;
   lastInjectedAt: string | null;
   lastInjectedRunId: string;
+  effect: AnnotationExampleEffect;
   createdBy: string;
   createdAt: string;
+}
+
+export interface AnnotationExampleEffect {
+  tasksBefore: number;
+  tasksAfter: number;
+  openTasksAfter: number;
+  agentNegativeAfter: number;
+  status: "converging" | "watch" | "needs_review";
+  summary: string;
 }
 
 export interface RuleDismissal {

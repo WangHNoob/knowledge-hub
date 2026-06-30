@@ -306,6 +306,19 @@ function AnnotationExampleSection({
                     <code>{annotationContextLabel(example.contextSnapshot)}</code>
                   </div>
                 </div>
+                <div className="annotation-effect">
+                  <div className="annotation-effect-head">
+                    <strong>效果评估</strong>
+                    <Badge label={annotationEffectLabel(example.effect.status)} tone={annotationEffectTone(example.effect.status)} />
+                  </div>
+                  <div className="annotation-effect-grid">
+                    <span><b>创建前同类</b><strong>{example.effect.tasksBefore}</strong></span>
+                    <span><b>创建后复发</b><strong>{example.effect.tasksAfter}</strong></span>
+                    <span><b>仍待处理</b><strong>{example.effect.openTasksAfter}</strong></span>
+                    <span><b>Agent 负反馈</b><strong>{example.effect.agentNegativeAfter}</strong></span>
+                  </div>
+                  <small>{example.effect.summary}</small>
+                </div>
               </div>
               <div className="annotation-example-side">
                 <strong>{example.injectedBuildCount}</strong>
@@ -529,6 +542,18 @@ function annotationContextLabel(value: Record<string, unknown>): string {
   const task = typeof value.task === "object" && value.task && !Array.isArray(value.task) ? value.task as Record<string, unknown> : {};
   const title = stringValue(task.title);
   return [sourceFile, componentRef, title].filter(Boolean).join(" · ") || compactJson(value);
+}
+
+function annotationEffectLabel(status: AnnotationExample["effect"]["status"]): string {
+  if (status === "converging") return "收敛";
+  if (status === "needs_review") return "需复盘";
+  return "观察";
+}
+
+function annotationEffectTone(status: AnnotationExample["effect"]["status"]): "ok" | "warn" | "hot" | undefined {
+  if (status === "converging") return "ok";
+  if (status === "needs_review") return "hot";
+  return "warn";
 }
 
 function stringValue(value: unknown): string {
