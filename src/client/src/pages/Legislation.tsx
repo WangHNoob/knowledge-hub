@@ -270,6 +270,7 @@ function AnnotationExampleSection({
   const active = examples.filter((example) => example.active);
   const overrides = examples.filter((example) => example.active && example.applyMode === "override");
   const injected = examples.filter((example) => example.injectedBuildCount > 0);
+  const reviewed = examples.filter((example) => example.lifecycle.lastReviewedAt);
   return (
     <section className="legislation-workbench">
       <section className="release-panel">
@@ -284,6 +285,7 @@ function AnnotationExampleSection({
           <Metric label="启用样例" value={active.length} hint="后续构建可注入" tone={active.length ? "ok" : undefined} />
           <Metric label="确定覆盖" value={overrides.length} hint="override active" tone={overrides.length ? "warn" : undefined} />
           <Metric label="已被注入" value={injected.length} hint="至少进入过一次 build" tone={injected.length ? "ok" : undefined} />
+          <Metric label="已复盘" value={reviewed.length} hint="人工处理过复发信号" tone={reviewed.length ? "ok" : undefined} />
           <Metric label="停用样例" value={examples.length - active.length} hint="保留审计，不再注入" />
         </div>
       </section>
@@ -348,6 +350,42 @@ function AnnotationExampleSection({
                       )}
                     </div>
                   )}
+                </div>
+                <div className="annotation-lifecycle">
+                  <div className="annotation-lifecycle-head">
+                    <strong>生命周期</strong>
+                    <Badge
+                      label={example.lifecycle.lastReviewedAt ? annotationReviewActionLabel(example.lifecycle.lastReviewAction) : "未复盘"}
+                      tone={example.lifecycle.writebackRequested ? "warn" : example.lifecycle.lastReviewedAt ? "ok" : undefined}
+                    />
+                  </div>
+                  <div className="annotation-lifecycle-grid">
+                    <span>
+                      <b>最近复盘</b>
+                      <strong>{example.lifecycle.lastReviewedAt ? formatTime(example.lifecycle.lastReviewedAt) : "尚无"}</strong>
+                    </span>
+                    <span>
+                      <b>处理人</b>
+                      <strong>{example.lifecycle.lastReviewedBy || "unknown"}</strong>
+                    </span>
+                    <span>
+                      <b>回写</b>
+                      <strong>{example.lifecycle.writebackRequested ? "已请求" : "无"}</strong>
+                    </span>
+                  </div>
+                  <small>{example.lifecycle.summary}</small>
+                  <div className="annotation-effect-actions">
+                    {example.lifecycle.reviewTaskId && (
+                      <button className="secondary-action" type="button" onClick={() => onNavigateReview(example.lifecycle.reviewTaskId)}>
+                        查看复盘记录
+                      </button>
+                    )}
+                    {example.lifecycle.writebackTaskId && example.lifecycle.writebackTaskId !== example.lifecycle.reviewTaskId && (
+                      <button className="secondary-action" type="button" onClick={() => onNavigateReview(example.lifecycle.writebackTaskId)}>
+                        查看回写任务
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="annotation-example-side">
@@ -584,6 +622,13 @@ function annotationEffectTone(status: AnnotationExample["effect"]["status"]): "o
   if (status === "converging") return "ok";
   if (status === "needs_review") return "hot";
   return "warn";
+}
+
+function annotationReviewActionLabel(action: string): string {
+  if (action === "promote_annotation_override" || action === "revise_annotation_example") return "转 override";
+  if (action === "disable_annotation_example") return "已停用";
+  if (action === "keep_annotation_hint") return "保留观察";
+  return action || "已复盘";
 }
 
 function stringValue(value: unknown): string {

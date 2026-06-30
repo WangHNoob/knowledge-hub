@@ -265,7 +265,13 @@ export class KnowledgeService {
          COALESCE(effect.open_tasks_after, 0)::int AS effect_open_tasks_after,
          COALESCE(effect.open_task_ids, '[]'::jsonb) AS effect_open_task_ids,
          COALESCE(effect.agent_negative_after, 0)::int AS effect_agent_negative_after,
-         COALESCE(review_task.task_id, '') AS effect_review_task_id
+         COALESCE(review_task.task_id, '') AS effect_review_task_id,
+         COALESCE(review_event.payload_json ->> 'action', '') AS lifecycle_review_action,
+         COALESCE(review_event.payload_json ->> 'resolvedBy', '') AS lifecycle_reviewed_by,
+         review_event.created_at AS lifecycle_reviewed_at,
+         COALESCE(review_event.payload_json ->> 'taskId', '') AS lifecycle_review_task_id,
+         COALESCE(writeback_event.payload_json ->> 'taskId', writeback_event.entity_id, '') AS lifecycle_writeback_task_id,
+         writeback_event.created_at AS lifecycle_writeback_requested_at
        FROM annotation_examples e
        LEFT JOIN LATERAL (
          SELECT
@@ -302,6 +308,22 @@ export class KnowledgeService {
          ORDER BY t.created_at DESC
          LIMIT 1
        ) review_task ON true
+       LEFT JOIN LATERAL (
+         SELECT payload_json, created_at
+         FROM knowledge_events ev
+         WHERE ev.event_type = 'annotation.review_resolved'
+           AND ev.entity_id = e.example_id
+         ORDER BY ev.created_at DESC
+         LIMIT 1
+       ) review_event ON true
+       LEFT JOIN LATERAL (
+         SELECT payload_json, entity_id, created_at
+         FROM knowledge_events ev
+         WHERE ev.event_type = 'annotation.writeback_requested'
+           AND ev.payload_json ->> 'exampleId' = e.example_id
+         ORDER BY ev.created_at DESC
+         LIMIT 1
+       ) writeback_event ON true
        ORDER BY e.active DESC, e.created_at DESC`,
     );
     return rows.map((row) => ({
@@ -326,6 +348,14 @@ export class KnowledgeService {
         openTaskIds: jsonArray(row.effect_open_task_ids),
         agentNegativeAfter: Number(row.effect_agent_negative_after ?? 0),
         reviewTaskId: String(row.effect_review_task_id ?? ""),
+      }),
+      lifecycle: annotationExampleLifecycle({
+        lastReviewAction: String(row.lifecycle_review_action ?? ""),
+        lastReviewedBy: String(row.lifecycle_reviewed_by ?? ""),
+        lastReviewedAt: row.lifecycle_reviewed_at ? String(row.lifecycle_reviewed_at) : null,
+        reviewTaskId: String(row.lifecycle_review_task_id ?? ""),
+        writebackTaskId: String(row.lifecycle_writeback_task_id ?? ""),
+        writebackRequestedAt: row.lifecycle_writeback_requested_at ? String(row.lifecycle_writeback_requested_at) : null,
       }),
       createdBy: String(row.created_by ?? ""),
       createdAt: String(row.created_at ?? ""),
@@ -837,6 +867,14 @@ export class KnowledgeService {
         agentNegativeAfter: 0,
         reviewTaskId: "",
       }),
+      lifecycle: annotationExampleLifecycle({
+        lastReviewAction: "",
+        lastReviewedBy: "",
+        lastReviewedAt: null,
+        reviewTaskId: "",
+        writebackTaskId: "",
+        writebackRequestedAt: null,
+      }),
       createdBy: input.actor,
       createdAt: now,
     };
@@ -1248,6 +1286,31 @@ function annotationExampleEffect(input: {
       ? "样例后暂无同类复发，当前表现为收敛。"
       : "样例后仍有同类历史任务，但目前没有待处理项。";
   return { ...input, status, summary };
+}
+
+function annotationExampleLifecycle(input: {
+  lastReviewAction: string;
+  lastReviewedBy: string;
+  lastReviewedAt: string | null;
+  reviewTaskId: string;
+  writebackTaskId: string;
+  writebackRequestedAt: string | null;
+}): AnnotationExample["lifecycle"] {
+  const writebackRequested = Boolean(input.writebackTaskId || input.writebackRequestedAt);
+  const action = annotationReviewActionLabel(input.lastReviewAction);
+  const summary = input.lastReviewedAt
+    ? `${input.lastReviewedBy || "unknown"} 已复盘：${action}${writebackRequested ? "，已请求回写" : ""}。`
+    : writebackRequested
+      ? "已请求确定性回写，等待构建链路继续处理。"
+      : "尚未完成复盘。";
+  return { ...input, writebackRequested, summary };
+}
+
+function annotationReviewActionLabel(action: string): string {
+  if (action === "promote_annotation_override" || action === "revise_annotation_example") return "转为确定性覆盖";
+  if (action === "disable_annotation_example") return "停用样例";
+  if (action === "keep_annotation_hint") return "保留观察";
+  return action || "未记录动作";
 }
 
 function annotationExampleReviewAction(value: Record<string, unknown>): "promote_annotation_override" | "disable_annotation_example" | "keep_annotation_hint" {

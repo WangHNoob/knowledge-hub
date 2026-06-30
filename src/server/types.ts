@@ -223,6 +223,7 @@ export interface AnnotationExample {
   lastInjectedAt: string | null;
   lastInjectedRunId: string;
   effect: AnnotationExampleEffect;
+  lifecycle: AnnotationExampleLifecycle;
   createdBy: string;
   createdAt: string;
 }
@@ -235,6 +236,17 @@ export interface AnnotationExampleEffect {
   agentNegativeAfter: number;
   status: "converging" | "watch" | "needs_review";
   reviewTaskId: string;
+  summary: string;
+}
+
+export interface AnnotationExampleLifecycle {
+  lastReviewAction: string;
+  lastReviewedBy: string;
+  lastReviewedAt: string | null;
+  reviewTaskId: string;
+  writebackRequested: boolean;
+  writebackTaskId: string;
+  writebackRequestedAt: string | null;
   summary: string;
 }
 

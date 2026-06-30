@@ -279,6 +279,19 @@ describe("review task transitions", () => {
       ["annotation.writeback_requested", reviewTask.taskId]
     );
     expect(writebackEvents.rows).toHaveLength(1);
+
+    const lifecycleResponse = await app.inject({ method: "GET", url: "/api/legislation/annotation-examples", headers: auth });
+    const lifecycleExample = lifecycleResponse.json().examples.find((item: { exampleId: string }) => item.exampleId === example.exampleId);
+    expect(lifecycleExample.lifecycle).toMatchObject({
+      lastReviewAction: "promote_annotation_override",
+      lastReviewedBy: "admin",
+      reviewTaskId: reviewTask.taskId,
+      writebackRequested: true,
+      writebackTaskId: reviewTask.taskId
+    });
+    expect(lifecycleExample.lifecycle.lastReviewedAt).toBeTruthy();
+    expect(lifecycleExample.lifecycle.writebackRequestedAt).toBeTruthy();
+    expect(lifecycleExample.lifecycle.summary).toContain("已请求回写");
   });
 
   it("rejects viewers", async () => {

@@ -2905,6 +2905,66 @@ button.writeback-step:disabled {
   overflow-wrap: anywhere;
 }
 
+.annotation-lifecycle {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(201, 162, 39, 0.28);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(180deg, rgba(201, 162, 39, 0.06), transparent 90px),
+    var(--surface-sunken);
+}
+
+.annotation-lifecycle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.annotation-lifecycle-head strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.annotation-lifecycle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.annotation-lifecycle-grid span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.annotation-lifecycle-grid b {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.annotation-lifecycle-grid strong {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.annotation-lifecycle small {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .annotation-effect-actions {
   display: flex;
   gap: 8px;
@@ -3838,6 +3898,7 @@ form button:active:not(:disabled) {
   .annotation-example-card,
   .annotation-example-values,
   .annotation-effect-grid,
+  .annotation-lifecycle-grid,
   .audit-metrics,
   .convergence-metrics,
   .revision-patch-grid,
