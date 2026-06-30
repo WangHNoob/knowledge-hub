@@ -67,6 +67,49 @@ function numberFromRecord(source: Record<string, unknown>, key: string): number 
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+type CandidateOverride = {
+  setType?: string;
+  setTitle?: string;
+  setFacts?: Record<string, string>;
+  removeFacts?: string[];
+  replaceSection?: { heading: string; markdown: string };
+  replaceBody?: string;
+};
+
+function candidateOverride(candidate: { value: unknown }): CandidateOverride | null {
+  const value = candidate.value;
+  if (!value || typeof value !== "object") return null;
+  const override = (value as Record<string, unknown>).override;
+  return override && typeof override === "object" ? override as CandidateOverride : null;
+}
+
+function candidateHasOverride(candidate: { value: unknown }): boolean {
+  return candidateOverride(candidate) !== null;
+}
+
+// 把结构化 override 摘成一行人话，让审核者一眼看清这个方案会改什么。
+function overrideSummary(candidate: { value: unknown }): string {
+  const override = candidateOverride(candidate);
+  if (!override) return "";
+  const parts: string[] = [];
+  if (override.setType) parts.push(`设为类型「${override.setType}」`);
+  if (override.setTitle) parts.push("修正标题");
+  if (override.setFacts && Object.keys(override.setFacts).length) parts.push(`补字段 ${Object.keys(override.setFacts).join("、")}`);
+  if (override.removeFacts?.length) parts.push(`删除字段 ${override.removeFacts.join("、")}`);
+  if (override.replaceSection?.heading) parts.push(`重写章节「${override.replaceSection.heading}」`);
+  if (override.replaceBody !== undefined) parts.push("重写正文");
+  return parts.length ? `将${parts.join("，")}` : "";
+}
+
+// 原始英文门禁标题/描述，折叠展示以保留可追溯性（人话版已在卡片正文）。
+function rawRuleDetail(task: ReviewTask): string {
+  const title = stringFromRecord(task.contextSnapshot, "ruleTitle");
+  const description = stringFromRecord(task.contextSnapshot, "ruleDescription");
+  const ruleId = task.ruleId ? `[${task.ruleId}] ` : "";
+  const text = [title, description].filter(Boolean).join("：");
+  return text ? `${ruleId}${text}` : "";
+}
+
 export function Review() {
   const { navigate, params } = useNav();
   const queryClient = useQueryClient();
@@ -156,14 +199,14 @@ export function Review() {
   const act = useCallback((task: ReviewTask, next: "open" | "resolved" | "dismissed") => {
     transition.mutate({ taskIds: [task.taskId], next, note: notes[task.taskId] });
   }, [notes, transition]);
-  const annotateTask = useCallback((task: ReviewTask) => {
+  const annotateTask = useCallback((task: ReviewTask, applyMode?: "hint" | "override") => {
     annotate.mutate({
       task,
       note: notes[task.taskId],
       answer: answers[task.taskId],
       selectedCandidateId: selectedCandidates[task.taskId],
       dismissRule: dismissRules[task.taskId],
-      applyMode: applyModes[task.taskId] ?? "hint"
+      applyMode: applyMode ?? applyModes[task.taskId] ?? "hint"
     });
   }, [annotate, answers, applyModes, dismissRules, notes, selectedCandidates]);
   const bulk = useCallback((next: "resolved" | "dismissed") => {
@@ -249,7 +292,7 @@ export function Review() {
             onCandidate={(candidateId) => setSelectedCandidates((prev) => ({ ...prev, [task.taskId]: candidateId }))}
             onDismissRule={(checked) => setDismissRules((prev) => ({ ...prev, [task.taskId]: checked }))}
             onApplyMode={(mode) => setApplyModes((prev) => ({ ...prev, [task.taskId]: mode }))}
-            onAnnotate={() => annotateTask(task)}
+            onAnnotate={(applyMode) => annotateTask(task, applyMode)}
             onStartRebuild={() => rebuild.mutate(task)}
             onTransition={(next) => act(task, next)}
             onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
@@ -301,7 +344,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onCandidate: (candidateId: string) => void;
   onDismissRule: (checked: boolean) => void;
   onApplyMode: (mode: "hint" | "override") => void;
-  onAnnotate: () => void;
+  onAnnotate: (applyMode?: "hint" | "override") => void;
   onStartRebuild: () => void;
   onTransition: (next: "open" | "resolved" | "dismissed") => void;
   onNavigatePackage: () => void;
@@ -349,7 +392,13 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
         ) : (
           <div className="quality-task-brief">
             <p>{task.description}</p>
-            <strong>{task.suggestedAction}</strong>
+            {task.suggestedAction && <strong>{task.suggestedAction}</strong>}
+            {rawRuleDetail(task) && (
+              <details className="raw-feedback">
+                <summary>查看原始门禁信息</summary>
+                <p>{rawRuleDetail(task)}</p>
+              </details>
+            )}
           </div>
         )}
         <div className="asset-link">
@@ -377,52 +426,75 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
             onAnnotate={onAnnotate}
           />
         )}
-        {task.status === "open" && task.taskKind === "annotation" && !isAnnotationReview && (
+        {task.status === "open" && task.taskKind === "annotation" && !isAnnotationReview && (() => {
+          const selected = task.candidates.find((candidate) => candidate.id === selectedCandidateId);
+          const selectedIsFix = selected ? candidateHasOverride(selected) : false;
+          const anyFix = task.candidates.some(candidateHasOverride);
+          return (
           <div className="annotation-panel">
             <div className="annotation-head">
-              <strong>标注任务</strong>
+              <strong>{anyFix ? "选择一个修复方案" : "标注任务"}</strong>
               <span>confidence {Math.round(task.confidence * 100)}%</span>
             </div>
+            {anyFix && <p className="annotation-hint">选中一个方案后点「采纳并自动修复」，系统会确定性回写对应 wiki 并自动重建。</p>}
             {task.candidates.length > 0 && (
-              <div className="annotation-candidates">
-                {task.candidates.map((candidate) => (
-                  <label key={candidate.id} className={selectedCandidateId === candidate.id ? "candidate selected" : "candidate"}>
-                    <input type="radio" name={`candidate-${task.taskId}`} checked={selectedCandidateId === candidate.id} onChange={() => onCandidate(candidate.id)} />
-                    <span>
-                      <strong>{candidate.label}</strong>
-                      {candidate.rationale && <small>{candidate.rationale}</small>}
-                    </span>
-                    {typeof candidate.confidence === "number" && <b>{Math.round(candidate.confidence * 100)}%</b>}
-                  </label>
-                ))}
+              <div className={anyFix ? "annotation-candidates fix-candidates" : "annotation-candidates"}>
+                {task.candidates.map((candidate) => {
+                  const isFix = candidateHasOverride(candidate);
+                  return (
+                    <label key={candidate.id} className={selectedCandidateId === candidate.id ? "candidate selected" : "candidate"}>
+                      <input type="radio" name={`candidate-${task.taskId}`} checked={selectedCandidateId === candidate.id} onChange={() => onCandidate(candidate.id)} />
+                      <span>
+                        <strong>{candidate.label}</strong>
+                        {candidate.rationale && <small>{candidate.rationale}</small>}
+                        {isFix && <em className="fix-summary">{overrideSummary(candidate)}</em>}
+                      </span>
+                      {typeof candidate.confidence === "number" && <b>{Math.round(candidate.confidence * 100)}%</b>}
+                    </label>
+                  );
+                })}
               </div>
             )}
-            <textarea
-              className="task-note annotation-answer"
-              placeholder="填写正确答案或补充标注说明；留空时采用所选候选。"
-              value={answer}
-              onChange={(event) => onAnswer(event.target.value)}
-              rows={3}
-            />
+            {!selectedIsFix && (
+              <textarea
+                className="task-note annotation-answer"
+                placeholder="填写正确答案或补充标注说明；留空时采用所选候选。"
+                value={answer}
+                onChange={(event) => onAnswer(event.target.value)}
+                rows={3}
+              />
+            )}
             {task.ruleId && (
               <label className="switch-field compact">
                 <input type="checkbox" checked={dismissRule} onChange={(event) => onDismissRule(event.target.checked)} />
                 <span>此规则对此组件不适用，后续跳过</span>
               </label>
             )}
-            <label className="switch-field compact">
-              <input
-                type="checkbox"
-                checked={applyMode === "override"}
-                onChange={(event) => onApplyMode(event.target.checked ? "override" : "hint")}
-              />
-              <span>确定性覆盖：下次构建强制回写到对应 wiki</span>
-            </label>
-            <button className="primary-action" type="button" disabled={isPending || (!answer.trim() && !selectedCandidateId)} onClick={onAnnotate}>
-              {applyMode === "override" ? "提交标注并回写构建规则" : "提交标注并沉淀样例"}
+            {!selectedIsFix && (
+              <label className="switch-field compact">
+                <input
+                  type="checkbox"
+                  checked={applyMode === "override"}
+                  onChange={(event) => onApplyMode(event.target.checked ? "override" : "hint")}
+                />
+                <span>确定性覆盖：下次构建强制回写到对应 wiki</span>
+              </label>
+            )}
+            <button
+              className="primary-action"
+              type="button"
+              disabled={isPending || (!answer.trim() && !selectedCandidateId)}
+              onClick={() => onAnnotate(selectedIsFix ? "override" : applyMode)}
+            >
+              {selectedIsFix
+                ? "采纳此方案并自动修复"
+                : applyMode === "override"
+                  ? "提交标注并回写构建规则"
+                  : "提交标注并沉淀样例"}
             </button>
           </div>
-        )}
+          );
+        })()}
         {task.status === "open" ? (
           <div className="task-actions split-actions">
             <div className="task-primary-actions">

@@ -898,6 +898,23 @@ code {
   color: var(--olive-dim);
 }
 
+.annotation-hint {
+  margin: 0 0 2px;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.fix-candidates .candidate {
+  align-items: start;
+}
+
+.candidate .fix-summary {
+  margin-top: 2px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--olive-dim);
+}
+
 .annotation-review-panel {
   border-color: rgba(143, 168, 79, 0.34);
   background:
@@ -1858,6 +1875,78 @@ button.writeback-step:disabled {
 .model-secret,
 .remember-secret {
   grid-column: 1 / -1;
+}
+
+/* MCP 模拟查询：按工具渲染的参数表单 */
+.mcp-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 4px 0 14px;
+}
+
+.mcp-form .field-hint {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mcp-form .required-mark {
+  color: var(--danger, #c0492f);
+}
+
+.mcp-kv {
+  grid-column: 1 / -1;
+}
+
+.mcp-kv-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-kv-row input {
+  flex: 1;
+}
+
+.mcp-kv-eq {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.ghost-action {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.ghost-action:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.mcp-payload-preview {
+  margin: 0 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  padding: 8px 12px;
+}
+
+.mcp-payload-preview summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mcp-payload-preview pre {
+  margin: 10px 0 0;
+  font-size: 12px;
+  overflow-x: auto;
 }
 
 .model-actions {

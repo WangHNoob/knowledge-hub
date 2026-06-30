@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { PipelineModelConfig } from "./modelConfig";
 import { extractMaxTokens, redactModelConfig } from "./modelConfig";
 import { createLlmClient, type JsonSchemaSpec, type LlmClient } from "./llmClient";
+import { ModelJsonParseError, parseModelJson } from "./jsonParse";
 import type { WikiSpecSet } from "./specs";
 import { loadTableAliases, type TableAliasIndex } from "./tableAliases";
 import type { StageResult } from "./types";
@@ -604,49 +605,6 @@ function parseRelationshipsBlock(lines: string[]): Relationship[] {
     .filter((relationship): relationship is Relationship =>
       Boolean(relationship.source && relationship.relation && relationship.target),
     );
-}
-
-class ModelJsonParseError extends Error {
-  readonly detail: string;
-
-  constructor(rel: string, detail: string) {
-    super(`Model extraction returned invalid JSON for ${rel}: ${detail}`);
-    this.name = "ModelJsonParseError";
-    this.detail = detail;
-  }
-}
-
-function parseModelJson(content: string, rel: string): unknown {
-  const candidates = [
-    content,
-    stripMarkdownFence(content),
-    extractFirstJsonObject(content),
-  ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
-
-  let lastError: unknown;
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new ModelJsonParseError(rel, detail);
-}
-
-function stripMarkdownFence(content: string): string {
-  const trimmed = content.trim();
-  const match = /^```(?:json|JSON)?\s*([\s\S]*?)\s*```$/u.exec(trimmed);
-  return match ? match[1].trim() : trimmed;
-}
-
-function extractFirstJsonObject(content: string): string | null {
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  return content.slice(start, end + 1).trim();
 }
 
 function deterministicFallback(markdown: string, rel: string): ExtractedPage {

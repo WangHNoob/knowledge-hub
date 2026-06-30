@@ -9,26 +9,129 @@ import { formatPercent, formatTime } from "../utils/format";
 import { TRUST_DIMENSIONS, trustLabel, trustStatusLabel, trustTone } from "../utils/trust";
 import { IdChip, useNav } from "../ui/navigation";
 
-const MCP_TOOLS = [
-  "kb_search",
-  "kb_resolve_topic",
-  "kb_get_page",
-  "kb_get_section",
-  "kb_list_pages",
-  "kb_get_page_tables",
-  "kb_get_entity",
-  "kb_get_neighbors",
-  "kb_list_entities",
-  "kb_get_relations",
-  "kb_list_tables",
-  "kb_get_table_schema",
-  "kb_query_table",
-  "kb_validate_table",
-  "kb_check_table_value",
-  "kb_get_quality",
-  "kb_get_evidence",
-  "kb_get_release"
+// 每个工具的参数表单描述：与 src/server/mcpTools.ts 的 zod inputSchema 对齐，
+// 只暴露规范参数名（忽略 q/topK/tableName 等别名）。这样模拟查询时由表单按工具
+// 渲染对应字段，使用者无需手写 JSON payload。
+type McpFieldType = "text" | "number" | "textarea" | "kv";
+
+interface McpField {
+  name: string;
+  label: string;
+  type: McpFieldType;
+  required?: boolean;
+  placeholder?: string;
+  hint?: string;
+}
+
+interface McpToolSpec {
+  name: string;
+  title: string;
+  fields: McpField[];
+}
+
+const MCP_TOOL_SPECS: McpToolSpec[] = [
+  { name: "kb_search", title: "搜索知识", fields: [
+    { name: "query", label: "查询词", type: "text", required: true, placeholder: "自然语言或精确主题/表名，如 荣耀连战" },
+    { name: "limit", label: "返回数量", type: "number", placeholder: "默认由服务端决定（≤200）" },
+  ] },
+  { name: "kb_resolve_topic", title: "解析主题", fields: [
+    { name: "topic", label: "主题", type: "text", required: true, placeholder: "要解析为页面/表/实体的主题" },
+  ] },
+  { name: "kb_get_page", title: "读取页面", fields: [
+    { name: "page", label: "页面", type: "text", required: true, placeholder: "页面标题、OKF 路径、artifactId 或 componentId" },
+    { name: "componentId", label: "组件 ID（可选）", type: "text", placeholder: "上一次 MCP 结果中的 componentId" },
+  ] },
+  { name: "kb_get_section", title: "读取章节", fields: [
+    { name: "page", label: "页面", type: "text", required: true, placeholder: "页面标题、OKF 路径、artifactId 或 componentId" },
+    { name: "section", label: "章节标题", type: "text", required: true, placeholder: "要提取的 Markdown 标题" },
+    { name: "componentId", label: "组件 ID（可选）", type: "text" },
+  ] },
+  { name: "kb_list_pages", title: "列出页面", fields: [] },
+  { name: "kb_get_page_tables", title: "页面引用的表", fields: [
+    { name: "page", label: "页面", type: "text", required: true, placeholder: "页面标题、OKF 路径、artifactId 或 componentId" },
+    { name: "componentId", label: "组件 ID（可选）", type: "text" },
+  ] },
+  { name: "kb_get_entity", title: "读取实体", fields: [
+    { name: "entityId", label: "实体", type: "text", required: true, placeholder: "图实体 id、label 或 name" },
+  ] },
+  { name: "kb_get_neighbors", title: "实体邻居", fields: [
+    { name: "entityId", label: "实体", type: "text", required: true, placeholder: "图实体 id、label 或 name" },
+  ] },
+  { name: "kb_list_entities", title: "列出实体", fields: [
+    { name: "type", label: "类型过滤（可选）", type: "text", placeholder: "如 system / activity / table / item" },
+  ] },
+  { name: "kb_get_relations", title: "读取关系", fields: [
+    { name: "source", label: "源（可选）", type: "text" },
+    { name: "target", label: "目标（可选）", type: "text" },
+    { name: "relation", label: "关系（可选）", type: "text" },
+  ] },
+  { name: "kb_list_tables", title: "列出表", fields: [
+    { name: "query", label: "搜索（可选）", type: "text", placeholder: "按表名、别名、分组或字段搜索" },
+    { name: "group", label: "分组（可选）", type: "text" },
+    { name: "limit", label: "返回数量", type: "number" },
+  ] },
+  { name: "kb_get_table_schema", title: "读取表结构", fields: [
+    { name: "table", label: "表名", type: "text", required: true, placeholder: "规范表名或别名" },
+  ] },
+  { name: "kb_query_table", title: "查询表数据", fields: [
+    { name: "table", label: "表名", type: "text", required: true, placeholder: "规范表名或别名" },
+    { name: "limit", label: "返回数量", type: "number" },
+    { name: "where", label: "精确匹配过滤", type: "kv", hint: "字段 = 值，可加多行；留空表示不过滤" },
+  ] },
+  { name: "kb_validate_table", title: "校验表", fields: [
+    { name: "table", label: "表名", type: "text", required: true, placeholder: "规范表名或别名" },
+  ] },
+  { name: "kb_check_table_value", title: "校验表值", fields: [
+    { name: "table", label: "表名", type: "text", required: true, placeholder: "规范表名或别名" },
+    { name: "field", label: "字段", type: "text", required: true, placeholder: "要比较的列名" },
+    { name: "value", label: "值", type: "text", required: true, placeholder: "字符串归一化后精确匹配的值" },
+  ] },
+  { name: "kb_get_quality", title: "读取质量", fields: [
+    { name: "componentId", label: "组件 ID（可选）", type: "text", placeholder: "留空读取发布级质量摘要" },
+  ] },
+  { name: "kb_get_evidence", title: "读取证据", fields: [
+    { name: "componentId", label: "组件 ID（可选）", type: "text" },
+    { name: "page", label: "页面（可选）", type: "text" },
+    { name: "query", label: "查询（可选）", type: "text" },
+  ] },
+  { name: "kb_get_release", title: "读取发布", fields: [] },
 ];
+
+function specForTool(name: string): McpToolSpec {
+  return MCP_TOOL_SPECS.find((spec) => spec.name === name) ?? MCP_TOOL_SPECS[0];
+}
+
+interface WhereRow { key: string; value: string }
+
+function buildPayload(spec: McpToolSpec, form: Record<string, string>, whereRows: WhereRow[]): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  for (const field of spec.fields) {
+    if (field.type === "kv") {
+      const where: Record<string, string> = {};
+      for (const row of whereRows) {
+        const key = row.key.trim();
+        if (key) where[key] = row.value;
+      }
+      if (Object.keys(where).length > 0) payload[field.name] = where;
+      continue;
+    }
+    const raw = (form[field.name] ?? "").trim();
+    if (!raw) continue;
+    if (field.type === "number") {
+      const parsed = Number(raw);
+      if (!Number.isNaN(parsed)) payload[field.name] = parsed;
+    } else {
+      payload[field.name] = raw;
+    }
+  }
+  return payload;
+}
+
+function missingRequired(spec: McpToolSpec, form: Record<string, string>): string[] {
+  return spec.fields
+    .filter((field) => field.required && field.type !== "kv" && !(form[field.name] ?? "").trim())
+    .map((field) => field.label);
+}
 
 type AgentTab = "connect" | "simulate" | "audit" | "feedback" | "attribution";
 
@@ -37,15 +140,25 @@ export function AgentFeedback() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<AgentTab>("simulate");
   const [toolName, setToolName] = useState("kb_search");
-  const [payload, setPayload] = useState('{\n  "query": "Battle System"\n}');
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [whereRows, setWhereRows] = useState<WhereRow[]>([]);
   const [envelope, setEnvelope] = useState<KnowledgeEnvelope | null>(null);
+  const spec = specForTool(toolName);
+  const previewPayload = useMemo(() => buildPayload(spec, form, whereRows), [spec, form, whereRows]);
+  const missing = useMemo(() => missingRequired(spec, form), [spec, form]);
+  const selectTool = (name: string) => {
+    setToolName(name);
+    setForm({});
+    setWhereRows([]);
+    setEnvelope(null);
+  };
   const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
   const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const convergence = useQuery({ queryKey: ["agent-flywheel-convergence"], queryFn: getFlywheelConvergenceSummary, refetchInterval: 5000 });
   const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({
-    mutationFn: async () => simulateMcpQuery(toolName, JSON.parse(payload) as Record<string, unknown>),
+    mutationFn: async () => simulateMcpQuery(toolName, buildPayload(spec, form, whereRows)),
     onSuccess: async (result) => {
       setEnvelope(result);
       await Promise.all([
@@ -60,13 +173,16 @@ export function AgentFeedback() {
   useEffect(() => {
     if (!params.toolName && !params.query) return;
     if (params.toolName) setToolName(params.toolName);
-    if (params.query) setPayload(JSON.stringify({ query: params.query }, null, 2));
+    setWhereRows([]);
+    setEnvelope(null);
+    if (params.query) setForm({ query: params.query, topic: params.query });
+    else setForm({});
     setTab("simulate");
   }, [params.toolName, params.query]);
 
   const retest = (insight: FeedbackInsight) => {
-    setToolName(insight.toolName || "kb_search");
-    setPayload(JSON.stringify({ query: insight.queryText }, null, 2));
+    selectTool(insight.toolName || "kb_search");
+    setForm({ query: insight.queryText, topic: insight.queryText });
     setTab("simulate");
   };
   const eventRows = events.data ?? [];
@@ -150,18 +266,58 @@ export function AgentFeedback() {
             <div className="model-grid">
               <label className="field-label">
                 Tool
-                <select value={toolName} onChange={(event) => setToolName(event.target.value)}>
-                  {MCP_TOOLS.map((tool) => <option key={tool} value={tool}>{tool}</option>)}
+                <select value={toolName} onChange={(event) => selectTool(event.target.value)}>
+                  {MCP_TOOL_SPECS.map((item) => <option key={item.name} value={item.name}>{item.name} · {item.title}</option>)}
                 </select>
               </label>
-              <label className="field-label model-secret">
-                Payload JSON
-                <textarea className="code-editor small" value={payload} onChange={(event) => setPayload(event.target.value)} spellCheck={false} />
-              </label>
             </div>
-            <button className="primary-action" disabled={simulate.isPending} onClick={() => simulate.mutate()}>
+            {spec.fields.length === 0 ? (
+              <p className="subtle">该工具无需参数，直接运行即可。</p>
+            ) : (
+              <div className="mcp-form">
+                {spec.fields.map((field) => field.type === "kv" ? (
+                  <div className="field-label mcp-kv" key={field.name}>
+                    <span>{field.label}{field.hint && <small className="field-hint"> · {field.hint}</small>}</span>
+                    {whereRows.map((row, index) => (
+                      <div className="mcp-kv-row" key={index}>
+                        <input
+                          placeholder="字段"
+                          value={row.key}
+                          onChange={(event) => setWhereRows((rows) => rows.map((current, position) => position === index ? { ...current, key: event.target.value } : current))}
+                        />
+                        <span className="mcp-kv-eq">=</span>
+                        <input
+                          placeholder="值"
+                          value={row.value}
+                          onChange={(event) => setWhereRows((rows) => rows.map((current, position) => position === index ? { ...current, value: event.target.value } : current))}
+                        />
+                        <button type="button" className="ghost-action" onClick={() => setWhereRows((rows) => rows.filter((_, position) => position !== index))}>移除</button>
+                      </div>
+                    ))}
+                    <button type="button" className="secondary-action" onClick={() => setWhereRows((rows) => [...rows, { key: "", value: "" }])}>+ 添加过滤条件</button>
+                  </div>
+                ) : (
+                  <label className="field-label" key={field.name}>
+                    {field.label}{field.required && <span className="required-mark"> *</span>}
+                    <input
+                      type={field.type === "number" ? "number" : "text"}
+                      value={form[field.name] ?? ""}
+                      placeholder={field.placeholder}
+                      spellCheck={false}
+                      onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))}
+                    />
+                    {field.hint && <small className="field-hint">{field.hint}</small>}
+                  </label>
+                ))}
+              </div>
+            )}
+            <details className="mcp-payload-preview">
+              <summary>等效 payload JSON</summary>
+              <pre>{JSON.stringify(previewPayload, null, 2)}</pre>
+            </details>
+            <button className="primary-action" disabled={simulate.isPending || missing.length > 0} onClick={() => simulate.mutate()}>
               <Play size={16} />
-              {simulate.isPending ? "查询中..." : "运行模拟查询"}
+              {simulate.isPending ? "查询中..." : missing.length > 0 ? `请填写：${missing.join("、")}` : "运行模拟查询"}
             </button>
             {simulate.error && <p className="error">{simulate.error instanceof Error ? simulate.error.message : String(simulate.error)}</p>}
             {envelope && (

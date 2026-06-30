@@ -161,6 +161,18 @@ export class ReleaseService {
 
       const packages = await this.loadPackages(release.packageIds);
       const components = await this.loadComponents(release.packageIds);
+      // 设计护栏：scoped/局部重建（带 only 过滤）产出的包只含被过滤的子集，
+      // 缺失父包里未受影响的文档 wiki。这类残缺包只能作为父发布的**修订**发布
+      // （OKF 导出会继承父 bundle 并只 patch 变更组件），不能作为独立全量发布，
+      // 否则会用残缺快照覆盖完整的已发布版本（kb_search 将查不到文档页）。
+      const scoped = await this.scopedPackages(packages);
+      if (scoped.length > 0 && !release.parentReleaseId) {
+        throw new Error(
+          `无法独立发布局部重建产生的残缺包（${scoped.map((s) => `${s.packageId} only=${s.only}`).join("; ")}）：`
+          + `它缺少父包中未受影响的文档 wiki 页面。请改为发布一次全量构建的包，`
+          + `或将其作为某个完整父发布的修订发布（设置 parentReleaseId 以继承父 bundle）。`,
+        );
+      }
       if (!options.autoMode) {
         const blockers = await this.findOpenBlockingTasks(release.packageIds);
         if (blockers.length > 0) {
@@ -485,8 +497,23 @@ export class ReleaseService {
     };
   }
 
-  private async loadPackages(packageIds: string[]): Promise<AssetPackage[]> {
-    if (packageIds.length === 0) return [];
+  // 找出 packageIds 中由 scoped 构建（带 only 过滤）产生的残缺包：
+  // 通过其 createdByRunId 的 build run config.only 判定。
+  private async scopedPackages(packages: AssetPackage[]): Promise<Array<{ packageId: string; only: string }>> {
+    const runIds = uniqueSorted(packages.map((pkg) => pkg.createdByRunId).filter(Boolean));
+    if (runIds.length === 0) return [];
+    const placeholders = runIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT run_id, config_json->>'only' AS only_filter FROM knowledge_build_runs WHERE run_id IN (${placeholders})`,
+      runIds,
+    );
+    const onlyByRun = new Map(rows.map((row) => [String(row.run_id), String(row.only_filter ?? "").trim()] as const));
+    return packages
+      .map((pkg) => ({ packageId: pkg.packageId, only: onlyByRun.get(pkg.createdByRunId) ?? "" }))
+      .filter((entry) => entry.only.length > 0);
+  }
+
+  private async loadPackages(packageIds: string[]): Promise<AssetPackage[]> {    if (packageIds.length === 0) return [];
     const placeholders = packageIds.map((_, index) => `$${index + 1}`).join(",");
     const { rows } = await this.adapter.query(
       `SELECT *

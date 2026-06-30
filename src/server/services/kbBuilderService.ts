@@ -30,6 +30,7 @@ import { runGraphStage } from "./kbBuilder/graphStage";
 import { runVizStage } from "./kbBuilder/vizStage";
 import { evaluateQualityGate, type QualityRuleDismissal } from "./kbBuilder/qualityGate";
 import { collectPipelineArtifacts } from "./kbBuilder/collector";
+import { enrichFindings, fallbackEnrichment, type EnrichedFinding } from "./kbBuilder/findingEnrichment";
 import { generateAliasDrafts, scanGamedataTableNames, writeAliasFile } from "./kbBuilder/aliasPrep";
 import { createLlmClient } from "./kbBuilder/llmClient";
 import type { BuildPipelineOptions, CollectedArtifact, QualityGateResult } from "./kbBuilder/types";
@@ -270,7 +271,7 @@ export class KbBuilderPipelineService {
       const artifacts = await this.withStage(runId, options, "collect", async () => collectPipelineArtifacts(workspace.dataDir, workspace.workspaceDir, quality.componentQuality));
       const pkg = await this.withStage(runId, options, "persist", async () => {
         const inserted = await this.insertPackageAndArtifacts(packageId, runId, options.versionId, workspace.files.map((file) => file.logicalPath), artifacts, quality, ruleProfile, flywheelSummary);
-        flywheelSummary.newAnnotationTasks = await this.insertReviewTasks(packageId, artifacts, quality.findings);
+        flywheelSummary.newAnnotationTasks = await this.insertReviewTasks(packageId, artifacts, quality.findings, workspace.dataDir, modelConfig);
         await this.updateRunFlywheelSummary(runId, flywheelSummary);
         return inserted;
       });
@@ -815,10 +816,47 @@ export class KbBuilderPipelineService {
     }
   }
 
-  private async insertReviewTasks(packageId: string, artifacts: CollectedArtifact[], findings: QualityFinding[]): Promise<number> {
+  private async insertReviewTasks(
+    packageId: string,
+    artifacts: CollectedArtifact[],
+    findings: QualityFinding[],
+    dataDir: string,
+    modelConfig: PipelineModelConfig,
+  ): Promise<number> {
     const qualityReport = artifacts.find((artifact) => artifact.kind === "quality_report") ?? artifacts[0];
+    const warnings: string[] = [];
+    // 构建时预生成：把每条 finding 翻译成人话 + 结构化修复方案（带 override），
+    // 选中即可经现有 annotate→override→自动重建链路确定性修复。LLM 不可用 / 失败时
+    // 自动退回单候选「按建议修复」，永不阻断落库。
+    let enrichments: EnrichedFinding[];
+    try {
+      enrichments = await enrichFindings(findings, {
+        dataDir,
+        modelConfig,
+        resolveSource: (finding) => resolveFindingSource(finding, artifacts),
+        warnings,
+      });
+    } catch (error) {
+      warnings.push(`finding enrichment failed wholesale: ${error instanceof Error ? error.message : String(error)}`);
+      enrichments = findings.map((finding) => fallbackEnrichment(finding));
+    }
+    if (warnings.length > 0) {
+      await this.diagnostics?.write({
+        traceId: "",
+        level: "info",
+        category: "kb_build",
+        message: "finding enrichment warnings",
+        status: "completed",
+        entityType: "package",
+        entityId: packageId,
+        context: { warnings },
+      });
+    }
+
     let inserted = 0;
-    for (const finding of findings) {
+    for (let index = 0; index < findings.length; index += 1) {
+      const finding = findings[index];
+      const enrichment = enrichments[index] ?? fallbackEnrichment(finding);
       const artifact = artifacts.find((item) => item.legacyPath === finding.componentId) ?? qualityReport;
       if (!artifact) continue;
       await this.adapter.query(
@@ -835,17 +873,21 @@ export class KbBuilderPipelineService {
           "open",
           "annotation",
           finding.ruleId,
-          finding.title,
-          finding.description,
+          enrichment.humanTitle,
+          enrichment.humanExplain,
           finding.suggestedAction,
-          JSON.stringify(reviewTaskCandidates(finding)),
-          Math.max(0, Math.min(1, 1 - finding.scoreImpact)),
+          JSON.stringify(enrichment.candidates),
+          enrichment.candidates[0]?.confidence ?? Math.max(0, Math.min(1, 1 - finding.scoreImpact)),
           JSON.stringify({
             ruleId: finding.ruleId,
             componentRef: finding.componentId ?? artifact.legacyPath,
             artifactLegacyPath: artifact.legacyPath,
             title: finding.title,
             description: finding.description,
+            // 保留英文原始规则文本与是否 LLM 增强，便于审计与前端折叠展示。
+            ruleTitle: finding.title,
+            ruleDescription: finding.description,
+            enriched: enrichment.enriched,
           }),
           new Date().toISOString(),
         ],
@@ -1021,18 +1063,25 @@ function jsonValue<T>(value: unknown, fallback: T): T {
   return (value ?? fallback) as T;
 }
 
-function reviewTaskCandidates(finding: QualityFinding): Array<{ id: string; label: string; value: Record<string, unknown>; confidence: number; rationale: string }> {
-  return [{
-    id: "apply_suggested_action",
-    label: "按建议修复",
-    value: {
-      ruleId: finding.ruleId,
-      action: finding.suggestedAction,
-      componentRef: finding.componentId ?? "",
-    },
-    confidence: Math.max(0, Math.min(1, 1 - finding.scoreImpact)),
-    rationale: finding.description,
-  }];
+// 把一条 finding 关联到它的组件来源：wikiRel（读正文喂 LLM）+ sourcePath
+// （override 确定性匹配所需，取原始资料路径 gamedocs/ 或 gamedata/）+ pageType。
+function resolveFindingSource(
+  finding: QualityFinding,
+  artifacts: CollectedArtifact[],
+): { sourcePath: string; wikiRel: string; pageType: string } {
+  const wikiRel = finding.componentId && finding.componentId.endsWith(".md") ? finding.componentId : "";
+  const artifact = artifacts.find((item) => item.legacyPath === finding.componentId);
+  const sourcePath = artifact?.sourceRefs.find((ref) => ref.startsWith("gamedocs/") || ref.startsWith("gamedata/"))
+    ?? artifact?.sourceRefs[0]
+    ?? "";
+  const pageType = wikiPageTypeFromRel(wikiRel);
+  return { sourcePath, wikiRel, pageType };
+}
+
+// wiki/<dir>/<slug>.md → 反查 pageType id 比较麻烦（dir 与 id 是 manifest 映射），
+// 这里给 override 留空即可：extractStage 的匹配在 pageType 缺省时不强制校验。
+function wikiPageTypeFromRel(_wikiRel: string): string {
+  return "";
 }
 
 function buildFlywheelSummary(
