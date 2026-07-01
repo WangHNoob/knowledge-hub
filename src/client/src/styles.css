@@ -922,6 +922,35 @@ code {
   color: var(--ink-muted);
 }
 
+.issue-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.issue-guide span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.issue-guide b {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.issue-guide strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
 .annotation-panel {
   display: grid;
   gap: 10px;
@@ -996,6 +1025,18 @@ code {
   font-size: 12px;
   font-style: normal;
   color: var(--olive-dim);
+}
+
+.candidate .fix-summary b {
+  display: inline;
+  margin-right: 4px;
+  color: var(--ink);
+}
+
+@media (max-width: 900px) {
+  .issue-guide {
+    grid-template-columns: 1fr;
+  }
 }
 
 .annotation-review-panel {

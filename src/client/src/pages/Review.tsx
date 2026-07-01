@@ -77,11 +77,20 @@ type CandidateOverride = {
   replaceBody?: string;
 };
 
+type AnnotateOptions = { applyMode?: "hint" | "override"; dismissRule?: boolean };
+
 function candidateOverride(candidate: { value: unknown }): CandidateOverride | null {
   const value = candidate.value;
   if (!value || typeof value !== "object") return null;
   const override = (value as Record<string, unknown>).override;
   return override && typeof override === "object" ? override as CandidateOverride : null;
+}
+
+function candidateAction(candidate: { value: unknown }): string {
+  const value = candidate.value;
+  if (!value || typeof value !== "object") return "";
+  const action = (value as Record<string, unknown>).action;
+  return typeof action === "string" ? action : "";
 }
 
 function candidateHasOverride(candidate: { value: unknown }): boolean {
@@ -100,6 +109,42 @@ function overrideSummary(candidate: { value: unknown }): string {
   if (override.replaceSection?.heading) parts.push(`重写章节「${override.replaceSection.heading}」`);
   if (override.replaceBody !== undefined) parts.push("重写正文");
   return parts.length ? `将${parts.join("，")}` : "";
+}
+
+function candidateExecution(candidate: { value: unknown }): { label: string; detail: string } {
+  const action = candidateAction(candidate);
+  if (candidateHasOverride(candidate)) return { label: "确定性覆盖", detail: overrideSummary(candidate) || "回写结构化补丁，并触发后续局部构建" };
+  if (action === "dismiss_rule") return { label: "规则豁免", detail: "将此规则标记为不适用于该组件，后续构建跳过同类任务" };
+  return { label: "人工标注", detail: "记录为样例或备注，不直接改写当前知识资产" };
+}
+
+function taskIssueGuide(task: ReviewTask): { problem: string; reason: string; repair: string } {
+  if (task.ruleId === "wikiSpecCompleteness") {
+    return {
+      problem: "wiki 页面没有满足当前 spec 的结构要求，通常是缺少必填章节或章节为空。",
+      reason: "资料抽取时没有生成完整章节、页面类型匹配到更严格模板，或 spec 更新后旧页面没有同步。",
+      repair: "优先选择“补齐缺失章节”做确定性覆盖；如果该页面确实不适用这个 spec，再选择规则豁免。",
+    };
+  }
+  if (task.ruleId === "requiredFacts") {
+    return {
+      problem: "wiki 的结构化 facts 缺少必填字段，后续表依赖、图谱和 Agent 消费可能拿不到稳定字段。",
+      reason: "原始资料没有明确字段值、抽取遗漏，或当前 spec 把不该强制的字段设成了 required。",
+      repair: "有确定值时填写正确答案并覆盖；只想先放行可采用待确认占位；字段不适用时选择规则豁免。",
+    };
+  }
+  if (task.ruleId?.includes("frontmatter") || /source trace/i.test(task.title)) {
+    return {
+      problem: "wiki 的 source/frontmatter 与构建来源不一致，证据链可能无法追溯到正确资料版本。",
+      reason: "常见原因是旧产物迁移、局部重建后 source meta 没同步，或来源路径被重命名。",
+      repair: "优先从正确资料版本局部重建；如果只是元数据误报，需要修正 source meta 后复测。",
+    };
+  }
+  return {
+    problem: task.description || task.title,
+    reason: "该任务由质量门禁或 Agent 反馈生成，说明当前资产和目标规则之间存在不一致。",
+    repair: task.suggestedAction || "查看候选方案，选择确定性覆盖、规则豁免或人工标注。",
+  };
 }
 
 // 原始英文门禁标题/描述，折叠展示以保留可追溯性（人话版已在卡片正文）。
@@ -201,14 +246,14 @@ export function Review() {
   const act = useCallback((task: ReviewTask, next: "open" | "resolved" | "dismissed") => {
     transition.mutate({ taskIds: [task.taskId], next, note: notes[task.taskId] });
   }, [notes, transition]);
-  const annotateTask = useCallback((task: ReviewTask, applyMode?: "hint" | "override") => {
+  const annotateTask = useCallback((task: ReviewTask, options?: AnnotateOptions) => {
     annotate.mutate({
       task,
       note: notes[task.taskId],
       answer: answers[task.taskId],
       selectedCandidateId: selectedCandidates[task.taskId],
-      dismissRule: dismissRules[task.taskId],
-      applyMode: applyMode ?? applyModes[task.taskId] ?? "hint"
+      dismissRule: options?.dismissRule ?? dismissRules[task.taskId],
+      applyMode: options?.applyMode ?? applyModes[task.taskId] ?? "hint"
     });
   }, [annotate, answers, applyModes, dismissRules, notes, selectedCandidates]);
   const bulk = useCallback((next: "resolved" | "dismissed") => {
@@ -303,7 +348,7 @@ export function Review() {
             onCandidate={(candidateId) => setSelectedCandidates((prev) => ({ ...prev, [task.taskId]: candidateId }))}
             onDismissRule={(checked) => setDismissRules((prev) => ({ ...prev, [task.taskId]: checked }))}
             onApplyMode={(mode) => setApplyModes((prev) => ({ ...prev, [task.taskId]: mode }))}
-            onAnnotate={(applyMode) => annotateTask(task, applyMode)}
+            onAnnotate={(options) => annotateTask(task, options)}
             onStartRebuild={() => rebuild.mutate(task)}
             onTransition={(next) => act(task, next)}
             onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
@@ -390,7 +435,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
   onCandidate: (candidateId: string) => void;
   onDismissRule: (checked: boolean) => void;
   onApplyMode: (mode: "hint" | "override") => void;
-  onAnnotate: (applyMode?: "hint" | "override") => void;
+  onAnnotate: (options?: AnnotateOptions) => void;
   onStartRebuild: () => void;
   onTransition: (next: "open" | "resolved" | "dismissed") => void;
   onNavigatePackage: () => void;
@@ -437,6 +482,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
           </>
         ) : (
           <div className="quality-task-brief">
+            <IssueGuide guide={taskIssueGuide(task)} />
             <p>{task.description}</p>
             {task.suggestedAction && <strong>{task.suggestedAction}</strong>}
             {rawRuleDetail(task) && (
@@ -475,25 +521,35 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
         {task.status === "open" && task.taskKind === "annotation" && !isAnnotationReview && (() => {
           const selected = task.candidates.find((candidate) => candidate.id === selectedCandidateId);
           const selectedIsFix = selected ? candidateHasOverride(selected) : false;
-          const anyFix = task.candidates.some(candidateHasOverride);
+          const selectedIsDismissal = selected ? candidateAction(selected) === "dismiss_rule" : false;
+          const anyActionable = task.candidates.some((candidate) => candidateHasOverride(candidate) || candidateAction(candidate) === "dismiss_rule");
           return (
           <div className="annotation-panel">
             <div className="annotation-head">
-              <strong>{anyFix ? "选择一个修复方案" : "标注任务"}</strong>
+              <strong>{anyActionable ? "选择一个修复方法" : "标注任务"}</strong>
               <span>confidence {Math.round(task.confidence * 100)}%</span>
             </div>
-            {anyFix && <p className="annotation-hint">选中一个方案后点「采纳并自动修复」，系统会确定性回写对应 wiki 并自动重建。</p>}
+            {anyActionable && <p className="annotation-hint">每个方案都会标明执行方式。确定性覆盖会回写修正层并触发后续局部构建；规则豁免只关闭此组件的这条规则。</p>}
             {task.candidates.length > 0 && (
-              <div className={anyFix ? "annotation-candidates fix-candidates" : "annotation-candidates"}>
+              <div className={anyActionable ? "annotation-candidates fix-candidates" : "annotation-candidates"}>
                 {task.candidates.map((candidate) => {
-                  const isFix = candidateHasOverride(candidate);
+                  const execution = candidateExecution(candidate);
                   return (
                     <label key={candidate.id} className={selectedCandidateId === candidate.id ? "candidate selected" : "candidate"}>
-                      <input type="radio" name={`candidate-${task.taskId}`} checked={selectedCandidateId === candidate.id} onChange={() => onCandidate(candidate.id)} />
+                      <input
+                        type="radio"
+                        name={`candidate-${task.taskId}`}
+                        checked={selectedCandidateId === candidate.id}
+                        onChange={() => {
+                          onCandidate(candidate.id);
+                          if (candidateAction(candidate) === "dismiss_rule") onDismissRule(true);
+                          else if (dismissRule) onDismissRule(false);
+                        }}
+                      />
                       <span>
                         <strong>{candidate.label}</strong>
                         {candidate.rationale && <small>{candidate.rationale}</small>}
-                        {isFix && <em className="fix-summary">{overrideSummary(candidate)}</em>}
+                        <em className="fix-summary"><b>{execution.label}</b>{execution.detail ? `：${execution.detail}` : ""}</em>
                       </span>
                       {typeof candidate.confidence === "number" && <b>{Math.round(candidate.confidence * 100)}%</b>}
                     </label>
@@ -501,7 +557,7 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
                 })}
               </div>
             )}
-            {!selectedIsFix && (
+            {!selectedIsFix && !selectedIsDismissal && (
               <textarea
                 className="task-note annotation-answer"
                 placeholder="填写正确答案或补充标注说明；留空时采用所选候选。"
@@ -510,13 +566,13 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
                 rows={3}
               />
             )}
-            {task.ruleId && (
+            {task.ruleId && !selectedIsDismissal && (
               <label className="switch-field compact">
                 <input type="checkbox" checked={dismissRule} onChange={(event) => onDismissRule(event.target.checked)} />
                 <span>此规则对此组件不适用，后续跳过</span>
               </label>
             )}
-            {!selectedIsFix && (
+            {!selectedIsFix && !selectedIsDismissal && (
               <label className="switch-field compact">
                 <input
                   type="checkbox"
@@ -530,10 +586,12 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
               className="primary-action"
               type="button"
               disabled={isPending || (!answer.trim() && !selectedCandidateId)}
-              onClick={() => onAnnotate(selectedIsFix ? "override" : applyMode)}
+              onClick={() => onAnnotate(selectedIsDismissal ? { dismissRule: true } : selectedIsFix ? { applyMode: "override" } : { applyMode })}
             >
-              {selectedIsFix
-                ? "采纳此方案并自动修复"
+              {selectedIsDismissal
+                ? "应用规则豁免并关闭任务"
+                : selectedIsFix
+                  ? `执行修复：${selected?.label ?? "确定性覆盖"}`
                 : applyMode === "override"
                   ? "提交标注并回写构建规则"
                   : "提交标注并沉淀样例"}
@@ -566,6 +624,25 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
     </article>
   );
 });
+
+function IssueGuide({ guide }: { guide: { problem: string; reason: string; repair: string } }) {
+  return (
+    <div className="issue-guide">
+      <span>
+        <b>问题</b>
+        <strong>{guide.problem}</strong>
+      </span>
+      <span>
+        <b>原因</b>
+        <strong>{guide.reason}</strong>
+      </span>
+      <span>
+        <b>修复</b>
+        <strong>{guide.repair}</strong>
+      </span>
+    </div>
+  );
+}
 
 function AnnotationReviewPanel({
   task,

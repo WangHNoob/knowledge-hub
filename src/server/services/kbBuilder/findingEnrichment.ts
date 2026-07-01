@@ -52,6 +52,13 @@ interface EnrichInput {
   pageType: string;
 }
 
+interface FindingSourceContext {
+  sourcePath: string;
+  wikiRel: string;
+  pageType: string;
+  componentMarkdown?: string;
+}
+
 const OverrideSchema = z.object({
   setType: z.string().trim().min(1).optional(),
   setTitle: z.string().trim().min(1).optional(),
@@ -107,14 +114,14 @@ export async function enrichFindings(
   const results: EnrichedFinding[] = [];
   for (let index = 0; index < findings.length; index += 1) {
     const finding = findings[index];
-    if (!client || !enrichSet.has(index)) {
-      results.push(fallbackEnrichment(finding));
-      continue;
-    }
     const source = options.resolveSource(finding);
     const markdown = readComponentMarkdown(options.dataDir, source.wikiRel);
+    if (!client || !enrichSet.has(index)) {
+      results.push(fallbackEnrichment(finding, { ...source, componentMarkdown: markdown }));
+      continue;
+    }
     const enriched = await enrichOne(client, { finding, componentMarkdown: markdown, sourcePath: source.sourcePath, pageType: source.pageType }, options.warnings);
-    results.push(enriched ?? fallbackEnrichment(finding));
+    results.push(enriched ?? fallbackEnrichment(finding, { ...source, componentMarkdown: markdown }));
   }
   return results;
 }
@@ -202,20 +209,133 @@ function normalizeOverride(raw: z.infer<typeof OverrideSchema>, input: EnrichInp
   return override;
 }
 
-/** 兜底：与历史 `reviewTaskCandidates` 一致的单候选「按建议修复」。 */
-export function fallbackEnrichment(finding: QualityFinding): EnrichedFinding {
+/** 兜底：不依赖 LLM，也要把常见门禁转成可理解、可执行的维修方案。 */
+export function fallbackEnrichment(finding: QualityFinding, source?: FindingSourceContext): EnrichedFinding {
+  const structured = structuredFallback(finding, source);
+  if (structured) return structured;
   return {
     humanTitle: finding.title,
     humanExplain: finding.description,
     candidates: [{
-      id: "apply_suggested_action",
-      label: "按建议修复",
+      id: "manual_follow_suggestion",
+      label: "人工按原建议处理",
       value: { ruleId: finding.ruleId, action: finding.suggestedAction, componentRef: finding.componentId ?? "" },
       confidence: clamp(1 - finding.scoreImpact),
-      rationale: finding.description,
+      rationale: `系统无法生成确定性补丁，需要人工按建议处理：${finding.suggestedAction}`,
     }],
     enriched: false,
   };
+}
+
+function structuredFallback(finding: QualityFinding, source?: FindingSourceContext): EnrichedFinding | null {
+  if (finding.ruleId === "wikiSpecCompleteness") return wikiSpecFallback(finding, source);
+  if (finding.ruleId === "requiredFacts") return requiredFactsFallback(finding, source);
+  return null;
+}
+
+function wikiSpecFallback(finding: QualityFinding, source?: FindingSourceContext): EnrichedFinding {
+  const missingSections = parseListAfter(finding.description, "missing sections");
+  const page = source?.wikiRel || finding.componentId || "该页面";
+  const candidates: ReviewTaskCandidate[] = [];
+  const sourcePath = source?.sourcePath ?? "";
+  const body = stripFrontmatter(source?.componentMarkdown ?? "");
+  if (sourcePath && missingSections.length > 0) {
+    candidates.push({
+      id: "append_missing_spec_sections",
+      label: `补齐缺失章节：${missingSections.join("、")}`,
+      value: {
+        ruleId: finding.ruleId,
+        componentRef: finding.componentId ?? "",
+        override: {
+          sourcePath,
+          ruleId: finding.ruleId,
+          pageType: source?.pageType ?? "",
+          replaceBody: appendMissingSections(body, missingSections),
+        },
+      },
+      confidence: 0.82,
+      rationale: "按 wiki spec 补上缺失章节，并填入待确认占位，先让页面结构满足规范；后续可继续补真实内容。",
+    });
+  }
+  candidates.push(ruleDismissalCandidate(finding, "该页面不适用此 spec", "如果这个页面确实不需要这些章节，可将此规则对该组件永久豁免，后续构建不再报同类任务。"));
+  return {
+    humanTitle: `页面结构不完整：${page}`,
+    humanExplain: missingSections.length
+      ? `该 wiki 页面缺少 spec 要求的章节：${missingSections.join("、")}。通常是抽取时资料不足、页面类型判断偏差，或模板新增后旧页面没有同步。未处理会让 Agent 读到的页面结构不稳定，也会持续产生质量门禁任务。`
+      : `该 wiki 页面没有达到 spec 完整度要求。通常是章节为空、页面类型判断偏差，或模板新增后旧页面没有同步。`,
+    candidates,
+    enriched: false,
+  };
+}
+
+function requiredFactsFallback(finding: QualityFinding, source?: FindingSourceContext): EnrichedFinding {
+  const missingFacts = parseListAfter(finding.description, "Missing facts");
+  const page = source?.wikiRel || finding.componentId || "该页面";
+  const candidates: ReviewTaskCandidate[] = [];
+  const sourcePath = source?.sourcePath ?? "";
+  if (sourcePath && missingFacts.length > 0) {
+    candidates.push({
+      id: "fill_missing_facts_todo",
+      label: `补齐字段占位：${missingFacts.join("、")}`,
+      value: {
+        ruleId: finding.ruleId,
+        componentRef: finding.componentId ?? "",
+        override: {
+          sourcePath,
+          ruleId: finding.ruleId,
+          pageType: source?.pageType ?? "",
+          setFacts: Object.fromEntries(missingFacts.map((fact) => [fact, "待确认"])),
+        },
+      },
+      confidence: 0.76,
+      rationale: "先补上缺失 facts 的待确认值，使结构化字段完整；真实值需要后续根据原始资料校准。",
+    });
+  }
+  candidates.push(ruleDismissalCandidate(finding, "这些字段对此页面不适用", "如果这些 required facts 对当前组件并不成立，可豁免该规则，避免后续重复报警。"));
+  return {
+    humanTitle: `结构化字段缺失：${page}`,
+    humanExplain: missingFacts.length
+      ? `该页面缺少 spec 要求的 facts 字段：${missingFacts.join("、")}。这通常来自抽取未识别、模板要求过严，或资料本身没有给出字段值。未处理会影响后续表依赖、图谱关系和 Agent 的结构化消费。`
+      : `该页面缺少 spec 要求的 facts 字段。可能是抽取未识别、模板要求过严，或资料本身没有给出字段值。`,
+    candidates,
+    enriched: false,
+  };
+}
+
+function ruleDismissalCandidate(finding: QualityFinding, label: string, rationale: string): ReviewTaskCandidate {
+  return {
+    id: "dismiss_rule_for_component",
+    label,
+    value: { ruleId: finding.ruleId, action: "dismiss_rule", componentRef: finding.componentId ?? "" },
+    confidence: 0.5,
+    rationale,
+  };
+}
+
+function parseListAfter(text: string, label: string): string[] {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`${escaped}\\s*:\\s*([^.;。]+)`, "iu").exec(text);
+  if (!match) return [];
+  return match[1]
+    .split(/[,，、]/u)
+    .map((item) => item.trim())
+    .filter((item) => item && item.toLowerCase() !== "none");
+}
+
+function stripFrontmatter(markdown: string): string {
+  const trimmed = markdown.trim();
+  if (!trimmed.startsWith("---")) return markdown.trimEnd();
+  return trimmed.replace(/^---\s*[\s\S]*?\s*---\s*/u, "").trimEnd();
+}
+
+function appendMissingSections(markdown: string, sections: string[]): string {
+  const base = markdown.trimEnd();
+  const existing = new Set([...base.matchAll(/^##\s+(.+)$/gmu)].map((match) => match[1].trim().toLowerCase()));
+  const additions = sections
+    .filter((section) => !existing.has(section.toLowerCase()))
+    .map((section) => `## ${section}\n待确认：该章节由审核中心按 spec 自动补齐，请后续根据原始资料完善。`);
+  if (additions.length === 0) return base || sections.map((section) => `## ${section}\n待确认：请根据原始资料完善。`).join("\n\n");
+  return `${base ? `${base}\n\n` : ""}${additions.join("\n\n")}\n`;
 }
 
 const ENRICH_SYSTEM = [

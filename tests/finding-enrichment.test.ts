@@ -37,10 +37,10 @@ describe("finding enrichment", () => {
       // 人话标题/解释退回原 finding 文本。
       expect(result.humanTitle).toBe("Dangling graph edge");
       expect(result.humanExplain).toBe("foo -> config");
-      // 单候选「按建议修复」，不带结构化 override。
+      // 通用兜底不再使用含糊的“按建议修复”，也不带结构化 override。
       expect(result.candidates).toHaveLength(1);
-      expect(result.candidates[0].id).toBe("apply_suggested_action");
-      expect(result.candidates[0].label).toBe("按建议修复");
+      expect(result.candidates[0].id).toBe("manual_follow_suggestion");
+      expect(result.candidates[0].label).toBe("人工按原建议处理");
       expect(result.candidates[0].value).not.toHaveProperty("override");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
@@ -72,7 +72,7 @@ describe("finding enrichment", () => {
     }
   });
 
-  it("fallbackEnrichment mirrors the legacy single-candidate shape", () => {
+  it("fallbackEnrichment keeps a clear manual candidate for generic findings", () => {
     const result = fallbackEnrichment(finding({ scoreImpact: 0.25 }));
     expect(result.enriched).toBe(false);
     expect(result.candidates).toHaveLength(1);
@@ -82,5 +82,24 @@ describe("finding enrichment", () => {
     });
     // confidence = 1 - scoreImpact，clamp 到 [0,1]。
     expect(result.candidates[0].confidence).toBeCloseTo(0.75, 5);
+  });
+
+  it("creates executable fallback repairs for wiki spec completeness findings", () => {
+    const result = fallbackEnrichment(finding({
+      ruleId: "wikiSpecCompleteness",
+      componentId: "wiki/concepts/阵法特权.md",
+      description: "Score 0.65; missing sections: Overview, Data Dependencies.",
+      suggestedAction: "补齐 wiki spec 要求的章节，并避免必填章节为空。",
+    }), {
+      sourcePath: "gamedocs/阵法特权.md",
+      wikiRel: "wiki/concepts/阵法特权.md",
+      pageType: "",
+      componentMarkdown: "# 阵法特权\n\n已有内容",
+    });
+
+    expect(result.humanTitle).toContain("页面结构不完整");
+    expect(result.candidates[0].id).toBe("append_missing_spec_sections");
+    expect(result.candidates[0].value).toHaveProperty("override");
+    expect(result.candidates[1].value).toMatchObject({ action: "dismiss_rule" });
   });
 });

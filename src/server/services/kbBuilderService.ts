@@ -958,7 +958,7 @@ export class KbBuilderPipelineService {
       });
     } catch (error) {
       warnings.push(`finding enrichment failed wholesale: ${error instanceof Error ? error.message : String(error)}`);
-      enrichments = findings.map((finding) => fallbackEnrichment(finding));
+      enrichments = findings.map((finding) => fallbackEnrichment(finding, resolveFindingSource(finding, artifacts)));
     }
     if (warnings.length > 0) {
       await this.diagnostics?.write({
@@ -976,7 +976,7 @@ export class KbBuilderPipelineService {
     let inserted = 0;
     for (let index = 0; index < findings.length; index += 1) {
       const finding = findings[index];
-      const enrichment = enrichments[index] ?? fallbackEnrichment(finding);
+      const enrichment = enrichments[index] ?? fallbackEnrichment(finding, resolveFindingSource(finding, artifacts));
       const artifact = artifacts.find((item) => item.legacyPath === finding.componentId) ?? qualityReport;
       if (!artifact) continue;
       await this.adapter.query(
