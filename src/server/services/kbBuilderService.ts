@@ -1113,7 +1113,9 @@ export class KbBuilderPipelineService {
       const bundleUri = stringValue(release.manifest.bundleUri) || `releases/${release.releaseId}/okf_bundle`;
       const okfAbs = join(this.dataDir, ...bundleUri.split("/"), ...okfPath.split("/"));
       if (!existsSync(okfAbs)) continue;
-      const page = parseOkfExtractPage(readFileSync(okfAbs, "utf8"), sourcePath);
+      const markdown = readFileSync(okfAbs, "utf8");
+      const meta = readPublishedExtractMetaSnapshot(this.dataDir, bundleUri, okfPath);
+      const page = meta ? extractPageFromPublishedMeta(meta, markdown, sourcePath) : parseOkfExtractPage(markdown, sourcePath);
       if (!page) continue;
       out.push({
         sourcePath,
@@ -1339,6 +1341,34 @@ function parseOkfExtractPage(markdown: string, sourcePath: string): ExtractedPag
   };
 }
 
+function readPublishedExtractMetaSnapshot(dataDir: string, bundleUri: string, okfPath: string): Record<string, unknown> | null {
+  const uri = ["meta", "extract", ...okfPath.replace(/\.md$/u, ".json").split("/")];
+  const file = join(dataDir, ...bundleUri.split("/"), ...uri);
+  if (!existsSync(file)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+    const record = recordValue(parsed);
+    return recordValue(record.meta);
+  } catch {
+    return null;
+  }
+}
+
+function extractPageFromPublishedMeta(meta: Record<string, unknown>, markdown: string, sourcePath: string): ExtractedPage | null {
+  const fallback = parseOkfExtractPage(markdown, sourcePath);
+  const title = stringValue(meta.title) || fallback?.title || sourcePath;
+  const type = stringValue(meta.type) || fallback?.type || "concept";
+  return {
+    type,
+    title,
+    source: sourcePath,
+    facts: stringRecord(meta.facts) || fallback?.facts || {},
+    entities: entityArray(meta.entities, title, type),
+    relationships: relationshipArray(meta.relationships),
+    body: fallback?.body ?? stripOkfUtilitySections(markdown),
+  };
+}
+
 function pageTypeFromOkf(type: string): string {
   if (type === "activity" || type === "system" || type === "concept" || type === "table") return type;
   return "concept";
@@ -1398,6 +1428,41 @@ function yamlScalar(frontmatter: string, key: string): string {
 
 function firstMarkdownHeading(markdown: string): string {
   return /^#\s+(.+?)\s*$/mu.exec(markdown)?.[1]?.trim() ?? "";
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringRecord(value: unknown): Record<string, string> | null {
+  const record = recordValue(value);
+  const entries = Object.entries(record).flatMap(([key, item]) => {
+    const string = typeof item === "string" ? item.trim() : "";
+    return key && string ? [[key, string] as const] : [];
+  });
+  return entries.length ? Object.fromEntries(entries) : null;
+}
+
+function entityArray(value: unknown, fallbackName: string, fallbackType: string): Array<{ name: string; type: string }> {
+  if (!Array.isArray(value)) return [{ name: fallbackName, type: fallbackType }];
+  const entities = value.flatMap((entry) => {
+    const record = recordValue(entry);
+    const name = stringValue(record.name);
+    const type = stringValue(record.type);
+    return name && type ? [{ name, type }] : [];
+  });
+  return entities.length ? entities : [{ name: fallbackName, type: fallbackType }];
+}
+
+function relationshipArray(value: unknown): Array<{ source: string; relation: string; target: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const record = recordValue(entry);
+    const source = stringValue(record.source);
+    const relation = stringValue(record.relation);
+    const target = stringValue(record.target);
+    return source && relation && target ? [{ source, relation, target }] : [];
+  });
 }
 
 function jsonValue<T>(value: unknown, fallback: T): T {

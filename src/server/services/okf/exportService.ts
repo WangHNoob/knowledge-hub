@@ -92,11 +92,11 @@ export class OkfExportService {
       const okfPath = okfPathForComponent(component);
       if (!okfPath) continue;
       const target = join(bundleDir, ...okfPath.split(posix.sep));
+      const sourcePath = resolveComponentFile(this.dataDir, component, packageById.get(component.packageId));
       let rendered: string;
       if (patch.reuseMarkdownComponentIds.has(component.componentId) && existsSync(target)) {
         rendered = readFileSync(target, "utf8");
       } else {
-        const sourcePath = resolveComponentFile(this.dataDir, component, packageById.get(component.packageId));
         const raw = readFileSync(sourcePath, "utf8");
         const body = stripFrontmatter(raw).trim();
         rendered = renderOkfMarkdown({
@@ -112,6 +112,8 @@ export class OkfExportService {
       }
       searchPages.push({ okfPath: `/${okfPath}`, markdown: rendered });
       exportedPaths.push(okfPath);
+      const metaUri = exportExtractMetaSnapshot(bundleDir, component, okfPath, sourcePath);
+      if (metaUri) exportedPaths.push(metaUri);
     }
 
     const searchIndexUri = exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
@@ -382,6 +384,39 @@ function exportRevisionAsset(bundleDir: string, revision: Record<string, unknown
     ...revision,
   });
   return uri;
+}
+
+function exportExtractMetaSnapshot(bundleDir: string, component: AssetComponent, okfPath: string, sourcePath: string): string | undefined {
+  const meta = readExtractMetaForWiki(sourcePath);
+  const uri = posix.join("meta", "extract", okfPath.replace(/\.md$/u, ".json"));
+  if (!meta) {
+    removeBundleFile(bundleDir, uri);
+    return undefined;
+  }
+  writeJsonAsset(bundleDir, uri, {
+    okfAssetType: "extract_meta_snapshot",
+    version: 1,
+    componentId: component.componentId,
+    packageId: component.packageId,
+    artifactId: component.artifactId,
+    okfPath: `/${okfPath}`,
+    meta,
+  });
+  return uri;
+}
+
+function readExtractMetaForWiki(sourcePath: string): Record<string, unknown> | null {
+  if (!sourcePath.replace(/\\/g, "/").includes("/wiki/") || !sourcePath.endsWith(".md")) return null;
+  const name = basename(sourcePath, ".md");
+  const wikiRoot = dirname(dirname(sourcePath));
+  const metaPath = join(wikiRoot, "_meta", `${name}.json`);
+  if (!existsSync(metaPath)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(metaPath, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
 }
 
 function readAliasRows(path: string): Array<{ table: string; aliases: string[] }> {

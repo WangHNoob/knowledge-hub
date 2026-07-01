@@ -279,6 +279,7 @@ describe("KbBuilderPipelineService", () => {
       const sourceFile = (await sourceService.listFiles(imported.version.versionId)).find((file) => file.logicalPath === "gamedocs/battle.md");
 
       mkdirSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "systems"), { recursive: true });
+      mkdirSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "meta", "extract", "systems"), { recursive: true });
       writeFileSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "systems", "battle.md"), [
         "---",
         'type: "system"',
@@ -308,6 +309,28 @@ describe("KbBuilderPipelineService", () => {
         "",
         "1. old quote (ev_old; source src_old; confidence 1)"
       ].join("\n"));
+      writeFileSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "meta", "extract", "systems", "battle.json"), JSON.stringify({
+        okfAssetType: "extract_meta_snapshot",
+        version: 1,
+        componentId: "cmp_old_battle",
+        packageId: "pkg_old_battle",
+        artifactId: "wiki/systems/battle.md",
+        okfPath: "/systems/battle.md",
+        meta: {
+          type: "system",
+          title: "Old Battle",
+          source: "gamedocs/battle.md",
+          facts: { config_table: "OldSkill", owner: "design" },
+          entities: [
+            { name: "Old Battle", type: "system" },
+            { name: "OldSkill", type: "config_table" }
+          ],
+          relationships: [
+            { source: "Old Battle", relation: "configured_in", target: "OldSkill" }
+          ],
+          wiki_path: "wiki/systems/battle.md"
+        }
+      }, null, 2));
       await db.adapter.query(
         `INSERT INTO releases
           (release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, published_by, published_at, quality_gate, note)
@@ -378,7 +401,13 @@ describe("KbBuilderPipelineService", () => {
         frozen_artifact_id: "wiki/systems/battle.md",
         frozen_correction_ids: ["corr_pending_freeze"],
       });
-      expect(meta.facts).toMatchObject({ config_table: "OldSkill" });
+      expect(meta.facts).toMatchObject({ config_table: "OldSkill", owner: "design" });
+      expect(meta.entities).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "OldSkill", type: "config_table" })
+      ]));
+      expect(meta.relationships).toEqual([
+        { source: "Old Battle", relation: "configured_in", target: "OldSkill" }
+      ]);
       expect(wiki).toContain("Reviewed stable content.");
       expect(wiki).not.toContain("New content that should not overwrite");
       expect(wiki).not.toContain("# Trust");

@@ -77,6 +77,14 @@ describe("ReleaseService", () => {
       expect(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "knowledge_lint.md"), "utf8")).toContain("# Knowledge Lint Report");
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "knowledge_lint.json"), "utf8")).summary.blocking).toBe(0);
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "graph", "graph.json"), "utf8")).nodes[0].label).toBe("Demo Page");
+      expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "meta", "extract", "systems", "demo.json"), "utf8"))).toMatchObject({
+        okfAssetType: "extract_meta_snapshot",
+        artifactId: "wiki/systems/demo.md",
+        meta: {
+          title: "Demo Page",
+          facts: { config_table: "Demo/Table" }
+        }
+      });
       expect(JSON.parse(readFileSync(join(first.dataDir, "releases", pub1.releaseId, "okf_bundle", "meta", "revision.json"), "utf8"))).toMatchObject({
         okfAssetType: "release_revision",
         mode: "initial",
@@ -438,12 +446,28 @@ async function setupReleaseFixture(options: {
   const tableSchemaComponentId = `cmp_${packageId}_table_schema`;
   const runId = `run_fixture_${packageId}`;
   const artifactPath = join(dataDir, "kb-build-runs", runId, "data", "wiki", "systems", "demo.md");
+  const metaPath = join(dataDir, "kb-build-runs", runId, "data", "wiki", "_meta", "demo.json");
   const graphPath = join(dataDir, "kb-build-runs", runId, "data", "wiki", "graph.json");
   const tableSchemaPath = join(dataDir, "kb-build-runs", runId, "data", "table_schemas", "Demo__Table.json");
   mkdirSync(dirname(artifactPath), { recursive: true });
+  mkdirSync(dirname(metaPath), { recursive: true });
   mkdirSync(dirname(graphPath), { recursive: true });
   mkdirSync(dirname(tableSchemaPath), { recursive: true });
   writeFileSync(artifactPath, "# Demo Page\n\nDemo release content.\n", "utf8");
+  writeFileSync(metaPath, JSON.stringify({
+    type: "system",
+    title: "Demo Page",
+    source: "gamedocs/demo.md",
+    facts: { config_table: "Demo/Table" },
+    entities: [
+      { name: "Demo Page", type: "system" },
+      { name: "Demo/Table", type: "config_table" }
+    ],
+    relationships: [
+      { source: "Demo Page", relation: "configured_in", target: "Demo/Table" }
+    ],
+    wiki_path: "wiki/systems/demo.md"
+  }, null, 2), "utf8");
   writeFileSync(graphPath, JSON.stringify({
     nodes: [{ id: "Demo Page", label: "Demo Page", type: "system" }],
     edges: []
