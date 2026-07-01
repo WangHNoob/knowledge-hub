@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -168,6 +168,80 @@ describe("KbBuilderPipelineService", () => {
         addedPaths: [],
         modifiedPaths: ["gamedata/Skill.csv"],
         removedPaths: []
+      });
+    } finally {
+      await cleanup();
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(sourceRoot, { recursive: true, force: true });
+    }
+  }, 20000);
+
+  it("applies active source corrections as deterministic extraction overrides", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-service-data-"));
+    const sourceRoot = mkdtempSync(join(tmpdir(), "kh-kb-service-src-"));
+    const { db, cleanup } = await createTestDb();
+    try {
+      mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
+      mkdirSync(join(sourceRoot, "gamedata"), { recursive: true });
+      writeFileSync(join(sourceRoot, "gamedata", "keep.csv"), "id,name\n1,A\n");
+      writeFileSync(join(sourceRoot, "gamedocs", "battle.md"), [
+        "---",
+        "type: system",
+        "title: Battle",
+        "source: gamedocs/battle.md",
+        "facts:",
+        "  config_table: OldSkill",
+        "---",
+        "## Overview",
+        "Battle rules."
+      ].join("\n"));
+
+      const sourceService = createSourceBundleService(db, dataDir);
+      const imported = await sourceService.importDirectoryAsVersion({
+        rootPath: sourceRoot,
+        bundleId: "default",
+        createdBy: "admin",
+        note: "source correction fixture"
+      });
+      const sourceFile = (await sourceService.listFiles(imported.version.versionId)).find((file) => file.logicalPath === "gamedocs/battle.md");
+      await db.adapter.query(
+        `INSERT INTO source_corrections (
+           correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+           bound_source_hash, state, correct_value, component_id, package_id,
+           example_id, task_id, created_by, created_at, updated_at
+         )
+         VALUES (
+           'corr_extract_override','default','gamedocs/battle.md','wiki.required_fact','system','config_table',
+           $1,'active',$2,NULL,NULL,'','task_extract_override','admin',NOW(),NOW()
+         )`,
+        [
+          sourceFile?.contentHash ?? "",
+          JSON.stringify({ setFacts: { config_table: "NewSkill", source: "人工修正" } })
+        ],
+      );
+
+      const result = await createKbBuilderPipelineService(db, dataDir).build({
+        bundleId: "default",
+        versionId: imported.version.versionId,
+        requestedBy: "admin",
+        stages: ["convert", "extract"],
+        model: "deterministic",
+        force: true,
+        only: null,
+        qualityProfileId: "default"
+      });
+
+      const meta = JSON.parse(readFileSync(join(dataDir, "kb-build-runs", result.run.runId, "data", "wiki", "_meta", "battle.json"), "utf8"));
+      expect(meta.facts).toMatchObject({ config_table: "NewSkill", source: "人工修正" });
+      expect(result.run.config.flywheel).toMatchObject({
+        annotationOverridesInjected: 1,
+        annotationExampleRefs: [
+          expect.objectContaining({
+            exampleId: "corr_extract_override",
+            ruleId: "wiki.required_fact",
+            influence: expect.stringContaining("确定性覆盖 · 补 facts")
+          })
+        ]
       });
     } finally {
       await cleanup();

@@ -1014,26 +1014,58 @@ export class KbBuilderPipelineService {
   }
 
   private async loadAnnotationExamplesForPrompt(limit = 12): Promise<PromptAnnotationExample[]> {
+    const { rows: correctionRows } = await this.adapter.query(
+      `SELECT correction_id, component_id, task_id, page_type, rule_id, source_path, fact_key, correct_value, created_by, created_at
+       FROM source_corrections
+       WHERE state = 'active'
+       ORDER BY updated_at DESC, created_at DESC
+       LIMIT $1`,
+      [Math.max(limit * 2, 24)],
+    );
+    const corrections = correctionRows.map((row) => ({
+      exampleId: String(row.correction_id ?? ""),
+      componentId: String(row.component_id ?? ""),
+      taskId: String(row.task_id ?? ""),
+      createdBy: String(row.created_by ?? ""),
+      createdAt: row.created_at ? String(row.created_at) : "",
+      applyMode: "override" as const,
+      pageType: String(row.page_type ?? ""),
+      ruleId: String(row.rule_id ?? ""),
+      contextSnapshot: {
+        sourceFile: String(row.source_path ?? ""),
+        sourcePath: String(row.source_path ?? ""),
+        factKey: String(row.fact_key ?? ""),
+      },
+      correctValue: sourceCorrectionOverrideValue({
+        sourcePath: String(row.source_path ?? ""),
+        ruleId: String(row.rule_id ?? ""),
+        pageType: String(row.page_type ?? ""),
+        factKey: String(row.fact_key ?? ""),
+        correctValue: jsonValue<Record<string, unknown>>(row.correct_value, {}),
+      }),
+    }));
+
     const { rows } = await this.adapter.query(
       `SELECT example_id, component_id, task_id, apply_mode, page_type, rule_id, context_snapshot, correct_value, created_by, created_at
        FROM annotation_examples
-       WHERE active = true
+       WHERE active = true AND apply_mode <> 'override'
        ORDER BY created_at DESC
        LIMIT $1`,
       [limit],
     );
-    return rows.map((row) => ({
+    const hints = rows.map((row) => ({
       exampleId: String(row.example_id ?? ""),
       componentId: String(row.component_id ?? ""),
       taskId: String(row.task_id ?? ""),
       createdBy: String(row.created_by ?? ""),
       createdAt: row.created_at ? String(row.created_at) : "",
-      applyMode: row.apply_mode === "override" ? "override" : "hint",
+      applyMode: (row.apply_mode === "override" ? "override" : "hint") as "hint" | "override",
       pageType: String(row.page_type ?? ""),
       ruleId: String(row.rule_id ?? ""),
       contextSnapshot: jsonValue<Record<string, unknown>>(row.context_snapshot, {}),
       correctValue: jsonValue<Record<string, unknown>>(row.correct_value, {}),
     }));
+    return [...corrections, ...hints];
   }
 
   private async loadActiveRuleDismissals(): Promise<QualityRuleDismissal[]> {
@@ -1209,6 +1241,28 @@ function resolveFindingSource(
 // 这里给 override 留空即可：extractStage 的匹配在 pageType 缺省时不强制校验。
 function wikiPageTypeFromRel(_wikiRel: string): string {
   return "";
+}
+
+function sourceCorrectionOverrideValue(input: {
+  sourcePath: string;
+  ruleId: string;
+  pageType: string;
+  factKey: string;
+  correctValue: Record<string, unknown>;
+}): Record<string, unknown> {
+  const raw = jsonValue<Record<string, unknown>>(input.correctValue.override, input.correctValue);
+  const override: Record<string, unknown> = {
+    ...raw,
+    sourcePath: stringValue(raw.sourcePath) || input.sourcePath,
+    ruleId: stringValue(raw.ruleId) || input.ruleId,
+    pageType: stringValue(raw.pageType) || input.pageType,
+  };
+  if (!override.setFacts || typeof override.setFacts !== "object" || Array.isArray(override.setFacts)) {
+    const factKey = input.factKey || stringValue(raw.factKey) || stringValue(raw.fact_key) || stringValue(raw.field) || stringValue(raw.key);
+    const value = stringValue(raw.value) || stringValue(raw.factValue) || stringValue(raw.fact_value);
+    if (factKey && value) override.setFacts = { [factKey]: value };
+  }
+  return override;
 }
 
 function buildFlywheelSummary(
