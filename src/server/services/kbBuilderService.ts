@@ -24,7 +24,7 @@ import { createTableAliasService } from "./tableAliasService";
 import { materializeSourceVersion } from "./kbBuilder/materialize";
 import { loadWikiSpecs } from "./kbBuilder/specs";
 import { runConvertStage } from "./kbBuilder/convertStage";
-import { runExtractStage, type ExtractedPage, type FrozenExtractPage, type PromptAnnotationExample } from "./kbBuilder/extractStage";
+import { runExtractStage, type ExtractedPage, type FrozenExtractPage, type PendingUnfrozenCorrection, type PromptAnnotationExample } from "./kbBuilder/extractStage";
 import { runTableStage } from "./kbBuilder/tableStage";
 import { runGraphStage } from "./kbBuilder/graphStage";
 import { runVizStage } from "./kbBuilder/vizStage";
@@ -210,7 +210,7 @@ export class KbBuilderPipelineService {
         runId,
       }));
       const annotationExamples = await this.loadAnnotationExamplesForPrompt(options.versionId, options.only);
-      const frozenPages = await this.loadPendingCorrectionFrozenPages(options.versionId);
+      const freezeContext = await this.loadPendingCorrectionFreezeContext(options.versionId);
       const ruleDismissals = await this.loadActiveRuleDismissals();
       const specs = await this.withStage(runId, options, "specs", async () => {
         const specDir = ensureWikiSpecs(workspace.dataDir, ruleProfile.config);
@@ -232,7 +232,8 @@ export class KbBuilderPipelineService {
         force: options.force,
         only: options.only,
         annotationExamples,
-        frozenPages,
+        frozenPages: freezeContext.frozenPages,
+        pendingUnfrozenCorrections: freezeContext.pendingUnfrozenCorrections,
         onProgress: (info) => {
           void this.diagnostics?.write({
             traceId: options.traceId,
@@ -1074,7 +1075,10 @@ export class KbBuilderPipelineService {
     return [...corrections, ...hints];
   }
 
-  private async loadPendingCorrectionFrozenPages(versionId: string): Promise<FrozenExtractPage[]> {
+  private async loadPendingCorrectionFreezeContext(versionId: string): Promise<{
+    frozenPages: FrozenExtractPage[];
+    pendingUnfrozenCorrections: PendingUnfrozenCorrection[];
+  }> {
     const { rows: releaseRows } = await this.adapter.query(
       `SELECT r.*
        FROM release_channels ch
@@ -1083,10 +1087,9 @@ export class KbBuilderPipelineService {
          AND r.status = 'published'
        LIMIT 1`,
     );
-    if (releaseRows.length === 0) return [];
+    if (releaseRows.length === 0) return { frozenPages: [], pendingUnfrozenCorrections: [] };
     const release = mapRelease(releaseRows[0]);
     const components = manifestComponents(release.manifest);
-    if (components.length === 0) return [];
 
     const { rows } = await this.adapter.query(
       `SELECT c.correction_id, c.source_path
@@ -1105,22 +1108,35 @@ export class KbBuilderPipelineService {
       if (!sourcePath || !correctionId) continue;
       correctionIdsBySource.set(sourcePath, [...(correctionIdsBySource.get(sourcePath) ?? []), correctionId]);
     }
-    if (correctionIdsBySource.size === 0) return [];
+    if (correctionIdsBySource.size === 0) return { frozenPages: [], pendingUnfrozenCorrections: [] };
 
-    const out: FrozenExtractPage[] = [];
+    const frozenPages: FrozenExtractPage[] = [];
+    const pendingUnfrozenCorrections: PendingUnfrozenCorrection[] = [];
     for (const [sourcePath, correctionIds] of correctionIdsBySource.entries()) {
       const component = components.find((item) => sourcePathMatches(item.sourceRefs, sourcePath));
-      if (!component) continue;
+      if (!component) {
+        pendingUnfrozenCorrections.push({ sourcePath, correctionIds, reason: components.length === 0 ? "current release has no manifest components" : "source path not found in current release manifest" });
+        continue;
+      }
       const okfPath = okfMarkdownPathForArtifact(component.artifactId || component.storageUri);
-      if (!okfPath) continue;
+      if (!okfPath) {
+        pendingUnfrozenCorrections.push({ sourcePath, correctionIds, reason: "matched release component is not an OKF markdown page" });
+        continue;
+      }
       const bundleUri = stringValue(release.manifest.bundleUri) || `releases/${release.releaseId}/okf_bundle`;
       const okfAbs = join(this.dataDir, ...bundleUri.split("/"), ...okfPath.split("/"));
-      if (!existsSync(okfAbs)) continue;
+      if (!existsSync(okfAbs)) {
+        pendingUnfrozenCorrections.push({ sourcePath, correctionIds, reason: "published OKF markdown file is missing" });
+        continue;
+      }
       const markdown = readFileSync(okfAbs, "utf8");
       const meta = readPublishedExtractMetaSnapshot(this.dataDir, bundleUri, okfPath);
       const page = meta ? extractPageFromPublishedMeta(meta, markdown, sourcePath) : parseOkfExtractPage(markdown, sourcePath);
-      if (!page) continue;
-      out.push({
+      if (!page) {
+        pendingUnfrozenCorrections.push({ sourcePath, correctionIds, reason: "published OKF markdown could not be parsed" });
+        continue;
+      }
+      frozenPages.push({
         sourcePath,
         correctionIds,
         frozenFromReleaseId: release.releaseId,
@@ -1128,7 +1144,7 @@ export class KbBuilderPipelineService {
         page,
       });
     }
-    return out;
+    return { frozenPages, pendingUnfrozenCorrections };
   }
 
   private async loadActiveRuleDismissals(): Promise<QualityRuleDismissal[]> {

@@ -41,6 +41,7 @@ type ExtractOptions = {
   only: string | null;
   annotationExamples?: PromptAnnotationExample[];
   frozenPages?: FrozenExtractPage[];
+  pendingUnfrozenCorrections?: PendingUnfrozenCorrection[];
   onProgress?: (info: { message: string; index: number; total: number }) => void;
 };
 
@@ -77,6 +78,12 @@ export interface FrozenExtractPage {
   page: ExtractedPage;
 }
 
+export interface PendingUnfrozenCorrection {
+  sourcePath: string;
+  correctionIds: string[];
+  reason: string;
+}
+
 export async function runExtractStage(options: ExtractOptions): Promise<StageResult> {
   const parsedDir = join(options.dataDir, "processed", "parsed");
   const outputPaths: string[] = [];
@@ -108,12 +115,14 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   const aliasFingerprint = tableAliasFingerprint(options.dataDir);
   const annotationOverrides = annotationOverridesFromExamples(annotationExamples, warnings);
   const frozenBySourcePath = frozenPagesBySourcePath(options.frozenPages ?? []);
+  const pendingUnfrozenBySourcePath = pendingUnfrozenBySourcePathMap(options.pendingUnfrozenCorrections ?? []);
   for (let index = 0; index < files.length; index += 1) {
     const absolute = files[index];
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
     const frozen = frozenForSourceRel(frozenBySourcePath, rel);
+    const pendingUnfrozen = pendingUnfrozenForSourceRel(pendingUnfrozenBySourcePath, rel);
     const cacheKey = extractCacheKey({ markdown, rel, specsHash: options.specs.hash, modelConfig, aliasFingerprint, annotationExamples });
     const cached = frozen || options.force ? null : readExtractCache(options.dataDir, cacheKey);
     const extracted = frozen ? cloneExtractedPage(frozen.page) : cached ?? await extractPage(markdown, rel, client, guidance, warnings);
@@ -129,6 +138,15 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
       warnings.push(`${rel}: pending source correction; froze wiki page from release ${frozen.frozenFromReleaseId}`);
     } else if (!cached) {
       applyAnnotationOverrides(extracted, rel, annotationOverrides, options.specs, warnings);
+    }
+    if (pendingUnfrozen) {
+      extracted.meta = {
+        ...(extracted.meta ?? {}),
+        source_correction_state: "pending_review_unfrozen",
+        pending_correction_ids: pendingUnfrozen.correctionIds,
+        pending_unfrozen_reason: pendingUnfrozen.reason,
+      };
+      warnings.push(`${rel}: pending source correction has no published artifact to freeze (${pendingUnfrozen.reason})`);
     }
     normalizeTableRefs(extracted, tableAliases);
     if (!frozen) writeExtractCache(options.dataDir, cacheKey, extracted);
@@ -675,6 +693,22 @@ function frozenForSourceRel(frozenBySourcePath: Map<string, FrozenExtractPage>, 
   for (const candidate of sourcePathCandidates(rel)) {
     const frozen = frozenBySourcePath.get(candidate);
     if (frozen) return frozen;
+  }
+  return null;
+}
+
+function pendingUnfrozenBySourcePathMap(pending: PendingUnfrozenCorrection[]): Map<string, PendingUnfrozenCorrection> {
+  const map = new Map<string, PendingUnfrozenCorrection>();
+  for (const item of pending) {
+    for (const candidate of sourcePathCandidates(item.sourcePath)) map.set(candidate, item);
+  }
+  return map;
+}
+
+function pendingUnfrozenForSourceRel(map: Map<string, PendingUnfrozenCorrection>, rel: string): PendingUnfrozenCorrection | null {
+  for (const candidate of sourcePathCandidates(rel)) {
+    const pending = map.get(candidate);
+    if (pending) return pending;
   }
   return null;
 }

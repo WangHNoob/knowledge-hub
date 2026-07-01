@@ -268,6 +268,16 @@ describe("KbBuilderPipelineService", () => {
         "",
         "New content that should not overwrite the pending reviewed artifact."
       ].join("\n"));
+      writeFileSync(join(sourceRoot, "gamedocs", "orphan.md"), [
+        "---",
+        "type: system",
+        "title: Orphan Pending",
+        "source: gamedocs/orphan.md",
+        "---",
+        "# Orphan Pending",
+        "",
+        "This page has a pending correction but no previous published artifact."
+      ].join("\n"));
 
       const sourceService = createSourceBundleService(db, dataDir);
       const imported = await sourceService.importDirectoryAsVersion({
@@ -277,6 +287,7 @@ describe("KbBuilderPipelineService", () => {
         note: "pending correction fixture"
       });
       const sourceFile = (await sourceService.listFiles(imported.version.versionId)).find((file) => file.logicalPath === "gamedocs/battle.md");
+      const orphanSourceFile = (await sourceService.listFiles(imported.version.versionId)).find((file) => file.logicalPath === "gamedocs/orphan.md");
 
       mkdirSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "systems"), { recursive: true });
       mkdirSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "meta", "extract", "systems"), { recursive: true });
@@ -378,6 +389,21 @@ describe("KbBuilderPipelineService", () => {
           JSON.stringify({ setFacts: { config_table: "OldSkill" } })
         ],
       );
+      await db.adapter.query(
+        `INSERT INTO source_corrections (
+           correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+           bound_source_hash, state, correct_value, component_id, package_id,
+           example_id, task_id, created_by, created_at, updated_at
+         )
+         VALUES (
+           'corr_pending_unfrozen','default','gamedocs/orphan.md','wiki.required_fact','system','config_table',
+           $1,'pending_review',$2,'cmp_old_orphan','pkg_old_battle','','task_pending_unfrozen','admin',NOW(),NOW()
+         )`,
+        [
+          orphanSourceFile?.contentHash ?? "",
+          JSON.stringify({ setFacts: { config_table: "MissingOldSkill" } })
+        ],
+      );
 
       const result = await createKbBuilderPipelineService(db, dataDir).build({
         bundleId: "default",
@@ -392,6 +418,7 @@ describe("KbBuilderPipelineService", () => {
 
       const runDataDir = join(dataDir, "kb-build-runs", result.run.runId, "data");
       const meta = JSON.parse(readFileSync(join(runDataDir, "wiki", "_meta", "battle.json"), "utf8"));
+      const orphanMeta = JSON.parse(readFileSync(join(runDataDir, "wiki", "_meta", "orphan.json"), "utf8"));
       const wiki = readFileSync(join(runDataDir, "wiki", "systems", "battle.md"), "utf8");
       expect(meta).toMatchObject({
         title: "Old Battle",
@@ -412,6 +439,12 @@ describe("KbBuilderPipelineService", () => {
       expect(wiki).not.toContain("New content that should not overwrite");
       expect(wiki).not.toContain("# Trust");
       expect(wiki).not.toContain("# Citations");
+      expect(orphanMeta).toMatchObject({
+        title: "Orphan Pending",
+        source_correction_state: "pending_review_unfrozen",
+        pending_correction_ids: ["corr_pending_unfrozen"],
+        pending_unfrozen_reason: "source path not found in current release manifest"
+      });
     } finally {
       await cleanup();
       rmSync(dataDir, { recursive: true, force: true });
