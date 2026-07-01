@@ -98,6 +98,50 @@ describe("source bundle service", () => {
     expect(restored?.content.toString()).toBe("id,power\n1,10\n");
   });
 
+  it("marks active source corrections as pending review when their source file drifts", async () => {
+    const sourceRoot = join(dir, "drift");
+    mkdirSync(join(sourceRoot, "gamedata"), { recursive: true });
+    mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
+    writeFileSync(join(sourceRoot, "gamedata", "keep.csv"), "id,name\n1,A\n");
+    writeFileSync(join(sourceRoot, "gamedocs", "combat.md"), "# Combat v1");
+
+    const service = createSourceBundleService(db, dir);
+    const first = await service.importDirectoryAsVersion({ rootPath: sourceRoot, createdBy: "tester" });
+    const file = (await service.listFiles(first.version.versionId)).find((entry) => entry.logicalPath === "gamedocs/combat.md");
+    expect(file).toBeTruthy();
+    await db.adapter.query(
+      `INSERT INTO source_corrections (
+         correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+         bound_source_hash, state, correct_value, component_id, package_id,
+         example_id, task_id, created_by, created_at, updated_at
+       )
+       VALUES (
+         'corr_drift','default','gamedocs/combat.md','wiki.required_fact','system','system_name',
+         $1,'active','{"field":"system_name","value":"Combat"}',NULL,NULL,'','task_drift','tester',NOW(),NOW()
+       )`,
+      [file?.contentHash]
+    );
+
+    writeFileSync(join(sourceRoot, "gamedocs", "combat.md"), "# Combat v2");
+    const second = await service.importDirectoryAsVersion({ rootPath: sourceRoot, createdBy: "tester" });
+
+    const { rows } = await db.adapter.query("SELECT * FROM source_corrections WHERE correction_id = 'corr_drift'");
+    expect(rows[0].state).toBe("pending_review");
+    expect(rows[0].bound_source_hash).toBe(file?.contentHash);
+
+    const events = await db.adapter.query(
+      "SELECT * FROM knowledge_events WHERE event_type = 'source_correction.pending_review' AND entity_id = 'corr_drift'"
+    );
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0].payload_json).toMatchObject({
+      versionId: second.version.versionId,
+      sourcePath: "gamedocs/combat.md",
+      changeKind: "modified",
+      previousHash: file?.contentHash,
+      boundSourceHash: file?.contentHash
+    });
+  });
+
   it("dedupes identical content under different paths", async () => {
     const fresh = join(dir, "dedup");
     mkdirSync(join(fresh, "gamedata"), { recursive: true });

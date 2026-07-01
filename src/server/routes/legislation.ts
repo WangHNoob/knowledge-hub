@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 
 import { denyRole, requireRole } from "../middleware/auth";
-import { activateLegislationProfileSchema, annotationExampleActiveSchema, createLegislationProfileSchema } from "../schemas";
+import { activateLegislationProfileSchema, annotationExampleActiveSchema, createLegislationProfileSchema, sourceCorrectionTransitionSchema } from "../schemas";
 import type { RouteContext } from "./context";
 
 export function registerLegislationRoutes(app: FastifyInstance, ctx: RouteContext) {
@@ -59,6 +59,34 @@ export function registerLegislationRoutes(app: FastifyInstance, ctx: RouteContex
         return { task: await ctx.service.createAnnotationExampleReviewTask(request.params.exampleId, request.user.username) };
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "生成标注样例复盘任务失败。" });
+      }
+    }
+  );
+
+  app.post<{ Params: { correctionId: string } }>(
+    "/api/legislation/source-corrections/:correctionId/confirm",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = sourceCorrectionTransitionSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid source correction transition payload." });
+      try {
+        return { correction: await ctx.service.confirmSourceCorrection(request.params.correctionId, request.user.username, parsed.data.note ?? "") };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "确认源修正失败。" });
+      }
+    }
+  );
+
+  app.post<{ Params: { correctionId: string } }>(
+    "/api/legislation/source-corrections/:correctionId/retire",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = sourceCorrectionTransitionSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid source correction transition payload." });
+      try {
+        return { correction: await ctx.service.retireSourceCorrection(request.params.correctionId, request.user.username, parsed.data.note ?? "") };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "退役源修正失败。" });
       }
     }
   );

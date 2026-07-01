@@ -310,6 +310,40 @@ describe("review task transitions", () => {
     });
     const correctionEvents = await db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = $1", ["source_correction.created"]);
     expect(correctionEvents.rows[0].entity_id).toBe(correctionRows.rows[0].correction_id);
+
+    const confirmResponse = await app.inject({
+      method: "POST",
+      url: `/api/legislation/source-corrections/${encodeURIComponent(correctionRows.rows[0].correction_id)}/confirm`,
+      headers: auth,
+      payload: { note: "资料变更后确认仍适用" }
+    });
+    expect(confirmResponse.statusCode).toBe(200);
+    expect(confirmResponse.json().correction).toMatchObject({
+      correctionId: correctionRows.rows[0].correction_id,
+      state: "active",
+      boundSourceHash: "hash_pvp_v1"
+    });
+
+    const retireResponse = await app.inject({
+      method: "POST",
+      url: `/api/legislation/source-corrections/${encodeURIComponent(correctionRows.rows[0].correction_id)}/retire`,
+      headers: auth,
+      payload: { note: "不再适用" }
+    });
+    expect(retireResponse.statusCode).toBe(200);
+    expect(retireResponse.json().correction).toMatchObject({
+      correctionId: correctionRows.rows[0].correction_id,
+      state: "retired"
+    });
+
+    const transitionEvents = await db.adapter.query(
+      "SELECT event_type FROM knowledge_events WHERE entity_id = $1 AND event_type IN ('source_correction.confirmed','source_correction.retired') ORDER BY created_at ASC",
+      [correctionRows.rows[0].correction_id]
+    );
+    expect(transitionEvents.rows.map((row) => row.event_type)).toEqual([
+      "source_correction.confirmed",
+      "source_correction.retired"
+    ]);
     const writebackEvents = await db.adapter.query(
       "SELECT * FROM knowledge_events WHERE event_type = $1 AND entity_id = $2",
       ["annotation.writeback_requested", reviewTask.taskId]

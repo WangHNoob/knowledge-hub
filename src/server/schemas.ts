@@ -170,6 +170,10 @@ export const annotationExampleActiveSchema = z.object({
   active: z.boolean()
 });
 
+export const sourceCorrectionTransitionSchema = z.object({
+  note: z.string().max(1024).optional()
+});
+
 export const createAttributionAuditSchema = z.object({
   releaseId: z.string().min(1),
   title: z.string().min(1),

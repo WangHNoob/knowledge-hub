@@ -10,6 +10,8 @@ export type KnowledgeEventType =
   | "annotation.created"
   | "annotation.review_resolved"
   | "source_correction.created"
+  | "source_correction.pending_review"
+  | "source_correction.confirmed"
   | "source_correction.retired"
   | "annotation.writeback_requested"
   | "annotation.writeback_rebuild_started"

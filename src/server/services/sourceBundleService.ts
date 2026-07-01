@@ -12,6 +12,7 @@ import type {
   SourceFileChange,
   SourceFileEntry
 } from "../types";
+import { emitKnowledgeEvent } from "./eventService";
 
 const CATEGORIES: SourceCategory[] = ["gamedata", "gamedocs"];
 
@@ -112,6 +113,7 @@ export class SourceBundleService {
     let unchanged = 0;
     let totalBytes = 0;
     let newBlobCount = 0;
+    const driftCandidates: Array<{ logicalPath: string; previousHash: string; currentHash: string; changeKind: "modified" | "removed" }> = [];
 
     try {
       await this.adapter.query("BEGIN");
@@ -125,6 +127,12 @@ export class SourceBundleService {
           added += 1;
         } else if (previous.contentHash !== contentHash) {
           modified += 1;
+          driftCandidates.push({
+            logicalPath: file.logicalPath,
+            previousHash: previous.contentHash,
+            currentHash: contentHash,
+            changeKind: "modified",
+          });
         } else {
           unchanged += 1;
         }
@@ -133,7 +141,16 @@ export class SourceBundleService {
       }
 
       const currentPaths = new Set(entries.map((e) => e.logicalPath));
-      const removed = parentEntries.filter((entry) => !currentPaths.has(entry.logicalPath)).length;
+      const removedEntries = parentEntries.filter((entry) => !currentPaths.has(entry.logicalPath));
+      const removed = removedEntries.length;
+      for (const entry of removedEntries) {
+        driftCandidates.push({
+          logicalPath: entry.logicalPath,
+          previousHash: entry.contentHash,
+          currentHash: "",
+          changeKind: "removed",
+        });
+      }
       const label = options.note?.trim() ? `${timestamp}__${options.note.trim().slice(0, 64)}` : timestamp;
 
       await this.adapter.query(
@@ -151,6 +168,13 @@ export class SourceBundleService {
           [versionId, file.logicalPath, file.category, file.contentHash, file.byteSize]
         );
       }
+      await this.markDriftedSourceCorrections({
+        bundleId,
+        versionId,
+        actor: options.createdBy,
+        now: createdAt,
+        changes: driftCandidates,
+      });
 
       await this.adapter.query("COMMIT");
     } catch (error) {
@@ -203,6 +227,47 @@ export class SourceBundleService {
       params
     );
     return rows.length ? mapVersion(rows[0]) : null;
+  }
+
+  private async markDriftedSourceCorrections(input: {
+    bundleId: string;
+    versionId: string;
+    actor: string;
+    now: string;
+    changes: Array<{ logicalPath: string; previousHash: string; currentHash: string; changeKind: "modified" | "removed" }>;
+  }): Promise<void> {
+    for (const change of input.changes) {
+      const { rows } = await this.adapter.query(
+        `UPDATE source_corrections
+         SET state = 'pending_review', updated_at = $4
+         WHERE bundle_id = $1
+           AND source_path = $2
+           AND state = 'active'
+           AND bound_source_hash <> $3
+         RETURNING correction_id, rule_id, page_type, fact_key, bound_source_hash`,
+        [input.bundleId, change.logicalPath, change.currentHash, input.now],
+      );
+      for (const row of rows) {
+        await emitKnowledgeEvent(this.db, {
+          eventType: "source_correction.pending_review",
+          entityType: "source_correction",
+          entityId: String(row.correction_id),
+          payload: {
+            bundleId: input.bundleId,
+            versionId: input.versionId,
+            sourcePath: change.logicalPath,
+            changeKind: change.changeKind,
+            previousHash: change.previousHash,
+            currentHash: change.currentHash,
+            boundSourceHash: String(row.bound_source_hash ?? ""),
+            ruleId: String(row.rule_id ?? ""),
+            pageType: String(row.page_type ?? ""),
+            factKey: row.fact_key ? String(row.fact_key) : "",
+            actor: input.actor,
+          },
+        });
+      }
+    }
   }
 }
 

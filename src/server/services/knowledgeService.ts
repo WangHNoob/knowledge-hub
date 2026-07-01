@@ -1174,6 +1174,84 @@ export class KnowledgeService {
     };
   }
 
+  async confirmSourceCorrection(correctionId: string, actor: string, note = ""): Promise<Record<string, unknown>> {
+    const correction = await this.getSourceCorrection(correctionId);
+    if (!correction) throw new Error(`Unknown source correction: ${correctionId}`);
+    if (String(correction.state) === "retired") throw new Error("已退役的源修正不能确认。");
+    const currentHash = await this.findLatestSourceHash(String(correction.bundle_id ?? ""), String(correction.source_path ?? ""));
+    if (!currentHash) throw new Error("当前资料版本中未找到该源文件，无法确认。");
+    const now = new Date().toISOString();
+    const { rows } = await this.adapter.query(
+      `UPDATE source_corrections
+       SET state = 'active', bound_source_hash = $2, updated_at = $3
+       WHERE correction_id = $1
+       RETURNING *`,
+      [correctionId, currentHash, now],
+    );
+    const updated = sourceCorrectionRecord(rows[0]);
+    await emitKnowledgeEvent(this.db, {
+      eventType: "source_correction.confirmed",
+      entityType: "source_correction",
+      entityId: correctionId,
+      payload: {
+        correctionId,
+        bundleId: updated.bundleId,
+        sourcePath: updated.sourcePath,
+        previousBoundSourceHash: String(correction.bound_source_hash ?? ""),
+        boundSourceHash: updated.boundSourceHash,
+        actor,
+        note,
+      },
+    });
+    return updated;
+  }
+
+  async retireSourceCorrection(correctionId: string, actor: string, note = ""): Promise<Record<string, unknown>> {
+    const correction = await this.getSourceCorrection(correctionId);
+    if (!correction) throw new Error(`Unknown source correction: ${correctionId}`);
+    const now = new Date().toISOString();
+    const { rows } = await this.adapter.query(
+      `UPDATE source_corrections
+       SET state = 'retired', updated_at = $2
+       WHERE correction_id = $1
+       RETURNING *`,
+      [correctionId, now],
+    );
+    const updated = sourceCorrectionRecord(rows[0]);
+    await emitKnowledgeEvent(this.db, {
+      eventType: "source_correction.retired",
+      entityType: "source_correction",
+      entityId: correctionId,
+      payload: {
+        correctionId,
+        bundleId: updated.bundleId,
+        sourcePath: updated.sourcePath,
+        previousState: String(correction.state ?? ""),
+        actor,
+        note,
+      },
+    });
+    return updated;
+  }
+
+  private async getSourceCorrection(correctionId: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.adapter.query("SELECT * FROM source_corrections WHERE correction_id = $1", [correctionId]);
+    return rows[0] ?? null;
+  }
+
+  private async findLatestSourceHash(bundleId: string, sourcePath: string): Promise<string> {
+    const { rows } = await this.adapter.query(
+      `SELECT sf.content_hash
+       FROM source_bundle_versions v
+       JOIN source_files sf ON sf.version_id = v.version_id
+       WHERE v.bundle_id = $1 AND sf.logical_path = $2
+       ORDER BY v.created_at DESC, v.version_id DESC
+       LIMIT 1`,
+      [bundleId, sourcePath],
+    );
+    return rows.length ? String(rows[0].content_hash ?? "") : "";
+  }
+
   async listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): Promise<EvidenceRecord[]> {
     const where: string[] = [];
     const params: unknown[] = [];
@@ -1640,6 +1718,27 @@ function normalizeSourcePath(value: string): string {
 function sourceCorrectionFactKey(value: Record<string, unknown>): string | null {
   const direct = stringValue(value.factKey) || stringValue(value.fact_key) || stringValue(value.field) || stringValue(value.key);
   return direct || null;
+}
+
+function sourceCorrectionRecord(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    correctionId: String(row.correction_id ?? ""),
+    bundleId: String(row.bundle_id ?? ""),
+    sourcePath: String(row.source_path ?? ""),
+    ruleId: String(row.rule_id ?? ""),
+    pageType: String(row.page_type ?? ""),
+    factKey: row.fact_key ? String(row.fact_key) : null,
+    boundSourceHash: String(row.bound_source_hash ?? ""),
+    state: String(row.state ?? ""),
+    correctValue: jsonObject(row.correct_value),
+    componentId: row.component_id ? String(row.component_id) : null,
+    packageId: row.package_id ? String(row.package_id) : null,
+    exampleId: String(row.example_id ?? ""),
+    taskId: String(row.task_id ?? ""),
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+  };
 }
 
 function hashJson(value: unknown): string {
