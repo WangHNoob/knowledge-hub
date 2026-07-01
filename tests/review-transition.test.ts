@@ -181,6 +181,26 @@ describe("review task transitions", () => {
       status: "converging"
     });
 
+    const previousFlywheelMetrics = process.env.KH_FLYWHEEL_METRICS;
+    process.env.KH_FLYWHEEL_METRICS = "false";
+    try {
+      const lightweightResponse = await app.inject({ method: "GET", url: "/api/legislation/annotation-examples", headers: auth });
+      const lightweightExample = lightweightResponse.json().examples.find((item: { taskId: string }) => item.taskId === "task_annotation");
+      expect(lightweightExample).toMatchObject({ active: true, applyMode: "hint", taskId: "task_annotation" });
+      expect(lightweightExample.effect).toMatchObject({
+        tasksBefore: 0,
+        tasksAfter: 0,
+        openTasksAfter: 0,
+        openTaskIds: [],
+        agentNegativeAfter: 0,
+        reviewTaskId: "",
+        status: "converging"
+      });
+    } finally {
+      if (previousFlywheelMetrics === undefined) delete process.env.KH_FLYWHEEL_METRICS;
+      else process.env.KH_FLYWHEEL_METRICS = previousFlywheelMetrics;
+    }
+
     const disableResponse = await app.inject({
       method: "POST",
       url: `/api/legislation/annotation-examples/${encodeURIComponent(example.exampleId)}/active`,

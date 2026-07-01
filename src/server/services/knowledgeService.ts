@@ -274,6 +274,15 @@ export class KnowledgeService {
   }
 
   async listAnnotationExamples(): Promise<AnnotationExample[]> {
+    if (!flywheelMetricsEnabled()) {
+      const { rows } = await this.adapter.query(
+        `SELECT *
+         FROM annotation_examples
+         ORDER BY active DESC, created_at DESC`,
+      );
+      return rows.map((row) => annotationExampleFromRow(row));
+    }
+
     const { rows } = await this.adapter.query(
       `SELECT
          e.*,
@@ -355,17 +364,7 @@ export class KnowledgeService {
       const reviewTaskId = String(row.lifecycle_review_task_id ?? "");
       const writeback = writebacks.get(writebackTaskId || reviewTaskId) ?? null;
       return {
-      exampleId: String(row.example_id ?? ""),
-      packageId: String(row.package_id ?? ""),
-      componentId: String(row.component_id ?? ""),
-      taskId: String(row.task_id ?? ""),
-      ruleId: String(row.rule_id ?? ""),
-      applyMode: row.apply_mode === "override" ? "override" : "hint",
-      pageType: String(row.page_type ?? ""),
-      contextHash: String(row.context_hash ?? ""),
-      contextSnapshot: jsonObject(row.context_snapshot),
-      correctValue: jsonObject(row.correct_value),
-      active: Boolean(row.active),
+      ...annotationExampleFromRow(row),
       injectedBuildCount: Number(row.injected_build_count ?? 0),
       lastInjectedAt: row.last_injected_at ? String(row.last_injected_at) : null,
       lastInjectedRunId: String(row.last_injected_run_id ?? ""),
@@ -386,8 +385,6 @@ export class KnowledgeService {
         writebackRequestedAt: row.lifecycle_writeback_requested_at ? String(row.lifecycle_writeback_requested_at) : null,
         writeback,
       }),
-      createdBy: String(row.created_by ?? ""),
-      createdAt: String(row.created_at ?? ""),
       };
     });
   }
@@ -1649,6 +1646,48 @@ function annotationExampleEffect(input: {
       ? "样例后暂无同类复发，当前表现为收敛。"
       : "样例后仍有同类历史任务，但目前没有待处理项。";
   return { ...input, status, summary };
+}
+
+function annotationExampleFromRow(row: Record<string, unknown>): AnnotationExample {
+  return {
+    exampleId: String(row.example_id ?? ""),
+    packageId: String(row.package_id ?? ""),
+    componentId: String(row.component_id ?? ""),
+    taskId: String(row.task_id ?? ""),
+    ruleId: String(row.rule_id ?? ""),
+    applyMode: row.apply_mode === "override" ? "override" : "hint",
+    pageType: String(row.page_type ?? ""),
+    contextHash: String(row.context_hash ?? ""),
+    contextSnapshot: jsonObject(row.context_snapshot),
+    correctValue: jsonObject(row.correct_value),
+    active: Boolean(row.active),
+    injectedBuildCount: 0,
+    lastInjectedAt: null,
+    lastInjectedRunId: "",
+    effect: annotationExampleEffect({
+      tasksBefore: 0,
+      tasksAfter: 0,
+      openTasksAfter: 0,
+      openTaskIds: [],
+      agentNegativeAfter: 0,
+      reviewTaskId: "",
+    }),
+    lifecycle: annotationExampleLifecycle({
+      lastReviewAction: "",
+      lastReviewedBy: "",
+      lastReviewedAt: null,
+      reviewTaskId: "",
+      writebackTaskId: "",
+      writebackRequestedAt: null,
+      writeback: null,
+    }),
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at ?? ""),
+  };
+}
+
+function flywheelMetricsEnabled(): boolean {
+  return process.env.KH_FLYWHEEL_METRICS !== "false";
 }
 
 function annotationExampleLifecycle(input: {
