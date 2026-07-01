@@ -182,7 +182,6 @@
       <a href="#subs">子系统</a>
       <a href="#data">数据骨架</a>
       <a href="#agent">Agent</a>
-      <a href="#proposal">本次重构</a>
     </div>
   </div>
 </nav>
@@ -332,50 +331,9 @@
     </div>
   </section>
 
-  <!-- 6. PROPOSAL IN CONTEXT -->
-  <section id="proposal">
-    <div class="sec-tag reveal"><span class="num">06</span> 本次重构在平台中的位置 · The Proposal</div>
-    <h2 class="reveal">补上飞轮里最弱的一环：<em>人工修正的沉淀</em></h2>
-    <p class="sec-intro reveal">平台已经能跑通整条飞轮，但「审核标注」这一环的修正<b>存错了地方</b>——它本该是沉淀的源，却被建成了会蒸发的提示。这次重构只修这一环，不动其余。</p>
-
-    <div class="spotlight reveal">
-      <div class="inner">
-        <div class="spot-flag">◇ 作用位置：飞轮第 04 环「审核标注」→ 第 02 环「资产化」</div>
-        <h3>修正层：从易朽样例 → 不可变源覆盖</h3>
-        <p>把人工修正从「挂在会被删的资产上、每次重喂 LLM 赌一次」的样例，升级为「锚定源路径、确定性覆盖、带状态机」的第三层知识岩床。</p>
-
-        <div class="ba">
-          <div class="bx b-old">
-            <div class="bh">重构前 · 这一环漏水</div>
-            <ul>
-              <li>修正外键挂在资产上，重建被 CASCADE 连坐删除</li>
-              <li>靠不稳的 componentId 匹配，资料一改静默失效</li>
-              <li>每次构建当提示喂 LLM，赌它这次听话</li>
-              <li>hint / override 边界不清，团队每次纠结</li>
-            </ul>
-          </div>
-          <div class="bx b-new">
-            <div class="bh">重构后 · 这一环成岩</div>
-            <ul>
-              <li>独立成 source_corrections 层，锚定稳定源路径</li>
-              <li>确定性覆盖 LLM 输出，改对一次永久生效</li>
-              <li>源漂移自动转「待复核」，冻旧值 + 可见标记</li>
-              <li>沉淀只有一种形态：源覆盖，彻底消歧</li>
-            </ul>
-          </div>
-        </div>
-
-        <div class="spot-where">
-          <b>对平台的净影响</b> = 飞轮第三层（修正即源）补齐 + 飞轮自动化层（效果追踪 / 自动发布）<b>物理拆出核心写路径、挂真开关</b>。<br>
-          其余五个环节、五条数据链、Agent 消费面——<b>全部不动</b>。这是一次精准补强，不是推倒重来。
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- 7. AUDIENCE -->
+  <!-- 6. AUDIENCE -->
   <section>
-    <div class="sec-tag reveal"><span class="num">07</span> 这对你意味着什么 · Why It Matters</div>
+    <div class="sec-tag reveal"><span class="num">06</span> 这对你意味着什么 · Why It Matters</div>
     <h2 class="reveal">开发者得到<em>确定性</em>，产品得到<em>信任</em></h2>
 
     <div class="aud">
@@ -385,9 +343,9 @@
         <ul>
           <li>清晰的「路由→服务→数据」分层，<b>新增能力有固定落点</b></li>
           <li>内容链不可变 + 迁移幂等，<b>schema 演进安全</b></li>
-          <li>修正层解耦、删掉 CASCADE，<b>重建不再误删数据</b></li>
-          <li>飞轮巨型 join 物理拆出，<b>核心读路径变干净</b></li>
-          <li>关键路径补防回归测试，<b>从零覆盖到有安全网</b></li>
+          <li>强类型 + Zod 校验入参，<b>领域类型集中导出</b></li>
+          <li>行映射集中、JSONB 统一兼容，<b>读写路径可预测</b></li>
+          <li>全链路 tracing + 结构化日志，<b>问题可按 trace 复盘</b></li>
         </ul>
       </div>
       <div class="card reveal">
@@ -396,9 +354,9 @@
         <ul>
           <li>资料到资产<b>全程可追溯</b>，每条知识都有证据与可信度</li>
           <li>发布不可变、可复现，<b>Agent 永远消费经审核的版本</b></li>
-          <li>团队改对一次知识<b>永久生效</b>，不再反复返工</li>
-          <li>资料更新自动标记待复核，<b>没有隐形腐烂</b></li>
-          <li>「可审计、可管理、可发布」从口号变成<b>真承诺</b></li>
+          <li>质量门禁 + 人工审核双关卡，<b>低质知识发不出去</b></li>
+          <li>Agent 使用反馈自动回流，<b>知识持续迭代增强</b></li>
+          <li>「可审计、可管理、可发布」<b>贯穿每个环节</b></li>
         </ul>
       </div>
     </div>
@@ -406,8 +364,8 @@
 
   <!-- CLOSING -->
   <section class="closing reveal">
-    <div class="big">一个会<span class="hl">自我增强</span>的知识库，<br>建立在<span class="hl">三层不可变</span>的岩床之上。</div>
-    <p>人把知识沉淀进去，Agent 把价值跑出来，反馈再回炼知识。这次重构补上最后一块沉淀的基石——到那时，最初要的三个词才真正成立。</p>
+    <div class="big">一个会<span class="hl">自我增强</span>的知识库，<br>建立在<span class="hl">不可变</span>的内容链之上。</div>
+    <p>人把知识沉淀进去，Agent 把价值跑出来，反馈再回炼知识。整条飞轮之上，只有三个词贯穿始终——</p>
     <div class="three-words"><span>可审计</span><span>可管理</span><span>可发布</span></div>
   </section>
 
@@ -415,7 +373,7 @@
 
 <footer>
   <div class="wrap">
-    <p class="note">Knowledge Hub · 平台全景 + 修正层重构提案 · 配套文档 docs/修正层重构：从易朽样例到不可变源覆盖.md · 2026-06-30</p>
+    <p class="note">Knowledge Hub · 团队协作式知识资产治理平台 · 平台全景</p>
   </div>
 </footer>
 

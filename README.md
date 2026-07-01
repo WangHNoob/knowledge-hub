@@ -198,8 +198,6 @@ npm start            # 监听 4174
 | `dev` | `devpw` | developer |
 | `viewer` | `viewpw` | viewer |
 
-更细的本地/部署流程见 [docs/QUICKSTART.md](docs/QUICKSTART.md) 与 [docs/DEPLOY-DOCKER.md](docs/DEPLOY-DOCKER.md)。
-
 ---
 
 ## 九、领域模型：用户语言 vs 内部标识
@@ -211,17 +209,6 @@ npm start            # 监听 4174
   │          │           │          │           │
 sourceVersionId  packageId  componentId  artifactId  releaseId
 ```
-
----
-
-## 十、深入阅读
-
-- [docs/architecture-v2-roadmap.md](docs/architecture-v2-roadmap.md) — 从工单模型到标注流水线的演进路线与落地状态
-- [docs/标注结果回写设计：从软提示到确定性覆盖.md](docs/标注结果回写设计：从软提示到确定性覆盖.md) — 标注如何确定性回写知识内容的设计
-- [docs/知识库体系设计：可信性、可维护性与结构性保证.md](docs/知识库体系设计：可信性、可维护性与结构性保证.md) — 治理哲学与三层保证
-- [docs/知识库立法机制：策划治理与Agent反馈闭环.md](docs/知识库立法机制：策划治理与Agent反馈闭环.md) — 策略即数据的立法机制
-- [docs/OKF开发文档.md](docs/OKF开发文档.md) — Open Knowledge Format 导出规格
-- `CLAUDE.md` — 面向贡献者的架构与编辑约定
 
 ---
 
