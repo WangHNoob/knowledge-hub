@@ -28,12 +28,30 @@ describe("review task transitions", () => {
     auth = { authorization: `Bearer ${login.json<{ token: string }>().token}` };
 
     await db.adapter.query(
+      `INSERT INTO source_blobs (content_hash, byte_size, storage_uri, first_seen_at)
+       VALUES ('hash_pvp_v1', 12, 'blobs/hash_pvp_v1.md', NOW())
+       ON CONFLICT DO NOTHING`
+    );
+    await db.adapter.query(
+      `INSERT INTO source_bundle_versions (
+         version_id, bundle_id, parent_version_id, label, note, created_by, created_at,
+         file_count, added_count, modified_count, removed_count, unchanged_count, total_bytes
+       )
+       VALUES ('src_v1','default',NULL,'v1','','admin',NOW(),1,1,0,0,0,12)
+       ON CONFLICT DO NOTHING`
+    );
+    await db.adapter.query(
+      `INSERT INTO source_files (version_id, logical_path, category, content_hash, byte_size)
+       VALUES ('src_v1','gamedocs/pvp.md','gamedocs','hash_pvp_v1',12)
+       ON CONFLICT DO NOTHING`
+    );
+    await db.adapter.query(
       `INSERT INTO asset_packages (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
-       VALUES ('pkg_rev','Pkg','kb_builder_pipeline','draft','x','run_r','[]','[]','{}',NOW())`
+       VALUES ('pkg_rev','Pkg','kb_builder_pipeline','draft','x','run_r','["src_v1"]','[]','{}',NOW())`
     );
     await db.adapter.query(
       `INSERT INTO asset_components (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
-       VALUES ('cmp_rev','pkg_rev','wiki/x','wiki','wiki_page','X','draft','','data/wiki/x.md','[]','{}')`
+       VALUES ('cmp_rev','pkg_rev','wiki/x','wiki','wiki_page','X','draft','','data/wiki/x.md','["gamedocs/pvp.md"]','{}')`
     );
     await db.adapter.query(
       `INSERT INTO review_tasks (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at)
@@ -268,12 +286,30 @@ describe("review task transitions", () => {
     expect(exampleRows.rows[0].apply_mode).toBe("override");
     expect(exampleRows.rows[0].active).toBe(true);
 
+    const correctionRows = await db.adapter.query("SELECT * FROM source_corrections WHERE example_id = $1", [example.exampleId]);
+    expect(correctionRows.rows).toHaveLength(1);
+    expect(correctionRows.rows[0]).toMatchObject({
+      bundle_id: "default",
+      source_path: "gamedocs/pvp.md",
+      rule_id: "wiki.required_fact",
+      page_type: "activity",
+      fact_key: "activity_structure",
+      bound_source_hash: "hash_pvp_v1",
+      state: "active",
+      component_id: "cmp_rev",
+      package_id: "pkg_rev",
+    });
+    expect(correctionRows.rows[0].correct_value).toEqual({ field: "activity_structure", source: "candidate" });
+
     const reviewEvents = await db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = $1", ["annotation.review_resolved"]);
     expect(reviewEvents.rows[0].payload_json).toMatchObject({
       taskId: reviewTask.taskId,
       action: "promote_annotation_override",
-      componentId: "cmp_rev"
+      componentId: "cmp_rev",
+      correctionId: correctionRows.rows[0].correction_id
     });
+    const correctionEvents = await db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = $1", ["source_correction.created"]);
+    expect(correctionEvents.rows[0].entity_id).toBe(correctionRows.rows[0].correction_id);
     const writebackEvents = await db.adapter.query(
       "SELECT * FROM knowledge_events WHERE event_type = $1 AND entity_id = $2",
       ["annotation.writeback_requested", reviewTask.taskId]

@@ -804,6 +804,7 @@ export class KnowledgeService {
     const contextHash = hashJson(contextSnapshot);
     const now = new Date().toISOString();
     const exampleId = `ann_${slug(task.componentId)}_${nanoid(6)}`;
+    let correctionId = "";
 
     await this.adapter.query("BEGIN");
     try {
@@ -846,6 +847,20 @@ export class KnowledgeService {
             now,
           ],
         );
+      }
+      if (applyMode === "override") {
+        correctionId = await this.createSourceCorrection({
+          packageId: task.packageId,
+          componentId: task.componentId,
+          taskId: task.taskId,
+          exampleId,
+          ruleId: task.ruleId,
+          pageType: String(task.contextSnapshot.pageType ?? task.contextSnapshot.okfType ?? ""),
+          sourcePath: componentRef.sourcePath,
+          correctValue,
+          actor: input.actor,
+          now,
+        });
       }
       await this.adapter.query(
         `UPDATE review_tasks
@@ -913,9 +928,23 @@ export class KnowledgeService {
       eventType: "annotation.created",
       entityType: "review_task",
       entityId: task.taskId,
-      payload: { componentId: task.componentId, ruleId: task.ruleId, exampleId, applyMode, dismissRule: Boolean(input.dismissRule && task.ruleId) },
+      payload: { componentId: task.componentId, ruleId: task.ruleId, exampleId, correctionId, applyMode, dismissRule: Boolean(input.dismissRule && task.ruleId) },
     });
     if (applyMode === "override") {
+      if (correctionId) {
+        await emitKnowledgeEvent(this.db, {
+          eventType: "source_correction.created",
+          entityType: "source_correction",
+          entityId: correctionId,
+          payload: {
+            componentId: task.componentId,
+            packageId: task.packageId,
+            ruleId: task.ruleId,
+            exampleId,
+            sourcePath: componentRef.sourcePath,
+          },
+        });
+      }
       await emitKnowledgeEvent(this.db, {
         eventType: "annotation.writeback_requested",
         entityType: "review_task",
@@ -959,6 +988,7 @@ export class KnowledgeService {
       previousApplyMode: before.applyMode,
       previousActive: before.active,
     };
+    let correctionId = "";
 
     await this.adapter.query("BEGIN");
     try {
@@ -967,6 +997,19 @@ export class KnowledgeService {
           "UPDATE annotation_examples SET apply_mode = 'override', active = true WHERE example_id = $1",
           [exampleId],
         );
+        const componentRef = await this.findComponentRef(task.componentId);
+        correctionId = await this.createSourceCorrection({
+          packageId: before.packageId,
+          componentId: before.componentId,
+          taskId: before.taskId || task.taskId,
+          exampleId,
+          ruleId: before.ruleId,
+          pageType: before.pageType,
+          sourcePath: String(before.contextSnapshot.sourceFile ?? before.contextSnapshot.sourcePath ?? componentRef.sourcePath),
+          correctValue: before.correctValue,
+          actor: input.actor,
+          now,
+        });
       } else if (action === "disable_annotation_example") {
         await this.adapter.query(
           "UPDATE annotation_examples SET active = false WHERE example_id = $1",
@@ -1008,10 +1051,24 @@ export class KnowledgeService {
       eventType: "annotation.review_resolved",
       entityType: "annotation_example",
       entityId: exampleId,
-      payload: { taskId: task.taskId, action, componentId: task.componentId, ruleId: before.ruleId, resolvedBy: input.actor },
+      payload: { taskId: task.taskId, action, componentId: task.componentId, ruleId: before.ruleId, correctionId, resolvedBy: input.actor },
     });
     if (action === "promote_annotation_override") {
       const componentRef = await this.findComponentRef(task.componentId);
+      if (correctionId) {
+        await emitKnowledgeEvent(this.db, {
+          eventType: "source_correction.created",
+          entityType: "source_correction",
+          entityId: correctionId,
+          payload: {
+            componentId: task.componentId,
+            packageId: before.packageId,
+            ruleId: before.ruleId,
+            exampleId,
+            sourcePath: String(before.contextSnapshot.sourceFile ?? before.contextSnapshot.sourcePath ?? componentRef.sourcePath),
+          },
+        });
+      }
       await emitKnowledgeEvent(this.db, {
         eventType: "annotation.writeback_requested",
         entityType: "review_task",
@@ -1035,6 +1092,86 @@ export class KnowledgeService {
     const sourceRefs = jsonArray(rows[0].source_refs);
     const sourcePath = sourceRefs.find((ref) => ref.startsWith("gamedocs/") || ref.startsWith("gamedata/")) ?? "";
     return { legacyPath: String(rows[0].legacy_path ?? ""), sourcePath };
+  }
+
+  private async createSourceCorrection(input: {
+    packageId: string;
+    componentId: string;
+    taskId: string;
+    exampleId: string;
+    ruleId: string;
+    pageType: string;
+    sourcePath: string;
+    correctValue: Record<string, unknown>;
+    actor: string;
+    now: string;
+  }): Promise<string> {
+    const sourcePath = normalizeSourcePath(input.sourcePath);
+    if (!sourcePath) return "";
+    const anchor = await this.resolveSourceCorrectionAnchor(input.packageId, sourcePath);
+    const factKey = sourceCorrectionFactKey(input.correctValue);
+    const correctionId = `corr_${slug(sourcePath)}_${slug(input.ruleId)}_${nanoid(6)}`;
+    await this.adapter.query(
+      `UPDATE source_corrections
+       SET state = 'retired', updated_at = $7
+       WHERE bundle_id = $1
+         AND source_path = $2
+         AND rule_id = $3
+         AND page_type = $4
+         AND COALESCE(fact_key, '') = COALESCE($5, '')
+         AND state <> 'retired'
+         AND correction_id <> $6`,
+      [anchor.bundleId, sourcePath, input.ruleId, input.pageType, factKey, correctionId, input.now],
+    );
+    await this.adapter.query(
+      `INSERT INTO source_corrections (
+         correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+         bound_source_hash, state, correct_value, component_id, package_id,
+         example_id, task_id, created_by, created_at, updated_at
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'active',$8,$9,$10,$11,$12,$13,$14,$14)`,
+      [
+        correctionId,
+        anchor.bundleId,
+        sourcePath,
+        input.ruleId,
+        input.pageType,
+        factKey,
+        anchor.contentHash,
+        JSON.stringify(input.correctValue),
+        input.componentId,
+        input.packageId,
+        input.exampleId,
+        input.taskId,
+        input.actor,
+        input.now,
+      ],
+    );
+    return correctionId;
+  }
+
+  private async resolveSourceCorrectionAnchor(packageId: string, sourcePath: string): Promise<{ bundleId: string; contentHash: string }> {
+    const { rows: packageRows } = await this.adapter.query(
+      "SELECT source_version_ids FROM asset_packages WHERE package_id = $1",
+      [packageId],
+    );
+    const versionIds = packageRows.length ? jsonArray(packageRows[0].source_version_ids) : [];
+    if (versionIds.length === 0) return { bundleId: "default", contentHash: "" };
+    const placeholders = versionIds.map((_, index) => `$${index + 2}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT v.bundle_id, COALESCE(sf.content_hash, '') AS content_hash
+       FROM source_bundle_versions v
+       LEFT JOIN source_files sf ON sf.version_id = v.version_id AND sf.logical_path = $1
+       WHERE v.version_id IN (${placeholders})
+       ORDER BY v.created_at DESC, v.version_id DESC
+       LIMIT 1`,
+      [sourcePath, ...versionIds],
+    );
+    if (!rows.length) return { bundleId: "default", contentHash: "" };
+    return {
+      bundleId: String(rows[0].bundle_id ?? "default"),
+      contentHash: String(rows[0].content_hash ?? ""),
+    };
   }
 
   async listEvidenceRecords(filter: { packageId?: string; componentId?: string } = {}): Promise<EvidenceRecord[]> {
@@ -1494,6 +1631,15 @@ const EVIDENCE_COVERAGE_COMPONENT_KINDS = new Set(["wiki_page"]);
 function normalizeAnnotationValue(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
   return { value };
+}
+
+function normalizeSourcePath(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/^processed\/parsed\//u, "");
+}
+
+function sourceCorrectionFactKey(value: Record<string, unknown>): string | null {
+  const direct = stringValue(value.factKey) || stringValue(value.fact_key) || stringValue(value.field) || stringValue(value.key);
+  return direct || null;
 }
 
 function hashJson(value: unknown): string {

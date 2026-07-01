@@ -206,6 +206,25 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}source_corrections (
+      correction_id TEXT PRIMARY KEY,
+      bundle_id TEXT NOT NULL DEFAULT '',
+      source_path TEXT NOT NULL DEFAULT '',
+      rule_id TEXT NOT NULL DEFAULT '',
+      page_type TEXT NOT NULL DEFAULT '',
+      fact_key TEXT,
+      bound_source_hash TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'active',
+      correct_value JSONB NOT NULL DEFAULT '{}',
+      component_id TEXT,
+      package_id TEXT,
+      example_id TEXT NOT NULL DEFAULT '',
+      task_id TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}rule_dismissals (
       dismissal_id TEXT PRIMARY KEY,
       package_id TEXT NOT NULL REFERENCES ${p}asset_packages(package_id) ON DELETE CASCADE,
@@ -325,6 +344,11 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_diag_release_created ON ${p}diagnostic_logs(release_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_page_rule ON ${p}annotation_examples(page_type, rule_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_component ON ${p}annotation_examples(component_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_source_corrections_source ON ${p}source_corrections(bundle_id, source_path, state);
+    CREATE INDEX IF NOT EXISTS idx_source_corrections_component ON ${p}source_corrections(component_id, created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_source_corrections_active_anchor
+      ON ${p}source_corrections(bundle_id, source_path, rule_id, page_type, COALESCE(fact_key, ''))
+      WHERE state <> 'retired';
     CREATE INDEX IF NOT EXISTS idx_rule_dismissals_component ON ${p}rule_dismissals(component_id, active);
     CREATE INDEX IF NOT EXISTS idx_knowledge_events_type_created ON ${p}knowledge_events(event_type, created_at DESC);
   `);
@@ -356,9 +380,52 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS annotated_at TIMESTAMPTZ;
     ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS apply_mode TEXT NOT NULL DEFAULT 'hint';
     ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE ${p}source_corrections ADD COLUMN IF NOT EXISTS example_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}source_corrections ADD COLUMN IF NOT EXISTS task_id TEXT NOT NULL DEFAULT '';
+    ALTER TABLE ${p}source_corrections ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
     ALTER TABLE ${p}rule_dismissals ADD COLUMN IF NOT EXISTS component_ref TEXT NOT NULL DEFAULT '';
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_override ON ${p}annotation_examples(apply_mode, page_type, rule_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_active ON ${p}annotation_examples(active, apply_mode, created_at DESC);
+  `);
+
+  await adapter.exec(`
+    INSERT INTO ${p}source_corrections (
+      correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+      bound_source_hash, state, correct_value, component_id, package_id,
+      example_id, task_id, created_by, created_at, updated_at
+    )
+    SELECT
+      'corr_migrated_' || substr(md5(e.example_id), 1, 16),
+      COALESCE(v.bundle_id, 'default'),
+      COALESCE(NULLIF(e.context_snapshot ->> 'sourceFile', ''), NULLIF(e.context_snapshot ->> 'sourcePath', ''), ''),
+      e.rule_id,
+      e.page_type,
+      NULLIF(COALESCE(e.correct_value ->> 'factKey', e.correct_value ->> 'fact_key', e.correct_value ->> 'field', e.correct_value ->> 'key', ''), ''),
+      COALESCE(sf.content_hash, ''),
+      CASE WHEN e.active THEN 'active' ELSE 'retired' END,
+      e.correct_value,
+      e.component_id,
+      e.package_id,
+      e.example_id,
+      e.task_id,
+      e.created_by,
+      e.created_at,
+      e.created_at
+    FROM ${p}annotation_examples e
+    LEFT JOIN ${p}asset_packages ap ON ap.package_id = e.package_id
+    LEFT JOIN LATERAL (
+      SELECT sv.version_id, sv.bundle_id
+      FROM ${p}source_bundle_versions sv
+      WHERE ap.source_version_ids ? sv.version_id
+      ORDER BY sv.created_at DESC, sv.version_id DESC
+      LIMIT 1
+    ) v ON true
+    LEFT JOIN ${p}source_files sf
+      ON sf.version_id = v.version_id
+     AND sf.logical_path = COALESCE(NULLIF(e.context_snapshot ->> 'sourceFile', ''), NULLIF(e.context_snapshot ->> 'sourcePath', ''), '')
+    WHERE e.apply_mode = 'override'
+      AND COALESCE(NULLIF(e.context_snapshot ->> 'sourceFile', ''), NULLIF(e.context_snapshot ->> 'sourcePath', ''), '') <> ''
+    ON CONFLICT DO NOTHING;
   `);
 
   // 默认资料集
