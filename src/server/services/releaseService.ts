@@ -731,17 +731,21 @@ function buildManifest(input: {
       sourceVersionIds: pkg.sourceVersionIds,
       qualitySummary: pkg.qualitySummary,
     })),
-    components: input.components.map((component) => ({
-      componentId: component.componentId,
-      packageId: component.packageId,
-      artifactId: component.artifactId,
-      group: component.group,
-      kind: component.kind,
-      title: component.title,
-      storageUri: component.storageUri,
-      sourceRefs: component.sourceRefs,
-      quality: component.quality,
-    })),
+    components: input.components.map((component) => {
+      const sourceCorrectionDebt = sourceCorrectionDebtForComponent(component, input.pendingSourceCorrections);
+      return {
+        componentId: component.componentId,
+        packageId: component.packageId,
+        artifactId: component.artifactId,
+        group: component.group,
+        kind: component.kind,
+        title: component.title,
+        storageUri: component.storageUri,
+        sourceRefs: component.sourceRefs,
+        quality: component.quality,
+        ...(sourceCorrectionDebt.pendingReviewCount > 0 ? { sourceCorrectionDebt } : {}),
+      };
+    }),
     okf: input.okf,
     auditSummary: input.auditSummary,
     qualityGate: input.qualityGate,
@@ -793,6 +797,38 @@ function buildReleaseDiff(parent: ReleaseRecord | null, packages: AssetPackage[]
     changedComponents,
     unchangedComponents,
   };
+}
+
+function sourceCorrectionDebtForComponent(component: AssetComponent, corrections: PendingSourceCorrection[]): {
+  pendingReviewCount: number;
+  corrections: PendingSourceCorrection[];
+} {
+  const matched = corrections.filter((correction) => sourcePathMatches(component.sourceRefs, correction.sourcePath));
+  return {
+    pendingReviewCount: matched.length,
+    corrections: matched,
+  };
+}
+
+function sourcePathMatches(sourceRefs: string[], sourcePath: string): boolean {
+  const wanted = new Set(sourcePathCandidates(sourcePath));
+  return sourceRefs.some((ref) => sourcePathCandidates(ref).some((candidate) => wanted.has(candidate)));
+}
+
+function sourcePathCandidates(path: string): string[] {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  const withoutProcessed = normalized.startsWith("processed/parsed/") ? normalized.slice("processed/parsed/".length) : normalized;
+  const withoutDocs = withoutProcessed.startsWith("gamedocs/") ? withoutProcessed.slice("gamedocs/".length) : withoutProcessed;
+  const markdown = withoutDocs.replace(/\.[^.]+$/u, ".md");
+  return [...new Set([
+    normalized,
+    withoutProcessed,
+    withoutDocs,
+    markdown,
+    `gamedocs/${withoutDocs}`,
+    `gamedocs/${markdown}`,
+    `processed/parsed/${markdown}`,
+  ].filter(Boolean))];
 }
 
 // 把父发布 manifest.components 建成 artifactId → { componentId, 内容指纹 } 索引。

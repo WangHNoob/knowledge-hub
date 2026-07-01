@@ -180,6 +180,17 @@ describe("ReleaseService", () => {
           })
         ]
       });
+      expect(manifest.components.find((component: any) => component.artifactId === "wiki/systems/demo.md")).toMatchObject({
+        sourceCorrectionDebt: {
+          pendingReviewCount: 1,
+          corrections: [
+            expect.objectContaining({
+              correctionId: "corr_release_pending",
+              sourcePath: "gamedocs/demo.md"
+            })
+          ]
+        }
+      });
       expect(manifest.autoPublish.reasons).toContain("has_pending_review_corrections");
     } finally {
       await fixture.cleanup();
