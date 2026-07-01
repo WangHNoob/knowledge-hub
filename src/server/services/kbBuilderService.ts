@@ -209,7 +209,7 @@ export class KbBuilderPipelineService {
         workspaceRoot,
         runId,
       }));
-      const annotationExamples = await this.loadAnnotationExamplesForPrompt();
+      const annotationExamples = await this.loadAnnotationExamplesForPrompt(options.versionId, options.only);
       const frozenPages = await this.loadPendingCorrectionFrozenPages(options.versionId);
       const ruleDismissals = await this.loadActiveRuleDismissals();
       const specs = await this.withStage(runId, options, "specs", async () => {
@@ -1016,16 +1016,19 @@ export class KbBuilderPipelineService {
     return inserted;
   }
 
-  private async loadAnnotationExamplesForPrompt(limit = 12): Promise<PromptAnnotationExample[]> {
+  private async loadAnnotationExamplesForPrompt(versionId: string, only: string | null, hintLimit = 12): Promise<PromptAnnotationExample[]> {
     const { rows: correctionRows } = await this.adapter.query(
-      `SELECT correction_id, component_id, task_id, page_type, rule_id, source_path, fact_key, correct_value, created_by, created_at
-       FROM source_corrections
-       WHERE state = 'active'
-       ORDER BY updated_at DESC, created_at DESC
-       LIMIT $1`,
-      [Math.max(limit * 2, 24)],
+      `SELECT c.correction_id, c.component_id, c.task_id, c.page_type, c.rule_id, c.source_path, c.fact_key, c.correct_value, c.created_by, c.created_at
+       FROM source_corrections c
+       JOIN source_bundle_versions v ON v.bundle_id = c.bundle_id
+       JOIN source_files sf ON sf.version_id = v.version_id AND sf.logical_path = c.source_path
+       WHERE v.version_id = $1
+         AND c.state = 'active'
+       ORDER BY c.updated_at DESC, c.created_at DESC`,
+      [versionId],
     );
-    const corrections = correctionRows.map((row) => ({
+    const onlyFilter = normalizeBuildOnly(only);
+    const corrections = correctionRows.filter((row) => matchesBuildOnly(stringValue(row.source_path), onlyFilter)).map((row) => ({
       exampleId: String(row.correction_id ?? ""),
       componentId: String(row.component_id ?? ""),
       taskId: String(row.task_id ?? ""),
@@ -1054,7 +1057,7 @@ export class KbBuilderPipelineService {
        WHERE active = true AND apply_mode <> 'override'
        ORDER BY created_at DESC
        LIMIT $1`,
-      [limit],
+      [hintLimit],
     );
     const hints = rows.map((row) => ({
       exampleId: String(row.example_id ?? ""),
@@ -1299,6 +1302,17 @@ function manifestComponents(manifest: Record<string, unknown>): ManifestComponen
 function sourcePathMatches(sourceRefs: string[], sourcePath: string): boolean {
   const wanted = new Set(sourcePathCandidates(sourcePath));
   return sourceRefs.some((ref) => sourcePathCandidates(ref).some((candidate) => wanted.has(candidate)));
+}
+
+function normalizeBuildOnly(only: string | null): string | null {
+  if (!only) return null;
+  return only.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function matchesBuildOnly(sourcePath: string, only: string | null): boolean {
+  if (!only) return true;
+  const sourceCandidates = new Set(sourcePathCandidates(sourcePath));
+  return sourcePathCandidates(only).some((candidate) => sourceCandidates.has(candidate));
 }
 
 function sourcePathCandidates(path: string): string[] {
