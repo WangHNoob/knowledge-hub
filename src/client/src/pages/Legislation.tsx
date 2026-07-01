@@ -2,8 +2,8 @@ import { Boxes, Braces, FileText, Gauge, LayoutDashboard, ListChecks, Plus, Save
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { activateLegislationProfile, createAnnotationExampleReviewTask, createLegislationProfile, getLegislationProfile, getTrustPolicy, listAnnotationExamples, setAnnotationExampleActive } from "../api";
-import type { AnnotationExample, KnowledgeRuleConfig, RelationTypeSpec, TrustPolicy } from "../api/types";
+import { activateLegislationProfile, confirmSourceCorrection, createAnnotationExampleReviewTask, createLegislationProfile, getLegislationProfile, getTrustPolicy, listAnnotationExamples, listSourceCorrections, retireSourceCorrection, setAnnotationExampleActive } from "../api";
+import type { AnnotationExample, KnowledgeRuleConfig, RelationTypeSpec, SourceCorrection, TrustPolicy } from "../api/types";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
 import { formatPercent, formatTime } from "../utils/format";
 import { useNav } from "../ui/navigation";
@@ -39,6 +39,7 @@ export function Legislation() {
   const profiles = useQuery({ queryKey: ["legislation-profile"], queryFn: getLegislationProfile });
   const trustPolicy = useQuery({ queryKey: ["trust-policy"], queryFn: getTrustPolicy });
   const annotationExamples = useQuery({ queryKey: ["annotation-examples"], queryFn: listAnnotationExamples });
+  const sourceCorrections = useQuery({ queryKey: ["source-corrections"], queryFn: () => listSourceCorrections() });
   const [tab, setTab] = useState<LegislationTab>("governance");
   const [name, setName] = useState("策划立法规则");
   const [activate, setActivate] = useState(true);
@@ -88,6 +89,20 @@ export function Legislation() {
     onSuccess: async (task) => {
       await annotationExamples.refetch();
       navigate("review", { taskId: task.taskId });
+    }
+  });
+  const confirmCorrectionMutation = useMutation({
+    mutationFn: (correctionId: string) => confirmSourceCorrection(correctionId, "人工确认当前资料版本仍适用"),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["source-corrections"] });
+      await annotationExamples.refetch();
+    }
+  });
+  const retireCorrectionMutation = useMutation({
+    mutationFn: (correctionId: string) => retireSourceCorrection(correctionId, "人工退役源覆盖"),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["source-corrections"] });
+      await annotationExamples.refetch();
     }
   });
 
@@ -170,10 +185,14 @@ export function Legislation() {
           annotationExamples.error ? <ErrorState error={annotationExamples.error} /> :
           <AnnotationExampleSection
             examples={annotationExamples.data ?? []}
+            corrections={sourceCorrections.data ?? []}
             saving={exampleActiveMutation.isPending}
             reviewing={exampleReviewMutation.isPending}
+            transitioningCorrection={confirmCorrectionMutation.isPending || retireCorrectionMutation.isPending}
             onToggle={(example) => exampleActiveMutation.mutate({ exampleId: example.exampleId, active: !example.active })}
             onReviewExample={(example) => exampleReviewMutation.mutate(example.exampleId)}
+            onConfirmCorrection={(correction) => confirmCorrectionMutation.mutate(correction.correctionId)}
+            onRetireCorrection={(correction) => retireCorrectionMutation.mutate(correction.correctionId)}
             onNavigateReview={(taskId) => navigate("review", { taskId })}
             onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
             onNavigateBuild={(runId) => navigate("builder", { runId })}
@@ -251,20 +270,28 @@ export function Legislation() {
 
 function AnnotationExampleSection({
   examples,
+  corrections,
   saving,
   reviewing,
+  transitioningCorrection,
   onToggle,
   onReviewExample,
+  onConfirmCorrection,
+  onRetireCorrection,
   onNavigateReview,
   onNavigateAsset,
   onNavigateBuild,
   onNavigateRelease,
 }: {
   examples: AnnotationExample[];
+  corrections: SourceCorrection[];
   saving: boolean;
   reviewing: boolean;
+  transitioningCorrection: boolean;
   onToggle: (example: AnnotationExample) => void;
   onReviewExample: (example: AnnotationExample) => void;
+  onConfirmCorrection: (correction: SourceCorrection) => void;
+  onRetireCorrection: (correction: SourceCorrection) => void;
   onNavigateReview: (taskId: string) => void;
   onNavigateAsset: (packageId: string, componentId: string) => void;
   onNavigateBuild: (runId: string) => void;
@@ -274,6 +301,8 @@ function AnnotationExampleSection({
   const overrides = examples.filter((example) => example.active && example.applyMode === "override");
   const injected = examples.filter((example) => example.injectedBuildCount > 0);
   const reviewed = examples.filter((example) => example.lifecycle.lastReviewedAt);
+  const pendingCorrections = corrections.filter((correction) => correction.state === "pending_review");
+  const activeCorrections = corrections.filter((correction) => correction.state === "active");
   return (
     <section className="legislation-workbench">
       <section className="release-panel">
@@ -290,6 +319,72 @@ function AnnotationExampleSection({
           <Metric label="已被注入" value={injected.length} hint="至少进入过一次 build" tone={injected.length ? "ok" : undefined} />
           <Metric label="已复盘" value={reviewed.length} hint="人工处理过复发信号" tone={reviewed.length ? "ok" : undefined} />
           <Metric label="停用样例" value={examples.length - active.length} hint="保留审计，不再注入" />
+          <Metric label="源覆盖" value={activeCorrections.length} hint="active source corrections" tone={activeCorrections.length ? "ok" : undefined} />
+          <Metric label="待复核债" value={pendingCorrections.length} hint="pending review corrections" tone={pendingCorrections.length ? "warn" : "ok"} />
+        </div>
+      </section>
+
+      <section className="release-panel">
+        <div className="detail-head">
+          <div>
+            <h2>源覆盖层</h2>
+            <p>确定性修正以原始资料路径为锚点；源文件变化后进入待复核，发布时会作为可见债务携带。</p>
+          </div>
+          <Badge label={`${pendingCorrections.length} pending`} tone={pendingCorrections.length ? "warn" : "ok"} />
+        </div>
+        <div className="annotation-example-list">
+          {corrections.length === 0 && <p className="subtle">还没有源覆盖修正。</p>}
+          {corrections.map((correction) => (
+            <article className={correction.state === "retired" ? "annotation-example-card inactive" : "annotation-example-card"} key={correction.correctionId}>
+              <div className="annotation-example-main">
+                <div className="annotation-example-title">
+                  <Badge label={sourceCorrectionStateLabel(correction.state)} tone={sourceCorrectionTone(correction.state)} />
+                  <strong>{correction.ruleId || "source correction"}</strong>
+                </div>
+                <div className="annotation-example-meta">
+                  <span>{correction.pageType || "unknown page"}</span>
+                  <span>{correction.createdBy || "unknown"} · {formatTime(correction.updatedAt || correction.createdAt)}</span>
+                  <code>{correction.sourcePath}</code>
+                </div>
+                <div className="annotation-example-values">
+                  <div>
+                    <b>覆盖值</b>
+                    <code>{compactJson(correction.correctValue)}</code>
+                  </div>
+                  <div>
+                    <b>源锚点</b>
+                    <code>{correction.factKey || "page"} · {correction.boundSourceHash}</code>
+                  </div>
+                </div>
+              </div>
+              <div className="annotation-example-side">
+                <strong>{correction.correctionId}</strong>
+                <span>{correction.bundleId}</span>
+                {correction.packageId && correction.componentId && (
+                  <button className="secondary-action" type="button" onClick={() => onNavigateAsset(correction.packageId!, correction.componentId!)}>
+                    查看资产
+                  </button>
+                )}
+                {correction.taskId && (
+                  <button className="secondary-action" type="button" onClick={() => onNavigateReview(correction.taskId)}>
+                    查看任务
+                  </button>
+                )}
+                {correction.state === "pending_review" && (
+                  <>
+                    <button className="secondary-action" type="button" disabled={transitioningCorrection} onClick={() => onConfirmCorrection(correction)}>
+                      <ShieldCheck size={14} />
+                      确认仍适用
+                    </button>
+                    <button className="secondary-action danger" type="button" disabled={transitioningCorrection} onClick={() => onRetireCorrection(correction)}>
+                      <Trash2 size={14} />
+                      退役
+                    </button>
+                  </>
+                )}
+              </div>
+            </article>
+          ))}
         </div>
       </section>
 
@@ -682,6 +777,20 @@ function annotationReviewActionLabel(action: string): string {
   if (action === "disable_annotation_example") return "已停用";
   if (action === "keep_annotation_hint") return "保留观察";
   return action || "已复盘";
+}
+
+function sourceCorrectionStateLabel(state: string): string {
+  if (state === "active") return "active";
+  if (state === "pending_review") return "待复核";
+  if (state === "retired") return "retired";
+  return state || "unknown";
+}
+
+function sourceCorrectionTone(state: string): "ok" | "warn" | "hot" | undefined {
+  if (state === "active") return "ok";
+  if (state === "pending_review") return "warn";
+  if (state === "retired") return undefined;
+  return "hot";
 }
 
 function stringValue(value: unknown): string {

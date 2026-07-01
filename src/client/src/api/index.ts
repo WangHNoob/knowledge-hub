@@ -28,11 +28,13 @@ export { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transition
 export { getQualityProfile, getTrustPolicy, updateQualityProfile } from "./quality";
 export {
   activateLegislationProfile,
+  confirmSourceCorrection,
   createAnnotationExampleReviewTask,
   createLegislationProfile,
   getLegislationProfile,
   listAnnotationExamples,
   listSourceCorrections,
+  retireSourceCorrection,
   setAnnotationExampleActive
 } from "./legislation";
 export {

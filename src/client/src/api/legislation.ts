@@ -22,6 +22,20 @@ export async function listSourceCorrections(state?: string): Promise<SourceCorre
   return (await getJson<{ corrections: SourceCorrection[] }>(`/api/legislation/source-corrections${suffix}`)).corrections;
 }
 
+export async function confirmSourceCorrection(correctionId: string, note?: string): Promise<SourceCorrection> {
+  return (await postJson<{ correction: SourceCorrection }>(
+    `/api/legislation/source-corrections/${encodeURIComponent(correctionId)}/confirm`,
+    { note },
+  )).correction;
+}
+
+export async function retireSourceCorrection(correctionId: string, note?: string): Promise<SourceCorrection> {
+  return (await postJson<{ correction: SourceCorrection }>(
+    `/api/legislation/source-corrections/${encodeURIComponent(correctionId)}/retire`,
+    { note },
+  )).correction;
+}
+
 export async function setAnnotationExampleActive(exampleId: string, active: boolean): Promise<AnnotationExample> {
   return (await postJson<{ example: AnnotationExample }>(
     `/api/legislation/annotation-examples/${encodeURIComponent(exampleId)}/active`,
