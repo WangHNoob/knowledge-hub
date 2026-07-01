@@ -321,6 +321,20 @@ describe("review task transitions", () => {
     });
     expect(correctionRows.rows[0].correct_value).toEqual({ field: "activity_structure", source: "candidate" });
 
+    const correctionListResponse = await app.inject({
+      method: "GET",
+      url: "/api/legislation/source-corrections",
+      headers: auth
+    });
+    expect(correctionListResponse.statusCode).toBe(200);
+    expect(correctionListResponse.json().corrections).toEqual([
+      expect.objectContaining({
+        correctionId: correctionRows.rows[0].correction_id,
+        state: "active",
+        sourcePath: "gamedocs/pvp.md"
+      })
+    ]);
+
     const reviewEvents = await db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = $1", ["annotation.review_resolved"]);
     expect(reviewEvents.rows[0].payload_json).toMatchObject({
       taskId: reviewTask.taskId,

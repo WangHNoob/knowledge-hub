@@ -1203,6 +1203,23 @@ export class KnowledgeService {
     return updated;
   }
 
+  async listSourceCorrections(filter: { state?: string } = {}): Promise<Array<Record<string, unknown>>> {
+    const params: unknown[] = [];
+    const where: string[] = [];
+    if (filter.state) {
+      where.push(`state = $${params.length + 1}`);
+      params.push(filter.state);
+    }
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM source_corrections
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       ORDER BY CASE state WHEN 'pending_review' THEN 0 WHEN 'active' THEN 1 ELSE 2 END, updated_at DESC, created_at DESC`,
+      params,
+    );
+    return rows.map(sourceCorrectionRecord);
+  }
+
   async retireSourceCorrection(correctionId: string, actor: string, note = ""): Promise<Record<string, unknown>> {
     const correction = await this.getSourceCorrection(correctionId);
     if (!correction) throw new Error(`Unknown source correction: ${correctionId}`);

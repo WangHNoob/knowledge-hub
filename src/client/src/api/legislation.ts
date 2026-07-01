@@ -1,5 +1,5 @@
 import { getJson, postJson } from "./http";
-import type { AnnotationExample, KnowledgeRuleConfig, KnowledgeRuleProfile, ReviewTask } from "./types";
+import type { AnnotationExample, KnowledgeRuleConfig, KnowledgeRuleProfile, ReviewTask, SourceCorrection } from "./types";
 
 export async function getLegislationProfile(): Promise<{ profile: KnowledgeRuleProfile; profiles: KnowledgeRuleProfile[] }> {
   return getJson<{ profile: KnowledgeRuleProfile; profiles: KnowledgeRuleProfile[] }>("/api/legislation/profile");
@@ -15,6 +15,11 @@ export async function activateLegislationProfile(profileId: string): Promise<Kno
 
 export async function listAnnotationExamples(): Promise<AnnotationExample[]> {
   return (await getJson<{ examples: AnnotationExample[] }>("/api/legislation/annotation-examples")).examples;
+}
+
+export async function listSourceCorrections(state?: string): Promise<SourceCorrection[]> {
+  const suffix = state ? `?state=${encodeURIComponent(state)}` : "";
+  return (await getJson<{ corrections: SourceCorrection[] }>(`/api/legislation/source-corrections${suffix}`)).corrections;
 }
 
 export async function setAnnotationExampleActive(exampleId: string, active: boolean): Promise<AnnotationExample> {

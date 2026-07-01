@@ -285,6 +285,25 @@ export interface AnnotationExample {
   createdAt: string;
 }
 
+export interface SourceCorrection {
+  correctionId: string;
+  bundleId: string;
+  sourcePath: string;
+  ruleId: string;
+  pageType: string;
+  factKey: string | null;
+  boundSourceHash: string;
+  state: "active" | "pending_review" | "retired" | string;
+  correctValue: Record<string, unknown>;
+  componentId: string | null;
+  packageId: string | null;
+  exampleId: string;
+  taskId: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AnnotationExampleEffect {
   tasksBefore: number;
   tasksAfter: number;

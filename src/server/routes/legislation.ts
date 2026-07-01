@@ -37,6 +37,14 @@ export function registerLegislationRoutes(app: FastifyInstance, ctx: RouteContex
     examples: await ctx.service.listAnnotationExamples(),
   }));
 
+  app.get<{ Querystring: { state?: string } }>(
+    "/api/legislation/source-corrections",
+    { preHandler: app.authenticate },
+    async (request) => ({
+      corrections: await ctx.service.listSourceCorrections({ state: request.query.state }),
+    })
+  );
+
   app.post<{ Params: { exampleId: string } }>(
     "/api/legislation/annotation-examples/:exampleId/active",
     { preHandler: [app.authenticate, denyRole("viewer")] },

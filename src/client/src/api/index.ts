@@ -32,6 +32,7 @@ export {
   createLegislationProfile,
   getLegislationProfile,
   listAnnotationExamples,
+  listSourceCorrections,
   setAnnotationExampleActive
 } from "./legislation";
 export {
