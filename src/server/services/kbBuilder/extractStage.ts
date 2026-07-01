@@ -10,7 +10,7 @@ import type { WikiSpecSet } from "./specs";
 import { loadTableAliases, type TableAliasIndex } from "./tableAliases";
 import type { StageResult } from "./types";
 
-interface ExtractedPage {
+export interface ExtractedPage {
   type: string;
   title: string;
   source: string;
@@ -18,6 +18,7 @@ interface ExtractedPage {
   entities: Entity[];
   relationships: Relationship[];
   body: string;
+  meta?: Record<string, unknown>;
 }
 
 interface Entity {
@@ -39,6 +40,7 @@ type ExtractOptions = {
   force: boolean;
   only: string | null;
   annotationExamples?: PromptAnnotationExample[];
+  frozenPages?: FrozenExtractPage[];
   onProgress?: (info: { message: string; index: number; total: number }) => void;
 };
 
@@ -65,6 +67,14 @@ export interface AnnotationOverride {
   removeFacts?: string[];
   replaceSection?: { heading: string; markdown: string };
   replaceBody?: string;
+}
+
+export interface FrozenExtractPage {
+  sourcePath: string;
+  correctionIds: string[];
+  frozenFromReleaseId: string;
+  artifactId: string;
+  page: ExtractedPage;
 }
 
 export async function runExtractStage(options: ExtractOptions): Promise<StageResult> {
@@ -97,17 +107,31 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   const modelConfig = resolveModelConfig(options);
   const aliasFingerprint = tableAliasFingerprint(options.dataDir);
   const annotationOverrides = annotationOverridesFromExamples(annotationExamples, warnings);
+  const frozenBySourcePath = frozenPagesBySourcePath(options.frozenPages ?? []);
   for (let index = 0; index < files.length; index += 1) {
     const absolute = files[index];
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 
     const markdown = readFileSync(absolute, "utf8");
+    const frozen = frozenForSourceRel(frozenBySourcePath, rel);
     const cacheKey = extractCacheKey({ markdown, rel, specsHash: options.specs.hash, modelConfig, aliasFingerprint, annotationExamples });
-    const cached = options.force ? null : readExtractCache(options.dataDir, cacheKey);
-    const extracted = cached ?? await extractPage(markdown, rel, client, guidance, warnings);
-    if (!cached) applyAnnotationOverrides(extracted, rel, annotationOverrides, options.specs, warnings);
+    const cached = frozen || options.force ? null : readExtractCache(options.dataDir, cacheKey);
+    const extracted = frozen ? cloneExtractedPage(frozen.page) : cached ?? await extractPage(markdown, rel, client, guidance, warnings);
+    if (frozen) {
+      extracted.source = frozen.sourcePath;
+      extracted.meta = {
+        ...(extracted.meta ?? {}),
+        source_correction_state: "pending_review",
+        frozen_from_release_id: frozen.frozenFromReleaseId,
+        frozen_artifact_id: frozen.artifactId,
+        frozen_correction_ids: frozen.correctionIds,
+      };
+      warnings.push(`${rel}: pending source correction; froze wiki page from release ${frozen.frozenFromReleaseId}`);
+    } else if (!cached) {
+      applyAnnotationOverrides(extracted, rel, annotationOverrides, options.specs, warnings);
+    }
     normalizeTableRefs(extracted, tableAliases);
-    writeExtractCache(options.dataDir, cacheKey, extracted);
+    if (!frozen) writeExtractCache(options.dataDir, cacheKey, extracted);
     const pageType = options.specs.manifest.pageTypes[extracted.type];
     if (!pageType) {
       warnings.push(`${rel}: unknown page type "${extracted.type}", skipped`);
@@ -635,6 +659,52 @@ function toMetaJson(page: ExtractedPage, wikiPath: string): Record<string, unkno
     entities: page.entities,
     relationships: page.relationships,
     wiki_path: wikiPath,
+    ...(page.meta ?? {}),
+  };
+}
+
+function frozenPagesBySourcePath(frozenPages: FrozenExtractPage[]): Map<string, FrozenExtractPage> {
+  const map = new Map<string, FrozenExtractPage>();
+  for (const frozen of frozenPages) {
+    for (const candidate of sourcePathCandidates(frozen.sourcePath)) map.set(candidate, frozen);
+  }
+  return map;
+}
+
+function frozenForSourceRel(frozenBySourcePath: Map<string, FrozenExtractPage>, rel: string): FrozenExtractPage | null {
+  for (const candidate of sourcePathCandidates(rel)) {
+    const frozen = frozenBySourcePath.get(candidate);
+    if (frozen) return frozen;
+  }
+  return null;
+}
+
+function sourcePathCandidates(path: string): string[] {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  const withoutProcessed = normalized.startsWith("processed/parsed/") ? normalized.slice("processed/parsed/".length) : normalized;
+  const withoutDocs = withoutProcessed.startsWith("gamedocs/") ? withoutProcessed.slice("gamedocs/".length) : withoutProcessed;
+  const markdown = withoutDocs.replace(/\.[^.]+$/u, ".md");
+  return [...new Set([
+    normalized,
+    withoutProcessed,
+    withoutDocs,
+    markdown,
+    `gamedocs/${withoutDocs}`,
+    `gamedocs/${markdown}`,
+    `processed/parsed/${markdown}`,
+  ].filter(Boolean))];
+}
+
+function cloneExtractedPage(page: ExtractedPage): ExtractedPage {
+  return {
+    type: page.type,
+    title: page.title,
+    source: page.source,
+    facts: { ...page.facts },
+    entities: page.entities.map((entity) => ({ ...entity })),
+    relationships: page.relationships.map((relationship) => ({ ...relationship })),
+    body: page.body,
+    meta: { ...(page.meta ?? {}) },
   };
 }
 

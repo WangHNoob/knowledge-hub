@@ -250,6 +250,146 @@ describe("KbBuilderPipelineService", () => {
     }
   }, 20000);
 
+  it("freezes pending source corrections from the current published OKF page", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-service-data-"));
+    const sourceRoot = mkdtempSync(join(tmpdir(), "kh-kb-service-src-"));
+    const { db, cleanup } = await createTestDb();
+    try {
+      mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
+      writeFileSync(join(sourceRoot, "gamedocs", "battle.md"), [
+        "---",
+        "type: system",
+        "title: New Battle",
+        "source: gamedocs/battle.md",
+        "facts:",
+        "  config_table: NewSkill",
+        "---",
+        "# New Battle",
+        "",
+        "New content that should not overwrite the pending reviewed artifact."
+      ].join("\n"));
+
+      const sourceService = createSourceBundleService(db, dataDir);
+      const imported = await sourceService.importDirectoryAsVersion({
+        rootPath: sourceRoot,
+        bundleId: "default",
+        createdBy: "admin",
+        note: "pending correction fixture"
+      });
+      const sourceFile = (await sourceService.listFiles(imported.version.versionId)).find((file) => file.logicalPath === "gamedocs/battle.md");
+
+      mkdirSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "systems"), { recursive: true });
+      writeFileSync(join(dataDir, "releases", "rel_pending_freeze", "okf_bundle", "systems", "battle.md"), [
+        "---",
+        'type: "system"',
+        'title: "Old Battle"',
+        'description: "Reviewed stable page"',
+        'tags: ["wiki", "wiki_page", "system"]',
+        'timestamp: "2026-06-30T00:00:00.000Z"',
+        'resource: "kh://component/cmp_old_battle"',
+        "kh:",
+        '  componentId: "cmp_old_battle"',
+        '  packageId: "pkg_old_battle"',
+        '  artifactId: "wiki/systems/battle.md"',
+        "---",
+        "# Old Battle",
+        "",
+        "Reviewed stable content.",
+        "",
+        "## Data Dependencies",
+        "",
+        "- [OldSkill](/tables/OldSkill.md)",
+        "",
+        "# Trust",
+        "",
+        "- score: 80",
+        "",
+        "# Citations",
+        "",
+        "1. old quote (ev_old; source src_old; confidence 1)"
+      ].join("\n"));
+      await db.adapter.query(
+        `INSERT INTO releases
+          (release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, published_by, published_at, quality_gate, note)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),$9,$10)`,
+        [
+          "rel_pending_freeze",
+          "v-freeze",
+          "published",
+          JSON.stringify(["pkg_old_battle"]),
+          "hash",
+          JSON.stringify({
+            bundleUri: "releases/rel_pending_freeze/okf_bundle",
+            components: [
+              {
+                componentId: "cmp_old_battle",
+                artifactId: "wiki/systems/battle.md",
+                storageUri: "data/wiki/systems/battle.md",
+                sourceRefs: ["gamedocs/battle.md"],
+              }
+            ]
+          }),
+          "admin",
+          "admin",
+          JSON.stringify({}),
+          "fixture"
+        ],
+      );
+      await db.adapter.query(
+        `INSERT INTO release_channels (channel_id, current_release_id, updated_by, updated_at)
+         VALUES ('default','rel_pending_freeze','admin',NOW())
+         ON CONFLICT (channel_id) DO UPDATE SET current_release_id = EXCLUDED.current_release_id`,
+      );
+      await db.adapter.query(
+        `INSERT INTO source_corrections (
+           correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+           bound_source_hash, state, correct_value, component_id, package_id,
+           example_id, task_id, created_by, created_at, updated_at
+         )
+         VALUES (
+           'corr_pending_freeze','default','gamedocs/battle.md','wiki.required_fact','system','config_table',
+           $1,'pending_review',$2,'cmp_old_battle','pkg_old_battle','','task_pending_freeze','admin',NOW(),NOW()
+         )`,
+        [
+          sourceFile?.contentHash ?? "",
+          JSON.stringify({ setFacts: { config_table: "OldSkill" } })
+        ],
+      );
+
+      const result = await createKbBuilderPipelineService(db, dataDir).build({
+        bundleId: "default",
+        versionId: imported.version.versionId,
+        requestedBy: "admin",
+        stages: ["convert", "extract"],
+        model: "deterministic",
+        force: true,
+        only: null,
+        qualityProfileId: "default"
+      });
+
+      const runDataDir = join(dataDir, "kb-build-runs", result.run.runId, "data");
+      const meta = JSON.parse(readFileSync(join(runDataDir, "wiki", "_meta", "battle.json"), "utf8"));
+      const wiki = readFileSync(join(runDataDir, "wiki", "systems", "battle.md"), "utf8");
+      expect(meta).toMatchObject({
+        title: "Old Battle",
+        source: "gamedocs/battle.md",
+        source_correction_state: "pending_review",
+        frozen_from_release_id: "rel_pending_freeze",
+        frozen_artifact_id: "wiki/systems/battle.md",
+        frozen_correction_ids: ["corr_pending_freeze"],
+      });
+      expect(meta.facts).toMatchObject({ config_table: "OldSkill" });
+      expect(wiki).toContain("Reviewed stable content.");
+      expect(wiki).not.toContain("New content that should not overwrite");
+      expect(wiki).not.toContain("# Trust");
+      expect(wiki).not.toContain("# Citations");
+    } finally {
+      await cleanup();
+      rmSync(dataDir, { recursive: true, force: true });
+      rmSync(sourceRoot, { recursive: true, force: true });
+    }
+  }, 20000);
+
   it("does not inject inactive annotation examples", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "kh-kb-service-data-"));
     const sourceRoot = mkdtempSync(join(tmpdir(), "kh-kb-service-src-"));

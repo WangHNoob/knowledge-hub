@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
@@ -24,7 +24,7 @@ import { createTableAliasService } from "./tableAliasService";
 import { materializeSourceVersion } from "./kbBuilder/materialize";
 import { loadWikiSpecs } from "./kbBuilder/specs";
 import { runConvertStage } from "./kbBuilder/convertStage";
-import { runExtractStage, type PromptAnnotationExample } from "./kbBuilder/extractStage";
+import { runExtractStage, type ExtractedPage, type FrozenExtractPage, type PromptAnnotationExample } from "./kbBuilder/extractStage";
 import { runTableStage } from "./kbBuilder/tableStage";
 import { runGraphStage } from "./kbBuilder/graphStage";
 import { runVizStage } from "./kbBuilder/vizStage";
@@ -38,6 +38,7 @@ import { modelName, normalizeModelConfig, redactModelConfig, type PipelineModelC
 import type { DiagnosticLogger } from "./diagnosticService";
 import { computeTrustScore } from "./trustScore";
 import { emitKnowledgeEvent } from "./eventService";
+import { mapRelease } from "../db/mappers";
 
 /**
  * 生成 runId / packageId 里嵌入的紧凑时间戳，按东八区（Asia/Shanghai）墙钟时间。
@@ -209,6 +210,7 @@ export class KbBuilderPipelineService {
         runId,
       }));
       const annotationExamples = await this.loadAnnotationExamplesForPrompt();
+      const frozenPages = await this.loadPendingCorrectionFrozenPages(options.versionId);
       const ruleDismissals = await this.loadActiveRuleDismissals();
       const specs = await this.withStage(runId, options, "specs", async () => {
         const specDir = ensureWikiSpecs(workspace.dataDir, ruleProfile.config);
@@ -230,6 +232,7 @@ export class KbBuilderPipelineService {
         force: options.force,
         only: options.only,
         annotationExamples,
+        frozenPages,
         onProgress: (info) => {
           void this.diagnostics?.write({
             traceId: options.traceId,
@@ -1068,6 +1071,61 @@ export class KbBuilderPipelineService {
     return [...corrections, ...hints];
   }
 
+  private async loadPendingCorrectionFrozenPages(versionId: string): Promise<FrozenExtractPage[]> {
+    const { rows: releaseRows } = await this.adapter.query(
+      `SELECT r.*
+       FROM release_channels ch
+       JOIN releases r ON r.release_id = ch.current_release_id
+       WHERE ch.channel_id = 'default'
+         AND r.status = 'published'
+       LIMIT 1`,
+    );
+    if (releaseRows.length === 0) return [];
+    const release = mapRelease(releaseRows[0]);
+    const components = manifestComponents(release.manifest);
+    if (components.length === 0) return [];
+
+    const { rows } = await this.adapter.query(
+      `SELECT c.correction_id, c.source_path
+       FROM source_corrections c
+       JOIN source_bundle_versions v ON v.bundle_id = c.bundle_id
+       JOIN source_files sf ON sf.version_id = v.version_id AND sf.logical_path = c.source_path
+       WHERE v.version_id = $1
+         AND c.state = 'pending_review'
+       ORDER BY c.updated_at DESC, c.created_at DESC`,
+      [versionId],
+    );
+    const correctionIdsBySource = new Map<string, string[]>();
+    for (const row of rows) {
+      const sourcePath = stringValue(row.source_path);
+      const correctionId = stringValue(row.correction_id);
+      if (!sourcePath || !correctionId) continue;
+      correctionIdsBySource.set(sourcePath, [...(correctionIdsBySource.get(sourcePath) ?? []), correctionId]);
+    }
+    if (correctionIdsBySource.size === 0) return [];
+
+    const out: FrozenExtractPage[] = [];
+    for (const [sourcePath, correctionIds] of correctionIdsBySource.entries()) {
+      const component = components.find((item) => sourcePathMatches(item.sourceRefs, sourcePath));
+      if (!component) continue;
+      const okfPath = okfMarkdownPathForArtifact(component.artifactId || component.storageUri);
+      if (!okfPath) continue;
+      const bundleUri = stringValue(release.manifest.bundleUri) || `releases/${release.releaseId}/okf_bundle`;
+      const okfAbs = join(this.dataDir, ...bundleUri.split("/"), ...okfPath.split("/"));
+      if (!existsSync(okfAbs)) continue;
+      const page = parseOkfExtractPage(readFileSync(okfAbs, "utf8"), sourcePath);
+      if (!page) continue;
+      out.push({
+        sourcePath,
+        correctionIds,
+        frozenFromReleaseId: release.releaseId,
+        artifactId: component.artifactId,
+        page,
+      });
+    }
+    return out;
+  }
+
   private async loadActiveRuleDismissals(): Promise<QualityRuleDismissal[]> {
     const { rows } = await this.adapter.query(
       `SELECT component_id, component_ref, rule_id
@@ -1217,6 +1275,131 @@ function mapProfile(row: Record<string, unknown>): QualityGateProfile {
   };
 }
 
+interface ManifestComponentRef {
+  artifactId: string;
+  storageUri: string;
+  sourceRefs: string[];
+}
+
+function manifestComponents(manifest: Record<string, unknown>): ManifestComponentRef[] {
+  const raw = Array.isArray(manifest.components) ? manifest.components : [];
+  return raw.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const record = entry as Record<string, unknown>;
+    const artifactId = stringValue(record.artifactId);
+    const storageUri = stringValue(record.storageUri);
+    const sourceRefs = stringArray(record.sourceRefs);
+    if (!artifactId && !storageUri) return [];
+    return [{ artifactId, storageUri, sourceRefs }];
+  });
+}
+
+function sourcePathMatches(sourceRefs: string[], sourcePath: string): boolean {
+  const wanted = new Set(sourcePathCandidates(sourcePath));
+  return sourceRefs.some((ref) => sourcePathCandidates(ref).some((candidate) => wanted.has(candidate)));
+}
+
+function sourcePathCandidates(path: string): string[] {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  const withoutProcessed = normalized.startsWith("processed/parsed/") ? normalized.slice("processed/parsed/".length) : normalized;
+  const withoutDocs = withoutProcessed.startsWith("gamedocs/") ? withoutProcessed.slice("gamedocs/".length) : withoutProcessed;
+  const markdown = withoutDocs.replace(/\.[^.]+$/u, ".md");
+  return [...new Set([
+    normalized,
+    withoutProcessed,
+    withoutDocs,
+    markdown,
+    `gamedocs/${withoutDocs}`,
+    `gamedocs/${markdown}`,
+    `processed/parsed/${markdown}`,
+  ].filter(Boolean))];
+}
+
+function okfMarkdownPathForArtifact(artifactId: string): string {
+  const normalized = artifactId.replace(/\\/g, "/").replace(/^\/+/, "");
+  const withoutWiki = normalized.startsWith("wiki/") ? normalized.slice("wiki/".length) : normalized;
+  return withoutWiki.endsWith(".md") && withoutWiki !== "index.md" ? withoutWiki : "";
+}
+
+function parseOkfExtractPage(markdown: string, sourcePath: string): ExtractedPage | null {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/u.exec(markdown);
+  if (!match) return null;
+  const frontmatter = match[1];
+  const body = stripOkfUtilitySections(match[2]);
+  const title = yamlScalar(frontmatter, "title") || firstMarkdownHeading(body) || sourcePath.split("/").pop()?.replace(/\.md$/u, "") || sourcePath;
+  const type = pageTypeFromOkf(yamlScalar(frontmatter, "type"));
+  return {
+    type,
+    title,
+    source: sourcePath,
+    facts: factsFromOkfBody(body),
+    entities: [{ name: title, type }],
+    relationships: [],
+    body,
+  };
+}
+
+function pageTypeFromOkf(type: string): string {
+  if (type === "activity" || type === "system" || type === "concept" || type === "table") return type;
+  return "concept";
+}
+
+function factsFromOkfBody(body: string): Record<string, string> {
+  const tables = dataDependencyTables(body);
+  return tables.length ? { config_table: tables.join(", ") } : {};
+}
+
+function dataDependencyTables(body: string): string[] {
+  const lines = body.split(/\r?\n/u);
+  const out: string[] = [];
+  let inSection = false;
+  for (const line of lines) {
+    const heading = /^#{1,4}\s+(.+?)\s*$/u.exec(line.trim());
+    if (heading) {
+      const normalized = heading[1].trim().toLowerCase();
+      inSection = normalized === "data dependencies" || ["配置表依赖", "关联配置表", "数据依赖", "表依赖"].includes(normalized);
+      continue;
+    }
+    if (!inSection) continue;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const link = /\[[^\]]+\]\(([^)]+)\)/u.exec(trimmed);
+    const value = (link?.[1] ?? trimmed.replace(/^[-*]\s*/u, "")).replace(/^\/?tables\//u, "").replace(/\.md$/u, "").trim();
+    if (value && !value.includes("|")) out.push(value);
+  }
+  return uniqueSorted(out);
+}
+
+function stripOkfUtilitySections(body: string): string {
+  const out: string[] = [];
+  let skip = false;
+  for (const line of body.split(/\r?\n/u)) {
+    const heading = /^#\s+(.+?)\s*$/u.exec(line.trim());
+    if (heading) {
+      skip = ["trust", "citations", "引用", "证据"].includes(heading[1].trim().toLowerCase());
+      if (skip) continue;
+    }
+    if (!skip) out.push(line);
+  }
+  return `${out.join("\n").trim()}\n`;
+}
+
+function yamlScalar(frontmatter: string, key: string): string {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = new RegExp(`^(?:${escaped}|\\s+${escaped}):\\s*(.+?)\\s*$`, "mu").exec(frontmatter);
+  if (!match) return "";
+  const raw = match[1].trim();
+  try {
+    return String(JSON.parse(raw));
+  } catch {
+    return raw.replace(/^["']|["']$/gu, "");
+  }
+}
+
+function firstMarkdownHeading(markdown: string): string {
+  return /^#\s+(.+?)\s*$/mu.exec(markdown)?.[1]?.trim() ?? "";
+}
+
 function jsonValue<T>(value: unknown, fallback: T): T {
   if (typeof value === "string") return JSON.parse(value) as T;
   return (value ?? fallback) as T;
@@ -1333,6 +1516,11 @@ function compactJson(value: unknown): string {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(stringValue).filter(Boolean);
 }
 
 function uniqueSorted(values: string[]): string[] {
