@@ -453,6 +453,7 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
   const okf = okfManifest(release);
   const revision = revisionInfo(release);
   const autoPublish = autoPublishInfo(release);
+  const correctionDebt = sourceCorrectionDebtInfo(release);
   if (!audit) return <OkfSummary release={release} />;
   const okfStats = audit.okf ?? okf;
   const missingCitations = okfStats ? Math.max(okfStats.citationSummary.required - okfStats.citationSummary.present, 0) : 0;
@@ -483,6 +484,13 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
       {revision && (
         <RevisionPatchView
           revision={revision}
+          onNavigateComponent={(componentId) => navigate("assets", { componentId })}
+        />
+      )}
+
+      {correctionDebt.pendingReviewCount > 0 && (
+        <SourceCorrectionDebtView
+          debt={correctionDebt}
           onNavigateComponent={(componentId) => navigate("assets", { componentId })}
         />
       )}
@@ -626,6 +634,37 @@ function OkfSummary({ release }: { release: ReleaseRecord }) {
         <code>{okf.reportUri}</code>
       </div>
     </div>
+  );
+}
+
+function SourceCorrectionDebtView({
+  debt,
+  onNavigateComponent,
+}: {
+  debt: ReleaseSourceCorrectionDebt;
+  onNavigateComponent: (componentId: string) => void;
+}) {
+  return (
+    <section className="revision-patch">
+      <div className="revision-patch-head">
+        <div>
+          <h4>源覆盖待复核</h4>
+          <p>{debt.componentCount} 个组件带着上一发布确认值继续发布，需要复核源文件变化后确认或退役修正。</p>
+        </div>
+        <Badge label={`${debt.pendingReviewCount} pending`} tone="warn" />
+      </div>
+      <div className="audit-list">
+        {debt.components.slice(0, 6).map((component) => (
+          <p key={component.componentId}>
+            <strong>{component.title || component.artifactId}</strong>
+            <span>
+              {component.corrections.map((correction) => `${correction.sourcePath} · ${correction.correctionId}`).join("；")}
+            </span>
+            <button className="secondary-action" type="button" onClick={() => onNavigateComponent(component.componentId)}>查看组件</button>
+          </p>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -777,6 +816,32 @@ function autoPublishInfo(release: ReleaseRecord): AutoPublishInfo | null {
   };
 }
 
+function sourceCorrectionDebtInfo(release: ReleaseRecord): ReleaseSourceCorrectionDebt {
+  const components = Array.isArray(release.manifest.components) ? release.manifest.components : [];
+  const rows = components.flatMap((entry) => {
+    const component = objectValue(entry);
+    const debt = objectValue(component.sourceCorrectionDebt);
+    const corrections = Array.isArray(debt.corrections) ? debt.corrections.flatMap((correction) => {
+      const record = objectValue(correction);
+      const correctionId = stringField(record.correctionId);
+      const sourcePath = stringField(record.sourcePath);
+      return correctionId && sourcePath ? [{ correctionId, sourcePath, ruleId: stringField(record.ruleId), factKey: stringField(record.factKey) }] : [];
+    }) : [];
+    if (corrections.length === 0) return [];
+    return [{
+      componentId: stringField(component.componentId),
+      artifactId: stringField(component.artifactId),
+      title: stringField(component.title),
+      corrections,
+    }];
+  });
+  return {
+    componentCount: rows.length,
+    pendingReviewCount: rows.reduce((sum, component) => sum + component.corrections.length, 0),
+    components: rows,
+  };
+}
+
 function trustTone(score: number | null): "hot" | "warn" | "ok" | undefined {
   if (score === null) return undefined;
   if (score < 0.55) return "hot";
@@ -831,6 +896,8 @@ function autoPublishReasonLabel(reason: string): string {
       return "缺少发布基线";
     case "no_component_changes":
       return "没有组件变更";
+    case "has_pending_review_corrections":
+      return "存在待复核源覆盖";
     case "unknown":
       return "未记录具体原因";
     default:
@@ -850,6 +917,8 @@ function autoPublishReasonAction(reason: string): string {
       return "先发布一个基线版本，后续 revision 才能自动比较差异。";
     case "no_component_changes":
       return "没有需要发布的变化，通常不需要处理。";
+    case "has_pending_review_corrections":
+      return "当前版本带着上一发布确认值继续发布；去策划立法的源覆盖层确认或退役对应修正。";
     default:
       return "查看关联构建 run、资产包和审核任务后决定是否手动发布。";
   }
@@ -917,6 +986,22 @@ interface AutoPublishInfo {
   eligible: boolean;
   mode: string;
   reasons: string[];
+}
+
+interface ReleaseSourceCorrectionDebt {
+  componentCount: number;
+  pendingReviewCount: number;
+  components: Array<{
+    componentId: string;
+    artifactId: string;
+    title: string;
+    corrections: Array<{
+      correctionId: string;
+      sourcePath: string;
+      ruleId: string;
+      factKey: string;
+    }>;
+  }>;
 }
 
 interface AutoPublishEventView {
