@@ -120,6 +120,64 @@ describe("ReleaseService", () => {
     }
   }, 15000);
 
+  it("publishes pending source correction debt visibly without blocking manual release", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_pending_correction" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+    try {
+      await fixture.db.adapter.query(
+        `INSERT INTO source_blobs (content_hash, byte_size, storage_uri, first_seen_at)
+         VALUES ('hash_pending_current', 10, 'storage/blobs/pending.md', NOW())
+         ON CONFLICT DO NOTHING`
+      );
+      await fixture.db.adapter.query(
+        `INSERT INTO source_bundle_versions (
+           version_id, bundle_id, parent_version_id, label, note, created_by, created_at,
+           file_count, added_count, modified_count, removed_count, unchanged_count, total_bytes
+         )
+         VALUES ('srcv_fixture','default',NULL,'fixture','','admin',NOW(),1,1,0,0,0,10)
+         ON CONFLICT DO NOTHING`
+      );
+      await fixture.db.adapter.query(
+        `INSERT INTO source_files (version_id, logical_path, category, content_hash, byte_size)
+         VALUES ('srcv_fixture','gamedocs/demo.md','gamedocs','hash_pending_current',10)
+         ON CONFLICT DO NOTHING`
+      );
+      await fixture.db.adapter.query(
+        `INSERT INTO source_corrections (
+           correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+           bound_source_hash, state, correct_value, component_id, package_id,
+           example_id, task_id, created_by, created_at, updated_at
+         )
+         VALUES (
+           'corr_release_pending','default','gamedocs/demo.md','wiki.required_fact','system','config_table',
+           'hash_old','pending_review','{"setFacts":{"config_table":"Demo/Table"}}',
+           NULL,'pkg_pending_correction','','task_pending','admin',NOW(),NOW()
+         )`
+      );
+
+      const draft = await service.createDraft({
+        version: "2026.06.15.pending",
+        packageIds: ["pkg_pending_correction"],
+        requestedBy: "admin"
+      });
+      const published = await service.publish(draft.releaseId, "admin");
+      const manifest = published.manifest as Record<string, any>;
+
+      expect(manifest.sourceCorrections).toMatchObject({
+        pendingReview: [
+          expect.objectContaining({
+            correctionId: "corr_release_pending",
+            sourcePath: "gamedocs/demo.md",
+            state: "pending_review"
+          })
+        ]
+      });
+      expect(manifest.autoPublish.reasons).toContain("has_pending_review_corrections");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
+
   it("deletes non-current releases and their OKF storage but protects the current release", async () => {
     const first = await setupReleaseFixture({ packageId: "pkg_delete_old" });
     await setupReleaseFixture({ handle: first.handle, packageId: "pkg_delete_current" });

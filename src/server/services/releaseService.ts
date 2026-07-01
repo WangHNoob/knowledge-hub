@@ -57,6 +57,19 @@ interface AutoPublishCheck {
   changedComponentIds: string[];
   blockingTaskIds: string[];
   trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
+  pendingSourceCorrections: PendingSourceCorrection[];
+}
+
+interface PendingSourceCorrection {
+  correctionId: string;
+  bundleId: string;
+  sourcePath: string;
+  ruleId: string;
+  pageType: string;
+  factKey: string;
+  boundSourceHash: string;
+  state: "pending_review";
+  updatedAt: string;
 }
 
 export interface CreateReleaseDraftInput {
@@ -187,7 +200,8 @@ export class ReleaseService {
       const parentRelease = release.parentReleaseId ? await this.getRelease(release.parentReleaseId) : null;
       const revisionDiff = buildReleaseDiff(parentRelease, packages, trustedComponents);
       const revision = buildReleaseRevision(release, revisionDiff);
-      const autoPublish = await this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode));
+      const pendingSourceCorrections = await this.loadPendingSourceCorrections(packages);
+      const autoPublish = await this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode), pendingSourceCorrections);
       if (options.autoMode && !autoPublish.eligible) {
         throw new Error(`Auto publish is not eligible: ${autoPublish.reasons.join(", ")}`);
       }
@@ -224,6 +238,7 @@ export class ReleaseService {
         auditSummary: okfExport.manifest.auditSummary,
         revision,
         autoPublish,
+        pendingSourceCorrections,
       });
       const manifestHash = hashManifest(manifest);
 
@@ -474,6 +489,7 @@ export class ReleaseService {
     revision: ReleaseRevision,
     components: AssetComponent[],
     autoMode: boolean,
+    pendingSourceCorrections: PendingSourceCorrection[],
   ): Promise<AutoPublishCheck> {
     const changedComponentIds = uniqueSorted([...revision.diff.componentIds.added, ...revision.diff.changedComponents]);
     const reasons: string[] = [];
@@ -486,6 +502,7 @@ export class ReleaseService {
 
     const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
     if (trustDeclines.length > 0) reasons.push("trust_score_declined_or_missing");
+    if (pendingSourceCorrections.length > 0) reasons.push("has_pending_review_corrections");
 
     return {
       eligible: reasons.length === 0,
@@ -494,7 +511,37 @@ export class ReleaseService {
       changedComponentIds,
       blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
       trustDeclines,
+      pendingSourceCorrections,
     };
+  }
+
+  private async loadPendingSourceCorrections(packages: AssetPackage[]): Promise<PendingSourceCorrection[]> {
+    const versionIds = uniqueSorted(packages.flatMap((pkg) => pkg.sourceVersionIds));
+    if (versionIds.length === 0) return [];
+    const placeholders = versionIds.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT DISTINCT
+         c.correction_id, c.bundle_id, c.source_path, c.rule_id, c.page_type, c.fact_key,
+         c.bound_source_hash, c.state, c.updated_at
+       FROM source_corrections c
+       JOIN source_bundle_versions v ON v.bundle_id = c.bundle_id
+       JOIN source_files sf ON sf.version_id = v.version_id AND sf.logical_path = c.source_path
+       WHERE c.state = 'pending_review'
+         AND sf.version_id IN (${placeholders})
+       ORDER BY c.updated_at DESC, c.correction_id`,
+      versionIds,
+    );
+    return rows.map((row) => ({
+      correctionId: String(row.correction_id ?? ""),
+      bundleId: String(row.bundle_id ?? ""),
+      sourcePath: String(row.source_path ?? ""),
+      ruleId: String(row.rule_id ?? ""),
+      pageType: String(row.page_type ?? ""),
+      factKey: String(row.fact_key ?? ""),
+      boundSourceHash: String(row.bound_source_hash ?? ""),
+      state: "pending_review" as const,
+      updatedAt: String(row.updated_at ?? ""),
+    }));
   }
 
   // 找出 packageIds 中由 scoped 构建（带 only 过滤）产生的残缺包：
@@ -655,6 +702,7 @@ function buildManifest(input: {
   auditSummary: ReleaseAuditSummary;
   revision: ReleaseRevision;
   autoPublish: AutoPublishCheck;
+  pendingSourceCorrections: PendingSourceCorrection[];
 }) {
   const componentIds = input.components.map((component) => component.componentId).sort();
   const sourceVersionIds = uniqueSorted(input.packages.flatMap((pkg) => pkg.sourceVersionIds));
@@ -664,6 +712,9 @@ function buildManifest(input: {
     version: input.release.version,
     revision: input.revision,
     autoPublish: input.autoPublish,
+    sourceCorrections: {
+      pendingReview: input.pendingSourceCorrections,
+    },
     packageIds: input.packages.map((pkg) => pkg.packageId).sort(),
     componentIds,
     sourceVersionIds,
