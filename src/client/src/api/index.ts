@@ -46,6 +46,6 @@ export {
   rollbackRelease,
   updateRelease
 } from "./releases";
-export { createOutputAudit, getFlywheelConvergenceSummary, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery } from "./agent";
+export { createOutputAudit, getFlywheelConvergenceSummary, getMcpConnectInfo, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery } from "./agent";
 export { getDiagnosticSummary, getDiagnosticTrace, listDiagnosticLogs } from "./diagnostics";
 export { importLegacy, scanLegacy } from "./legacy";

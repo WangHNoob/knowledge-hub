@@ -329,6 +329,33 @@ describe("knowledge hub api", () => {
     });
   });
 
+  it("serves streamable http mcp connection info only to authenticated users", async () => {
+    const { app, token } = await getToken();
+
+    const denied = await app.inject({ method: "GET", url: "/api/mcp/connect" });
+    expect(denied.statusCode).toBe(401);
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/mcp/connect",
+      headers: {
+        authorization: `Bearer ${token}`,
+        host: "knowledge.example.test",
+        "x-forwarded-proto": "https",
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      transport: "streamable_http",
+      url: "https://knowledge.example.test/mcp",
+      auth: {
+        type: "bearer",
+        header: "Authorization",
+      },
+    });
+    expect(response.json().examples.generic.mcpServers["knowledge-hub"].url).toBe("https://knowledge.example.test/mcp");
+  });
+
   it("imports a legacy directory into a draft package through the api", async () => {
     const { app, token } = await getToken();
     const legacy = join(dir, "legacy-api-" + randomUUID().slice(0, 6));

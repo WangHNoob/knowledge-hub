@@ -32,6 +32,7 @@ export const config = {
   port: Number(optional("PORT", "4174")),
   host: optional("HOST", "0.0.0.0"),
   dataDir: optional("KH_DATA_DIR", "./data"),
+  publicBaseUrl: optional("KH_PUBLIC_BASE_URL", ""),
   jwtSecret: required("KH_JWT_SECRET"),
   databaseUrl: required("DATABASE_URL"),
   logLevel: optional("KH_LOG_LEVEL", "info") as "debug" | "info" | "warn" | "error",

@@ -1037,6 +1037,11 @@ code {
   .issue-guide {
     grid-template-columns: 1fr;
   }
+
+  .mcp-connect-grid,
+  .mcp-connect-steps {
+    grid-template-columns: 1fr;
+  }
 }
 
 .annotation-review-panel {
@@ -3894,6 +3899,84 @@ button.writeback-step:disabled {
 
 .code-editor.small {
   min-height: 140px;
+}
+
+.mcp-connect-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mcp-connect-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.mcp-connect-card span,
+.mcp-connect-card small {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.mcp-connect-card code {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.mcp-connect-card .secondary-action {
+  justify-self: start;
+}
+
+.mcp-connect-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mcp-connect-steps span {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 4px 8px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.mcp-connect-steps b {
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--olive);
+  color: white;
+  font-size: 12px;
+}
+
+.mcp-connect-steps strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.mcp-connect-steps small {
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mcp-config-block {
+  display: grid;
+  gap: 8px;
 }
 
 .envelope-view {

@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { getFlywheelConvergenceSummary, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope } from "../api";
+import { getFlywheelConvergenceSummary, getMcpConnectInfo, getToken, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope, type McpConnectInfo } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { componentLabel } from "../utils/componentLabel";
@@ -158,6 +158,7 @@ export function AgentFeedback() {
   const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const convergence = useQuery({ queryKey: ["agent-flywheel-convergence"], queryFn: getFlywheelConvergenceSummary, refetchInterval: 5000 });
   const workbench = useWorkbench();
+  const connect = useQuery({ queryKey: ["mcp-connect"], queryFn: getMcpConnectInfo });
   const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({
@@ -195,21 +196,13 @@ export function AgentFeedback() {
   const automationRows = useMemo(() => buildAutomationChains(flywheelEvents.data ?? []), [flywheelEvents.data]);
   const workbenchRetestIds = useMemo(() => new Set((workbench.data?.retestItems ?? []).map((event) => event.eventId)), [workbench.data?.retestItems]);
   const rebuildCandidates = pressureRows.filter((row) => row.negativeCount >= 2).length;
-  if (events.isLoading || flywheelEvents.isLoading || convergence.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
-  if (events.error || flywheelEvents.error || convergence.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? convergence.error ?? audit.error ?? outputAudits.error} />;
+  if (events.isLoading || flywheelEvents.isLoading || convergence.isLoading || connect.isLoading || audit.isLoading || outputAudits.isLoading) return <Loading title="正在读取 MCP 控制台" />;
+  if (events.error || flywheelEvents.error || convergence.error || connect.error || audit.error || outputAudits.error) return <ErrorState error={events.error ?? flywheelEvents.error ?? convergence.error ?? connect.error ?? audit.error ?? outputAudits.error} />;
   const auditRows = audit.data ?? [];
   const missCount = eventRows.filter((event) => event.status === "miss").length;
   const flaggedCount = eventRows.filter((event) => event.qualityFlags.length > 0).length;
   const latestFlag = eventRows.find((event) => event.qualityFlags.length > 0)?.qualityFlags[0] ?? "";
-  const configSnippet = {
-    mcpServers: {
-      "knowledge-hub": {
-        command: "npm",
-        args: ["run", "mcp:stdio"],
-        cwd: "D:/knowledge-hub"
-      }
-    }
-  };
+  const connectInfo = connect.data;
   return (
     <Page title="MCP 控制台" subtitle="Agent 通过 Knowledge MCP 只读 current release；审计和反馈会回流为维护任务。">
       <Tabs
@@ -247,17 +240,7 @@ export function AgentFeedback() {
       </section>
       <div className="mcp-console" key={tab}>
         {tab === "connect" && (
-          <section className="mcp-panel">
-            <div className="detail-head">
-              <div>
-                <h2>启动命令</h2>
-                <p>在支持 MCP stdio 的 Agent 客户端里使用 OpenAI-compatible 风格的工具调用配置。</p>
-              </div>
-              <Badge label="stdio" />
-            </div>
-            <code className="code-block">npm run mcp:stdio</code>
-            <textarea className="code-editor small" value={JSON.stringify(configSnippet, null, 2)} readOnly />
-          </section>
+          connectInfo ? <McpConnectPanel info={connectInfo} /> : <p className="subtle">无法读取 MCP 连接配置。</p>
         )}
 
         {tab === "simulate" && (
@@ -691,6 +674,110 @@ function AutomationTimeline({
         </article>
       ))}
     </div>
+  );
+}
+
+function McpConnectPanel({ info }: { info: McpConnectInfo }) {
+  const token = getToken() ?? "";
+  const bearer = token ? `Bearer ${token}` : "Bearer <KH_JWT_TOKEN>";
+  const streamableConfig = {
+    mcpServers: {
+      "knowledge-hub": {
+        url: info.url,
+        headers: {
+          Authorization: bearer,
+        },
+      },
+    },
+  };
+  const minimalAgentEnv = [
+    `KNOWLEDGE_HUB_MCP_URL=${info.url}`,
+    `KNOWLEDGE_HUB_MCP_AUTHORIZATION=${bearer}`,
+  ].join("\n");
+  return (
+    <section className="mcp-panel">
+      <div className="detail-head">
+        <div>
+          <h2>Streamable HTTP 连接</h2>
+          <p>部署到服务器后，外部 Agent 推荐用这个入口连接；工具只读取当前发布版本，反馈会回流到审核中心。</p>
+        </div>
+        <Badge label="streamable http" tone="ok" />
+      </div>
+
+      <div className="mcp-connect-grid">
+        <div className="mcp-connect-card">
+          <span>Endpoint</span>
+          <code>{info.url}</code>
+          <CopyButton text={info.url} label="复制 URL" />
+        </div>
+        <div className="mcp-connect-card">
+          <span>Authorization</span>
+          <code>{token ? "Bearer 当前登录 token" : info.auth.valueTemplate}</code>
+          <CopyButton text={bearer} label="复制 Header 值" />
+        </div>
+        <div className="mcp-connect-card">
+          <span>当前账号</span>
+          <code>{info.currentUser.username} · {info.currentUser.role}</code>
+          <small>建议给 Agent 使用 developer/admin 账号；viewer 更适合只读查询。</small>
+        </div>
+      </div>
+
+      <div className="mcp-connect-steps">
+        <span><b>1</b><strong>确认已经发布知识包</strong><small>MCP 默认读取 current release；没有发布时查询会为空或报未发布。</small></span>
+        <span><b>2</b><strong>在 Agent 中添加 MCP server</strong><small>选择 Streamable HTTP / Remote MCP，填入 URL 和 Authorization header。</small></span>
+        <span><b>3</b><strong>先跑 kb_get_release / kb_search</strong><small>确认 release、命中组件、可信度和证据都能返回。</small></span>
+      </div>
+
+      <div className="mcp-config-block">
+        <div className="annotation-head">
+          <strong>Agent MCP 配置 JSON</strong>
+          <CopyButton text={JSON.stringify(streamableConfig, null, 2)} label="复制配置" />
+        </div>
+        <textarea className="code-editor small" value={JSON.stringify(streamableConfig, null, 2)} readOnly />
+      </div>
+
+      <div className="mcp-config-block">
+        <div className="annotation-head">
+          <strong>环境变量写法</strong>
+          <CopyButton text={minimalAgentEnv} label="复制 env" />
+        </div>
+        <code className="code-block">{minimalAgentEnv}</code>
+      </div>
+
+      <details className="mcp-payload-preview" open>
+        <summary>本机 stdio 调试配置</summary>
+        <p className="subtle">只适合 Agent 和本项目在同一台机器上运行；服务器部署或跨机器访问请使用上面的 Streamable HTTP。</p>
+        <pre>{JSON.stringify(info.examples.stdioLocal, null, 2)}</pre>
+      </details>
+
+      {info.notes.length > 0 && (
+        <div className="agent-diagnosis">
+          {info.notes.map((note) => (
+            <div className="diagnosis-item" key={note}>
+              <strong>连接提示</strong>
+              <span>{note}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      className="secondary-action"
+      type="button"
+      onClick={async () => {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      }}
+    >
+      {copied ? "已复制" : label}
+    </button>
   );
 }
 

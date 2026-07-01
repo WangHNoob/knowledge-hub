@@ -738,6 +738,25 @@ export interface FlywheelConvergenceSummary {
   };
 }
 
+export interface McpConnectInfo {
+  transport: "streamable_http";
+  url: string;
+  auth: {
+    type: "bearer";
+    header: string;
+    valueTemplate: string;
+  };
+  currentUser: {
+    username: string;
+    role: string;
+  };
+  examples: {
+    generic: Record<string, unknown>;
+    stdioLocal: Record<string, unknown>;
+  };
+  notes: string[];
+}
+
 export interface AttributionSegment {
   segmentId: string;
   text: string;
