@@ -476,7 +476,13 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     `INSERT INTO ${p}projects (project_id, name, description, status, created_by, created_at, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $6)
      ON CONFLICT (project_id) DO NOTHING`,
-    ["default_project", "默认项目", "现有知识库数据的默认游戏项目", "active", "system", new Date(0).toISOString()]
+    ["default_project", "航海王", "现有知识库数据的默认游戏项目", "active", "system", new Date(0).toISOString()]
+  );
+  await adapter.query(
+    `UPDATE ${p}projects
+     SET name = $2, updated_at = $3
+     WHERE project_id = $1 AND name = '默认项目'`,
+    ["default_project", "航海王", new Date(0).toISOString()]
   );
 
   await adapter.query(`UPDATE ${p}users SET current_project_id = 'default_project' WHERE current_project_id = ''`);
