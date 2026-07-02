@@ -435,6 +435,114 @@ describe("knowledge hub api", () => {
     expect(versions.json().versions).toHaveLength(1);
   });
 
+  it("creates projects with isolated default source bundles", async () => {
+    const { app, token } = await getToken();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: "Project Alpha", description: "alpha game" }
+    });
+    expect(created.statusCode).toBe(201);
+    const projectId = created.json().project.projectId as string;
+    const bundleId = created.json().bundle.bundleId as string;
+    expect(created.json().bundle.projectId).toBe(projectId);
+
+    const selected = await app.inject({
+      method: "POST",
+      url: `/api/projects/${encodeURIComponent(projectId)}/select`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(selected.statusCode).toBe(200);
+    expect(selected.json().user.currentProjectId).toBe(projectId);
+
+    const defaultBundles = await app.inject({
+      method: "GET",
+      url: "/api/source-bundles",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(defaultBundles.json().bundles.map((bundle: { bundleId: string }) => bundle.bundleId)).toContain("default");
+    expect(defaultBundles.json().bundles.map((bundle: { bundleId: string }) => bundle.bundleId)).not.toContain(bundleId);
+
+    const projectBundles = await app.inject({
+      method: "GET",
+      url: `/api/projects/${encodeURIComponent(projectId)}/source-bundles`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(projectBundles.statusCode).toBe(200);
+    expect(projectBundles.json().bundles).toEqual([
+      expect.objectContaining({ bundleId, projectId, name: "默认资料库" })
+    ]);
+  });
+
+  it("previews project source versions and returns an incremental build plan", async () => {
+    const { app, token } = await getToken();
+    const project = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: "Preview Game" }
+    });
+    const projectId = project.json().project.projectId as string;
+    const bundleId = project.json().bundle.bundleId as string;
+
+    const rootOne = join(dir, `preview-v1-${randomUUID().slice(0, 6)}`);
+    mkdirSync(join(rootOne, "gamedocs"), { recursive: true });
+    mkdirSync(join(rootOne, "gamedata"), { recursive: true });
+    writeFileSync(join(rootOne, "gamedocs", "activity.md"), "# Activity\n\ninitial");
+    writeFileSync(join(rootOne, "gamedata", "Activity.csv"), "id,name\n1,A\n");
+    const first = await app.inject({
+      method: "POST",
+      url: `/api/projects/${encodeURIComponent(projectId)}/source-bundles/${encodeURIComponent(bundleId)}/versions`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { rootPath: rootOne, note: "v1" }
+    });
+    expect(first.statusCode).toBe(200);
+
+    const rootTwo = join(dir, `preview-v2-${randomUUID().slice(0, 6)}`);
+    mkdirSync(join(rootTwo, "gamedocs"), { recursive: true });
+    mkdirSync(join(rootTwo, "gamedata"), { recursive: true });
+    writeFileSync(join(rootTwo, "gamedocs", "activity.md"), "# Activity\n\nchanged");
+    writeFileSync(join(rootTwo, "gamedata", "Activity.csv"), "id,name\n1,A\n");
+    const second = await app.inject({
+      method: "POST",
+      url: `/api/projects/${encodeURIComponent(projectId)}/source-bundles/${encodeURIComponent(bundleId)}/versions`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { rootPath: rootTwo, note: "v2" }
+    });
+    expect(second.statusCode).toBe(200);
+    const versionId = second.json().version.versionId as string;
+
+    const preview = await app.inject({
+      method: "GET",
+      url: `/api/projects/${encodeURIComponent(projectId)}/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}/preview`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(preview.json().files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "gamedocs/activity.md", changeKind: "modified", fileType: "markdown" })
+    ]));
+
+    const file = await app.inject({
+      method: "GET",
+      url: `/api/projects/${encodeURIComponent(projectId)}/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}/files/gamedocs/activity.md`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(file.statusCode).toBe(200);
+    expect(file.json().file.preview.join("\n")).toContain("changed");
+
+    const plan = await app.inject({
+      method: "GET",
+      url: `/api/projects/${encodeURIComponent(projectId)}/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}/build-plan`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(plan.statusCode).toBe(200);
+    expect(plan.json().plan).toMatchObject({
+      recommendedMode: "incremental",
+      targets: ["gamedocs/activity.md"]
+    });
+  });
+
   it("builds a knowledge asset package from a source version through the api", async () => {
     const { app, token } = await getToken();
     const root = join(dir, "build-raw");
@@ -754,6 +862,47 @@ describe("knowledge hub api", () => {
     ]));
   });
 
+  it("uses projectId to select the MCP current release and write project audit records", async () => {
+    const { app, token } = await getToken();
+    const project = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: "MCP Project" }
+    });
+    expect(project.statusCode).toBe(201);
+    const projectId = project.json().project.projectId as string;
+    const fixture = await insertPackageFixture(db, dir, "mcp_project", projectId);
+    const draft = await app.inject({
+      method: "POST",
+      url: `/api/projects/${encodeURIComponent(projectId)}/releases`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { version: "mcp.project", packageIds: [fixture.packageId] }
+    });
+    expect(draft.statusCode).toBe(200);
+    const published = await app.inject({
+      method: "POST",
+      url: `/api/releases/${draft.json().release.releaseId}/publish`,
+      headers: { authorization: `Bearer ${token}` }
+    });
+    expect(published.statusCode).toBe(200);
+
+    const queried = await app.inject({
+      method: "POST",
+      url: "/api/mcp/query",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { toolName: "kb_get_release", payload: { projectId } }
+    });
+    expect(queried.statusCode, JSON.stringify(queried.json())).toBe(200);
+    expect(queried.json().envelope.release.releaseId).toBe(published.json().release.releaseId);
+
+    const { rows: audits } = await db.adapter.query(
+      "SELECT * FROM mcp_audit WHERE project_id = $1 AND tool_name = 'kb_get_release'",
+      [projectId]
+    );
+    expect(audits.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("rejects publishing when selected packages have open blocking tasks", async () => {
     const { app, token } = await getToken();
     const fixture = await insertPackageFixture(db, dir, "api_blocked");
@@ -1014,7 +1163,7 @@ function anthropicMessageOk(content: string, model: string): Response {
   }), { status: 200 });
 }
 
-async function insertPackageFixture(db: DatabaseHandle, dataDir: string, suffix: string) {
+async function insertPackageFixture(db: DatabaseHandle, dataDir: string, suffix: string, projectId = "default_project") {
   const packageId = `pkg_${suffix}_${randomUUID().slice(0, 6)}`;
   const componentId = `cmp_${suffix}_${randomUUID().slice(0, 6)}`;
   const runId = "run_api_fixture";
@@ -1023,10 +1172,11 @@ async function insertPackageFixture(db: DatabaseHandle, dataDir: string, suffix:
   writeFileSync(artifactPath, `# Page ${suffix}\n\nAPI fixture content.\n`, "utf8");
   await db.adapter.query(
     `INSERT INTO asset_packages
-      (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      (package_id, project_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
     [
       packageId,
+      projectId,
       `Package ${suffix}`,
       "kb_builder_pipeline",
       "draft",
