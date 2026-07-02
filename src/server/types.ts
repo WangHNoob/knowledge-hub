@@ -84,6 +84,38 @@ export type SourceFileChange =
   | { kind: "modified"; logicalPath: string; category: SourceCategory; contentHash: string; previousHash: string }
   | { kind: "removed"; logicalPath: string; category: SourceCategory; previousHash: string };
 
+export interface SourcePreviewNode {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  category?: SourceCategory;
+  byteSize?: number;
+  contentHash?: string;
+  fileType?: "markdown" | "spreadsheet" | "json" | "text" | "binary";
+  changeKind?: SourceFileChange["kind"] | "unchanged";
+  children?: SourcePreviewNode[];
+}
+
+export interface SourceFilePreview {
+  logicalPath: string;
+  category: SourceCategory;
+  byteSize: number;
+  contentHash: string;
+  fileType: SourcePreviewNode["fileType"];
+  preview: string[];
+  sheet?: string;
+  rows?: unknown[][];
+  truncated: boolean;
+}
+
+export interface SourceBuildPlan {
+  recommendedMode: "incremental" | "full";
+  targets: string[];
+  reason: string;
+  affectedKnowledge: Array<{ componentId: string; packageId: string; title: string; kind: string; legacyPath: string }>;
+  warnings: string[];
+}
+
 export interface ImportBundleResult {
   bundle: SourceBundle;
   version: SourceBundleVersion;

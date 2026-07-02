@@ -78,6 +78,42 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
     }
   );
 
+  app.get<{ Params: { projectId: string; bundleId: string; versionId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions/:versionId/preview",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const version = await requireProjectVersion(ctx, request.params.projectId, request.params.bundleId, request.params.versionId, reply);
+      if (!version) return reply;
+      return {
+        version,
+        ...(await ctx.bundleService.previewVersion(version.versionId)),
+      };
+    }
+  );
+
+  app.get<{ Params: { projectId: string; bundleId: string; versionId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions/:versionId/files/*",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const version = await requireProjectVersion(ctx, request.params.projectId, request.params.bundleId, request.params.versionId, reply);
+      if (!version) return reply;
+      const logicalPath = decodeURIComponent(String((request.params as Record<string, unknown>)["*"] ?? ""));
+      const preview = await ctx.bundleService.previewFile(version.versionId, logicalPath);
+      if (!preview) return reply.code(404).send({ error: "未找到该资料文件。" });
+      return { file: preview };
+    }
+  );
+
+  app.get<{ Params: { projectId: string; bundleId: string; versionId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions/:versionId/build-plan",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const version = await requireProjectVersion(ctx, request.params.projectId, request.params.bundleId, request.params.versionId, reply);
+      if (!version) return reply;
+      return { plan: await ctx.bundleService.buildPlan(version.versionId, request.params.projectId) };
+    }
+  );
+
   app.post<{ Params: { projectId: string; bundleId: string } }>(
     "/api/projects/:projectId/source-bundles/:bundleId/versions",
     { preHandler: app.authenticate },
@@ -255,6 +291,25 @@ async function handleUpload(input: {
     await span.fail(error, { fileCount });
     return reply.code(400).send({ error: describeUploadError(error) });
   }
+}
+
+async function requireProjectVersion(
+  ctx: RouteContext,
+  projectId: string,
+  bundleId: string,
+  versionId: string,
+  reply: any,
+) {
+  if (!(await ctx.bundleService.bundleBelongsToProject(bundleId, projectId))) {
+    reply.code(404).send({ error: "未找到该资料库。" });
+    return null;
+  }
+  const version = await ctx.bundleService.getVersion(versionId);
+  if (!version || version.bundleId !== bundleId) {
+    reply.code(404).send({ error: "未找到该资料版本。" });
+    return null;
+  }
+  return version;
 }
 
 function browseLocalPath(inputPath: string) {
