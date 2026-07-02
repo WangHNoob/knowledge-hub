@@ -106,6 +106,7 @@ describe("KbBuilderPipelineService", () => {
       expect(aliases[0]).toMatchObject({ canonical: "Combat/Skill", aliases: ["技能表"] });
       expect(result.run.config.flywheel).toMatchObject({
         annotationExamplesInjected: 1,
+        newAnnotationTasks: 0,
         annotationExampleRefs: [
           {
             exampleId: "ann_prev_example",
@@ -119,6 +120,8 @@ describe("KbBuilderPipelineService", () => {
           }
         ]
       });
+      const { rows: reviewRows } = await db.adapter.query("SELECT COUNT(*)::int AS count FROM review_tasks WHERE package_id = $1", [result.package.packageId]);
+      expect(reviewRows[0].count).toBe(0);
     } finally {
       await cleanup();
       rmSync(dataDir, { recursive: true, force: true });

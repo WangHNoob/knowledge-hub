@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 
+import { config } from "../config";
 import type {
   AssetPackage,
   BuildRunWritebackTrace,
@@ -283,7 +284,9 @@ export class KbBuilderPipelineService {
         const inserted = options.mergeIntoPackageId
           ? await this.upsertScopedPackageArtifacts(packageId, runId, options.versionId, sourceRefs, persistedArtifacts, quality, ruleProfile, flywheelSummary)
           : await this.insertPackageAndArtifacts(packageId, runId, options.versionId, sourceRefs, artifacts, quality, ruleProfile, flywheelSummary);
-        flywheelSummary.newAnnotationTasks = await this.insertReviewTasks(packageId, persistedArtifacts, quality.findings, workspace.dataDir, modelConfig);
+        flywheelSummary.newAnnotationTasks = config.generateBuildReviewTasks
+          ? await this.insertReviewTasks(packageId, persistedArtifacts, quality.findings, workspace.dataDir, modelConfig)
+          : 0;
         await this.updateRunFlywheelSummary(runId, flywheelSummary);
         return inserted;
       });
@@ -1567,7 +1570,7 @@ function buildFlywheelSummary(
     })),
     activeRuleDismissals: ruleDismissals.length,
     appliedRuleDismissals: quality.dismissedRules?.length ?? 0,
-    newAnnotationTasks: quality.findings.length,
+    newAnnotationTasks: 0,
     dismissedRules: quality.dismissedRules ?? [],
   };
 }

@@ -44,7 +44,8 @@ export const config = {
   uploadMaxFiles: positiveInt("KH_UPLOAD_MAX_FILES", 20000),
   uploadMaxFields: positiveInt("KH_UPLOAD_MAX_FIELDS", 200),
   uploadMaxParts: positiveInt("KH_UPLOAD_MAX_PARTS", 20200),
-  autoPublishRevisions: flag("KH_AUTO_PUBLISH_REVISIONS", false)
+  autoPublishRevisions: flag("KH_AUTO_PUBLISH_REVISIONS", false),
+  generateBuildReviewTasks: flag("KH_GENERATE_BUILD_REVIEW_TASKS", false)
 };
 
 export const testConfig = {

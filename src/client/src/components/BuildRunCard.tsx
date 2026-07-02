@@ -109,7 +109,7 @@ export function BuildRunCard({
             <span><strong>{flywheel.annotationOverridesInjected}</strong> 覆盖规则</span>
             <span><strong>{flywheel.activeRuleDismissals}</strong> 条豁免</span>
             <span><strong>{flywheel.appliedRuleDismissals}</strong> 次命中</span>
-            <span><strong>{flywheel.newAnnotationTasks}</strong> 个新任务</span>
+            <span><strong>{flywheel.newAnnotationTasks}</strong> 个构建审核任务</span>
           </div>
           {flywheel.annotationExampleRefs.length > 0 && (
             <div className="flywheel-explain">
