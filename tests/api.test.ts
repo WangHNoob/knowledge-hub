@@ -10,6 +10,7 @@ import xlsx from "xlsx";
 
 import { buildApp, type BuildAppOptions } from "../src/server/app";
 import { createDatabase } from "../src/server/db";
+import { createSourceBundleService } from "../src/server/services/sourceBundleService";
 import type { DatabaseHandle } from "../src/server/types";
 import { TEST_DATABASE_URL } from "./helpers/testEnv";
 
@@ -354,6 +355,35 @@ describe("knowledge hub api", () => {
       },
     });
     expect(response.json().examples.generic.mcpServers["knowledge-hub"].url).toBe("https://knowledge.example.test/mcp");
+  });
+
+  it("starts one-click build and publish only for admins", async () => {
+    const { app, token } = await getToken();
+    const sourceRoot = join(dir, "quick-publish-src");
+    mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
+    writeFileSync(join(sourceRoot, "gamedocs", "quick.md"), "# Quick\n\nOne click publish fixture.");
+    const imported = await createSourceBundleService(db, dir).importDirectoryAsVersion({
+      rootPath: sourceRoot,
+      bundleId: "default",
+      createdBy: "admin",
+      note: "one-click fixture",
+    });
+
+    const denied = await app.inject({
+      method: "POST",
+      url: `/api/source-bundles/default/versions/${encodeURIComponent(imported.version.versionId)}/build-and-publish`,
+      payload: { stages: ["convert"], model: "deterministic", force: true, only: null, qualityProfileId: "default" },
+    });
+    expect(denied.statusCode).toBe(401);
+
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/source-bundles/default/versions/${encodeURIComponent(imported.version.versionId)}/build-and-publish`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: { stages: ["convert"], model: "deterministic", force: true, only: null, qualityProfileId: "default" },
+    });
+    expect(response.statusCode).toBe(202);
+    expect(response.json().run.config).toMatchObject({ publishOnComplete: true });
   });
 
   it("imports a legacy directory into a draft package through the api", async () => {

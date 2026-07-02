@@ -15,7 +15,23 @@ export function registerReleaseAutomation(options: {
       const runId = stringValue(event.payload.runId) || event.entityId;
       const requestedBy = stringValue(event.payload.requestedBy) || "system";
       const only = stringValue(event.payload.only);
+      const publishOnComplete = Boolean(event.payload.publishOnComplete);
+      const releaseVersion = stringValue(event.payload.releaseVersion);
       if (!packageId) return;
+      if (publishOnComplete) {
+        await publishCompletedBuild({
+          db: options.db,
+          releaseService: options.releaseService,
+          diagnostics: options.diagnostics,
+          packageId,
+          runId,
+          requestedBy,
+          only,
+          releaseVersion,
+          sourceEventId: event.eventId,
+        });
+        return;
+      }
       const result = await options.releaseService.proposeRevisionDraftFromBuild({
         packageId,
         runId,
@@ -64,6 +80,94 @@ export function registerReleaseAutomation(options: {
       });
     });
   });
+}
+
+async function publishCompletedBuild(options: {
+  db: DatabaseHandle;
+  releaseService: ReleaseService;
+  diagnostics?: DiagnosticLogger;
+  packageId: string;
+  runId: string;
+  requestedBy: string;
+  only: string;
+  releaseVersion: string;
+  sourceEventId: string;
+}): Promise<void> {
+  let releaseId = "";
+  try {
+    const revision = options.only
+      ? await options.releaseService.proposeRevisionDraftFromBuild({
+        packageId: options.packageId,
+        runId: options.runId,
+        requestedBy: options.requestedBy,
+        only: options.only,
+      })
+      : { release: await options.releaseService.createDraft({
+        version: options.releaseVersion || `auto-${options.runId}`,
+        packageIds: [options.packageId],
+        requestedBy: options.requestedBy || "system",
+        note: `一键构建并发布：${options.runId}`,
+      }), created: true };
+    if (!revision.release) throw new Error("无法创建发布草案：当前构建不是完整发布，也没有可继承的 current release。");
+    releaseId = revision.release.releaseId;
+    const published = await options.releaseService.publish(releaseId, options.requestedBy || "system", { autoMode: false });
+    await emitKnowledgeEvent(options.db, {
+      eventType: "release.auto_publish_succeeded",
+      entityType: "release",
+      entityId: published.releaseId,
+      payload: {
+        releaseId: published.releaseId,
+        runId: options.runId,
+        packageId: options.packageId,
+        sourceEventId: options.sourceEventId,
+        mode: "build_and_publish",
+      },
+    });
+    await options.diagnostics?.write({
+      traceId: "",
+      level: "info",
+      category: "release",
+      message: "one-click build published release",
+      status: "completed",
+      actor: options.requestedBy,
+      entityType: "release",
+      entityId: published.releaseId,
+      releaseId: published.releaseId,
+      runId: options.runId,
+      context: { packageId: options.packageId, sourceEventId: options.sourceEventId },
+    });
+  } catch (error) {
+    await emitKnowledgeEvent(options.db, {
+      eventType: "release.auto_publish_skipped",
+      entityType: "release",
+      entityId: releaseId || options.runId,
+      payload: {
+        releaseId,
+        runId: options.runId,
+        packageId: options.packageId,
+        sourceEventId: options.sourceEventId,
+        mode: "build_and_publish",
+        reason: error instanceof Error ? error.message : String(error),
+      },
+    });
+    await options.diagnostics?.write({
+      traceId: "",
+      level: "warn",
+      category: "release",
+      message: "one-click build publish skipped",
+      status: "completed",
+      actor: options.requestedBy,
+      entityType: "build_run",
+      entityId: options.runId,
+      releaseId,
+      runId: options.runId,
+      context: {
+        packageId: options.packageId,
+        sourceEventId: options.sourceEventId,
+        reason: error instanceof Error ? error.message : String(error),
+      },
+    });
+  }
 }
 
 async function tryAutoPublishRevision(options: {

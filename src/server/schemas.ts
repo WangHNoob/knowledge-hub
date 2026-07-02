@@ -50,6 +50,10 @@ export const buildRequestSchema = z.object({
   generateAliases: z.boolean().default(false)
 });
 
+export const buildAndPublishRequestSchema = buildRequestSchema.extend({
+  releaseVersion: z.string().min(1).max(200).optional()
+});
+
 export const qualityProfileUpdateSchema = z.object({
   config: z.object({
     minPackageScore: z.number().min(0).max(1),

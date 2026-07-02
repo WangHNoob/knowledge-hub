@@ -169,6 +169,8 @@ export class KbBuilderPipelineService {
         traceId: options.traceId,
         rebuildTaskId: options.rebuildTaskId,
         mergeIntoPackageId: options.mergeIntoPackageId,
+        publishOnComplete: Boolean(options.publishOnComplete),
+        releaseVersion: options.releaseVersion,
         modelConfig: redactModelConfig(modelConfig),
         incremental: incrementalConfig(version.parentVersionId, sourceChanges),
         ruleProfile: {
@@ -305,6 +307,8 @@ export class KbBuilderPipelineService {
           overallScore: quality.overallScore,
           blockingCount: quality.blockingCount,
           warningCount: quality.warningCount,
+          publishOnComplete: Boolean(options.publishOnComplete),
+          releaseVersion: options.releaseVersion ?? "",
         },
       });
       return { run: await this.requireRun(runId), package: pkg, qualitySummary: pkg.qualitySummary };

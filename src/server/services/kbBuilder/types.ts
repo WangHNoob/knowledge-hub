@@ -27,6 +27,9 @@ export interface BuildPipelineOptions {
   mergeIntoPackageId?: string;
   /** Explicit maintenance mode: may write LLM-drafted aliases into the persistent translation table. Off by default. */
   generateAliases?: boolean;
+  /** One-click mode: create and publish a release automatically after this build completes. */
+  publishOnComplete?: boolean;
+  releaseVersion?: string;
 }
 
 export interface StageResult {

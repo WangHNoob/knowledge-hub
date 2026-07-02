@@ -13,6 +13,7 @@ export {
   uploadSourceBundle
 } from "./sources";
 export {
+  buildAndPublishKnowledge,
   buildKnowledgePackage,
   deleteBuildRun,
   listBuildRuns,

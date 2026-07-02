@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  buildAndPublishKnowledge,
   buildKnowledgePackage,
   deleteBuildRun,
   listBuildRuns,
@@ -112,16 +113,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     mutationFn: async () => {
       if (!selectedVersion) throw new Error("请选择资料版本。");
       if (stages.length === 0) throw new Error("至少选择一个 pipeline 阶段。");
-      const modelConfig = createModelConfig(provider, baseUrl, model, apiKey);
-      return buildKnowledgePackage(bundleId, selectedVersion, {
-        stages,
-        model: modelConfig.model,
-        modelConfig,
-        force,
-        only: only.trim() || null,
-        qualityProfileId: "default",
-        generateAliases
-      });
+      return buildKnowledgePackage(bundleId, selectedVersion, buildPayload({ provider, baseUrl, model, apiKey, stages, force, only, generateAliases }));
     },
     onSuccess: async (result) => {
       setError("");
@@ -143,6 +135,34 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "启动构建失败。");
+    }
+  });
+  const buildAndPublishMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedVersion) throw new Error("请选择资料版本。");
+      if (stages.length === 0) throw new Error("至少选择一个 pipeline 阶段。");
+      return buildAndPublishKnowledge(bundleId, selectedVersion, buildPayload({ provider, baseUrl, model, apiKey, stages, force, only, generateAliases }));
+    },
+    onSuccess: async (result) => {
+      setError("");
+      setActiveRunId(result.run.runId);
+      setCompletion(null);
+      setTab("runs");
+      lastSeenStatus.current[result.run.runId] = result.run.status;
+      queryClient.setQueryData<KnowledgeBuildRun[]>(["build-runs"], (current = []) => [
+        result.run,
+        ...current.filter((run) => run.runId !== result.run.runId)
+      ]);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases"] }),
+        queryClient.invalidateQueries({ queryKey: ["packages"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+    },
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "启动构建并发布失败。");
     }
   });
   const modelTestMutation = useMutation({
@@ -179,7 +199,8 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     () => buildReleaseAutomationByRunId(flywheelEvents.data ?? [], blockingTasks.data ?? []),
     [blockingTasks.data, flywheelEvents.data]
   );
-  const canStart = Boolean(selectedVersion) && !buildMutation.isPending && stages.length > 0 && (
+  const busyStarting = buildMutation.isPending || buildAndPublishMutation.isPending;
+  const canStart = Boolean(selectedVersion) && !busyStarting && stages.length > 0 && (
     provider === "deterministic" || Boolean(baseUrl.trim() && model.trim() && apiKey.trim())
   );
   const canTestModel = provider !== "deterministic" && Boolean(baseUrl.trim() && model.trim() && apiKey.trim()) && !modelTestMutation.isPending;
@@ -255,8 +276,8 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
           <section className="builder-panel">
             <div className="detail-head">
               <div>
-                <h2>构建输入</h2>
-                <p>从已导入的资料版本生成一份知识资产包，启动后会自动跳到“运行进度”。</p>
+                <h2>快速发布</h2>
+                <p>从资料版本直接生成知识资产并发布为 current release；中间产物仍可在运行进度和资产详情中查看。</p>
               </div>
               <Badge label={activeRuns.length ? `${activeRuns.length} 个运行中` : "空闲"} tone={activeRuns.length ? "warn" : "ok"} />
             </div>
@@ -273,10 +294,17 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
             <button
               className="primary-action"
               disabled={!canStart}
-              onClick={() => buildMutation.mutate()}
+              onClick={() => buildAndPublishMutation.mutate()}
             >
               <Play size={16} />
-              {buildMutation.isPending ? "启动中..." : "启动知识资产构建"}
+              {buildAndPublishMutation.isPending ? "启动中..." : "构建并发布"}
+            </button>
+            <button
+              className="secondary-action"
+              disabled={!canStart}
+              onClick={() => buildMutation.mutate()}
+            >
+              只构建资产包
             </button>
             {provider === "deterministic" && (
               <p className="notice subtle">
@@ -494,6 +522,28 @@ function createModelConfig(
     baseUrl: baseUrl.trim(),
     model: model.trim(),
     apiKey: apiKey.trim()
+  };
+}
+
+function buildPayload(input: {
+  provider: ModelProvider;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  stages: string[];
+  force: boolean;
+  only: string;
+  generateAliases: boolean;
+}) {
+  const modelConfig = createModelConfig(input.provider, input.baseUrl, input.model, input.apiKey);
+  return {
+    stages: input.stages,
+    model: modelConfig.model,
+    modelConfig,
+    force: input.force,
+    only: input.only.trim() || null,
+    qualityProfileId: "default",
+    generateAliases: input.generateAliases
   };
 }
 

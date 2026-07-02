@@ -481,6 +481,7 @@ export interface BuildRequest {
   only: string | null;
   qualityProfileId: string;
   generateAliases?: boolean;
+  releaseVersion?: string;
 }
 
 export type BuildModelConfig =

@@ -18,6 +18,17 @@ export async function buildKnowledgePackage(
   );
 }
 
+export async function buildAndPublishKnowledge(
+  bundleId: string,
+  versionId: string,
+  payload: BuildRequest
+): Promise<BuildResponse> {
+  return postJson<BuildResponse>(
+    `/api/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}/build-and-publish`,
+    payload
+  );
+}
+
 export async function listBuildRuns(): Promise<KnowledgeBuildRun[]> {
   return (await getJson<{ runs: KnowledgeBuildRun[] }>("/api/build-runs")).runs;
 }
