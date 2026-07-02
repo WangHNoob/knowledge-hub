@@ -19,6 +19,7 @@ const CATEGORIES: SourceCategory[] = ["gamedata", "gamedocs"];
 export interface ImportDirectoryOptions {
   rootPath: string;
   bundleId?: string;
+  projectId?: string;
   createdBy: string;
   note?: string;
 }
@@ -33,8 +34,11 @@ export class SourceBundleService {
     this.adapter = db.adapter;
   }
 
-  async listBundles(): Promise<SourceBundle[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM source_bundles ORDER BY bundle_id ASC");
+  async listBundles(projectId = "default_project"): Promise<SourceBundle[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE project_id = $1 ORDER BY bundle_id ASC",
+      [projectId],
+    );
     return rows.map(mapBundle);
   }
 
@@ -88,7 +92,8 @@ export class SourceBundleService {
 
   async importDirectoryAsVersion(options: ImportDirectoryOptions): Promise<ImportBundleResult> {
     const bundleId = options.bundleId ?? "default";
-    const bundle = await this.requireBundle(bundleId);
+    const projectId = options.projectId ?? "default_project";
+    const bundle = await this.requireBundle(bundleId, projectId);
     const root = resolve(options.rootPath);
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`资料目录不存在或不是目录：${options.rootPath}`);
@@ -195,13 +200,16 @@ export class SourceBundleService {
     return rows.length ? mapVersion(rows[0]) : null;
   }
 
-  private async requireBundle(bundleId: string): Promise<SourceBundle> {
-    const { rows } = await this.adapter.query("SELECT * FROM source_bundles WHERE bundle_id = $1", [bundleId]);
+  private async requireBundle(bundleId: string, projectId = "default_project"): Promise<SourceBundle> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE bundle_id = $1 AND project_id = $2",
+      [bundleId, projectId],
+    );
     if (rows.length === 0) throw new Error(`未知资料集：${bundleId}`);
     return mapBundle(rows[0]);
   }
 
-  async updateBundle(bundleId: string, patch: { name?: string; description?: string }): Promise<SourceBundle | null> {
+  async updateBundle(bundleId: string, patch: { name?: string; description?: string }, projectId = "default_project"): Promise<SourceBundle | null> {
     const sets: string[] = [];
     const params: unknown[] = [];
     if (patch.name !== undefined) { sets.push(`name = $${params.length + 1}`); params.push(patch.name.trim()); }
@@ -209,8 +217,32 @@ export class SourceBundleService {
     if (sets.length === 0) return null;
     params.push(bundleId);
     const { rows } = await this.adapter.query(
-      `UPDATE source_bundles SET ${sets.join(", ")} WHERE bundle_id = $${params.length} RETURNING *`,
-      params
+      `UPDATE source_bundles SET ${sets.join(", ")} WHERE bundle_id = $${params.length} AND project_id = $${params.length + 1} RETURNING *`,
+      [...params, projectId]
+    );
+    return rows.length ? mapBundle(rows[0]) : null;
+  }
+
+  async bundleBelongsToProject(bundleId: string, projectId: string): Promise<boolean> {
+    const { rows } = await this.adapter.query(
+      "SELECT 1 FROM source_bundles WHERE bundle_id = $1 AND project_id = $2",
+      [bundleId, projectId],
+    );
+    return rows.length > 0;
+  }
+
+  async getDefaultBundle(projectId = "default_project"): Promise<SourceBundle | null> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE project_id = $1 ORDER BY created_at ASC, bundle_id ASC LIMIT 1",
+      [projectId],
+    );
+    return rows.length ? mapBundle(rows[0]) : null;
+  }
+
+  async getBundle(bundleId: string, projectId = "default_project"): Promise<SourceBundle | null> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE bundle_id = $1 AND project_id = $2",
+      [bundleId, projectId],
     );
     return rows.length ? mapBundle(rows[0]) : null;
   }
@@ -385,7 +417,13 @@ function blobAbsolutePath(dataDir: string, storageUri: string): string {
 }
 
 function mapBundle(row: Record<string, unknown>): SourceBundle {
-  return { bundleId: row.bundle_id as string, name: row.name as string, description: row.description as string, createdAt: String(row.created_at) };
+  return {
+    bundleId: row.bundle_id as string,
+    projectId: String(row.project_id ?? "default_project"),
+    name: row.name as string,
+    description: row.description as string,
+    createdAt: String(row.created_at)
+  };
 }
 
 function mapVersion(row: Record<string, unknown>): SourceBundleVersion {

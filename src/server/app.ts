@@ -16,6 +16,7 @@ import { registerFeedbackAutomation } from "./services/feedbackAutomationService
 import { registerReleaseAutomation } from "./services/releaseAutomationService";
 import { createSourceBundleService } from "./services/sourceBundleService";
 import { createStorageMaintenanceService } from "./services/storageMaintenanceService";
+import { createProjectService } from "./services/projectService";
 import { registerAgentRoutes } from "./routes/agent";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBuilderRoutes } from "./routes/builder";
@@ -32,6 +33,7 @@ import { registerSearchRoutes } from "./routes/search";
 import { registerSourceRoutes } from "./routes/sources";
 import { registerStorageRoutes } from "./routes/storage";
 import { registerTableAliasRoutes } from "./routes/tableAliases";
+import { registerProjectRoutes } from "./routes/projects";
 import type { RouteContext } from "./routes/context";
 import type { DatabaseHandle, UserRecord } from "./types";
 
@@ -69,6 +71,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
     legislationService: createLegislationService(options.db),
     attributionAuditService: createAttributionAuditService(options.db),
+    projectService: createProjectService(options.db),
     storageService: createStorageMaintenanceService(options.db, dataDir, diagnostics, {
       webImportRetentionHours: config.webImportRetentionHours,
       logRetentionDays: config.logRetentionDays
@@ -109,6 +112,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerTracing(app, diagnostics);
 
   registerAuthRoutes(app, ctx);
+  registerProjectRoutes(app, ctx);
   registerDashboardRoutes(app, ctx);
   registerSourceRoutes(app, ctx);
   registerBuilderRoutes(app, ctx);

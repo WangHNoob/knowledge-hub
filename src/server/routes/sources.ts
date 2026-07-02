@@ -24,8 +24,93 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
   );
 
   app.get("/api/source-bundles", { preHandler: app.authenticate }, async () => ({
-    bundles: await ctx.bundleService.listBundles()
+    bundles: await ctx.bundleService.listBundles("default_project")
   }));
+
+  app.get<{ Params: { projectId: string } }>(
+    "/api/projects/:projectId/source-bundles",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (!(await ctx.projectService.getProject(request.params.projectId))) return reply.code(404).send({ error: "未找到该项目。" });
+      return { bundles: await ctx.bundleService.listBundles(request.params.projectId) };
+    }
+  );
+
+  app.get<{ Params: { projectId: string; bundleId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (!(await ctx.bundleService.bundleBelongsToProject(request.params.bundleId, request.params.projectId))) {
+        return reply.code(404).send({ error: "未找到该资料库。" });
+      }
+      return { versions: await ctx.bundleService.listVersions(request.params.bundleId) };
+    }
+  );
+
+  app.patch<{ Params: { projectId: string; bundleId: string }; Body: z.infer<typeof updateBundleSchema> }>(
+    "/api/projects/:projectId/source-bundles/:bundleId",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = updateBundleSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid bundle update." });
+      const updated = await ctx.bundleService.updateBundle(request.params.bundleId, parsed.data, request.params.projectId);
+      if (!updated) return reply.code(404).send({ error: "未找到该资料集。" });
+      return { bundle: updated };
+    }
+  );
+
+  app.get<{ Params: { projectId: string; bundleId: string; versionId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions/:versionId",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (!(await ctx.bundleService.bundleBelongsToProject(request.params.bundleId, request.params.projectId))) {
+        return reply.code(404).send({ error: "未找到该资料库。" });
+      }
+      const version = await ctx.bundleService.getVersion(request.params.versionId);
+      if (!version || version.bundleId !== request.params.bundleId) {
+        return reply.code(404).send({ error: "未找到该资料版本。" });
+      }
+      return {
+        version,
+        files: await ctx.bundleService.listFiles(version.versionId),
+        changes: await ctx.bundleService.diff(version.versionId)
+      };
+    }
+  );
+
+  app.post<{ Params: { projectId: string; bundleId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const parsed = importBundleSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "请提供 rootPath。" });
+      if (!(await ctx.bundleService.bundleBelongsToProject(request.params.bundleId, request.params.projectId))) {
+        return reply.code(404).send({ error: "未找到该资料库。" });
+      }
+      try {
+        return await ctx.bundleService.importDirectoryAsVersion({
+          rootPath: parsed.data.rootPath,
+          bundleId: parsed.data.bundleId ?? request.params.bundleId,
+          projectId: request.params.projectId,
+          note: parsed.data.note,
+          createdBy: request.user.username
+        });
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "导入失败。" });
+      }
+    }
+  );
+
+  app.post<{ Params: { projectId: string; bundleId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/uploads",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      if (!(await ctx.bundleService.bundleBelongsToProject(request.params.bundleId, request.params.projectId))) {
+        return reply.code(404).send({ error: "未找到该资料库。" });
+      }
+      return handleUpload({ ctx, request, reply, projectId: request.params.projectId, bundleId: request.params.bundleId });
+    }
+  );
 
   app.get<{ Params: { bundleId: string } }>(
     "/api/source-bundles/:bundleId/versions",
@@ -115,49 +200,61 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
     "/api/source-bundles/:bundleId/uploads",
     { preHandler: app.authenticate },
     async (request, reply) => {
-      const uploadRoot = join(ctx.dataDir, "web-imports", `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-      const span = ctx.diagnostics.startSpan({
-        traceId: request.traceId,
-        category: "source_import",
-        message: "upload source bundle",
-        actor: request.user.username,
-        entityType: "source_bundle",
-        entityId: request.params.bundleId,
-        context: { bundleId: request.params.bundleId, uploadRoot }
-      });
-      let note = "";
-      let fileCount = 0;
-      try {
-        for await (const part of request.parts()) {
-          if (part.type === "field") {
-            if (part.fieldname === "note") note = String(part.value ?? "");
-            continue;
-          }
-          const relativePath = safeUploadPath(part.filename);
-          const target = join(uploadRoot, relativePath);
-          mkdirSync(dirname(target), { recursive: true });
-          await pipeline(part.file, createWriteStream(target));
-          fileCount += 1;
-        }
-        if (fileCount === 0) {
-          const error = new Error("请选择要导入的文件或目录。");
-          await span.fail(error, { fileCount });
-          return reply.code(400).send({ error: error.message });
-        }
-        const result = await ctx.bundleService.importDirectoryAsVersion({
-          rootPath: uploadRoot,
-          bundleId: request.params.bundleId,
-          note,
-          createdBy: request.user.username
-        });
-        await span.complete({ fileCount, versionId: result.version.versionId, totalBytes: result.version.totalBytes });
-        return result;
-      } catch (error) {
-        await span.fail(error, { fileCount });
-        return reply.code(400).send({ error: describeUploadError(error) });
-      }
+      return handleUpload({ ctx, request, reply, projectId: "default_project", bundleId: request.params.bundleId });
     }
   );
+}
+
+async function handleUpload(input: {
+  ctx: RouteContext;
+  request: any;
+  reply: any;
+  projectId: string;
+  bundleId: string;
+}) {
+  const { ctx, request, reply, projectId, bundleId } = input;
+  const uploadRoot = join(ctx.dataDir, "web-imports", `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  const span = ctx.diagnostics.startSpan({
+    traceId: request.traceId,
+    category: "source_import",
+    message: "upload source bundle",
+    actor: request.user.username,
+    entityType: "source_bundle",
+    entityId: bundleId,
+    context: { projectId, bundleId, uploadRoot }
+  });
+  let note = "";
+  let fileCount = 0;
+  try {
+    for await (const part of request.parts()) {
+      if (part.type === "field") {
+        if (part.fieldname === "note") note = String(part.value ?? "");
+        continue;
+      }
+      const relativePath = safeUploadPath(part.filename);
+      const target = join(uploadRoot, relativePath);
+      mkdirSync(dirname(target), { recursive: true });
+      await pipeline(part.file, createWriteStream(target));
+      fileCount += 1;
+    }
+    if (fileCount === 0) {
+      const error = new Error("请选择要导入的文件或目录。");
+      await span.fail(error, { fileCount });
+      return reply.code(400).send({ error: error.message });
+    }
+    const result = await ctx.bundleService.importDirectoryAsVersion({
+      rootPath: uploadRoot,
+      bundleId,
+      projectId,
+      note,
+      createdBy: request.user.username
+    });
+    await span.complete({ fileCount, versionId: result.version.versionId, totalBytes: result.version.totalBytes });
+    return result;
+  } catch (error) {
+    await span.fail(error, { fileCount });
+    return reply.code(400).send({ error: describeUploadError(error) });
+  }
 }
 
 function browseLocalPath(inputPath: string) {

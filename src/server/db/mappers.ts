@@ -5,6 +5,7 @@ import type {
   AssetPackage,
   EvidenceRecord,
   McpAuditRecord,
+  ProjectRecord,
   ReleaseRecord,
   ReviewTask,
   UserRecord
@@ -24,13 +25,27 @@ export function mapUser(row: Record<string, unknown>): UserRecord {
     username: row.username as string,
     passwordHash: row.password_hash as string,
     role: row.role as UserRecord["role"],
-    displayName: row.display_name as string
+    displayName: row.display_name as string,
+    currentProjectId: String(row.current_project_id ?? "default_project")
+  };
+}
+
+export function mapProject(row: Record<string, unknown>): ProjectRecord {
+  return {
+    projectId: row.project_id as string,
+    name: row.name as string,
+    description: String(row.description ?? ""),
+    status: String(row.status ?? "active") === "archived" ? "archived" : "active",
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at ?? row.created_at)
   };
 }
 
 export function mapPackage(row: Record<string, unknown>): AssetPackage {
   return {
     packageId: row.package_id as string,
+    projectId: String(row.project_id ?? "default_project"),
     name: row.name as string,
     kind: row.kind as string,
     status: row.status as AssetPackage["status"],
@@ -133,6 +148,7 @@ export function mapEvidenceRecord(row: Record<string, unknown>): EvidenceRecord 
 export function mapRelease(row: Record<string, unknown>): ReleaseRecord {
   return {
     releaseId: row.release_id as string,
+    projectId: String(row.project_id ?? "default_project"),
     parentReleaseId: row.parent_release_id ? String(row.parent_release_id) : null,
     version: row.version as string,
     status: row.status as ReleaseRecord["status"],

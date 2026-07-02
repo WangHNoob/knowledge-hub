@@ -15,9 +15,16 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: RouteContext) {
     const token = app.jwt.sign({ sub: user.id, username: user.username, role: user.role });
     return {
       token,
-      user: { id: user.id, username: user.username, role: user.role, displayName: user.displayName }
+      user: { id: user.id, username: user.username, role: user.role, displayName: user.displayName, currentProjectId: user.currentProjectId }
     };
   });
 
-  app.get("/api/me", { preHandler: app.authenticate }, async (request) => ({ user: request.user }));
+  app.get("/api/me", { preHandler: app.authenticate }, async (request) => {
+    const user = await ctx.service.getUserByUsername(request.user.username);
+    return {
+      user: user
+        ? { id: user.id, username: user.username, role: user.role, displayName: user.displayName, currentProjectId: user.currentProjectId }
+        : request.user
+    };
+  });
 }

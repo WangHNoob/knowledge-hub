@@ -47,12 +47,23 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
   const p = schemaPrefix(schema);
 
   await adapter.exec(`
+    CREATE TABLE IF NOT EXISTS ${p}projects (
+      project_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}users (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL,
-      display_name TEXT NOT NULL
+      display_name TEXT NOT NULL,
+      current_project_id TEXT NOT NULL DEFAULT 'default_project'
     );
 
     CREATE TABLE IF NOT EXISTS ${p}source_blobs (
@@ -64,6 +75,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}source_bundles (
       bundle_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       name TEXT NOT NULL,
       description TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -120,6 +132,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}knowledge_build_runs (
       run_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       source_version_id TEXT NOT NULL REFERENCES ${p}source_bundle_versions(version_id) ON DELETE CASCADE,
       package_id TEXT,
       adapter TEXT NOT NULL,
@@ -139,6 +152,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}asset_packages (
       package_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       name TEXT NOT NULL,
       kind TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -177,6 +191,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}review_tasks (
       task_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       package_id TEXT NOT NULL REFERENCES ${p}asset_packages(package_id) ON DELETE CASCADE,
       component_id TEXT NOT NULL REFERENCES ${p}asset_components(component_id) ON DELETE CASCADE,
       severity TEXT NOT NULL,
@@ -192,6 +207,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}annotation_examples (
       example_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       package_id TEXT NOT NULL REFERENCES ${p}asset_packages(package_id) ON DELETE CASCADE,
       component_id TEXT NOT NULL REFERENCES ${p}asset_components(component_id) ON DELETE CASCADE,
       task_id TEXT NOT NULL DEFAULT '',
@@ -208,6 +224,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}source_corrections (
       correction_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       bundle_id TEXT NOT NULL DEFAULT '',
       source_path TEXT NOT NULL DEFAULT '',
       rule_id TEXT NOT NULL DEFAULT '',
@@ -227,6 +244,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}rule_dismissals (
       dismissal_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       package_id TEXT NOT NULL REFERENCES ${p}asset_packages(package_id) ON DELETE CASCADE,
       component_id TEXT NOT NULL REFERENCES ${p}asset_components(component_id) ON DELETE CASCADE,
       component_ref TEXT NOT NULL DEFAULT '',
@@ -240,6 +258,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}knowledge_events (
       event_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       event_type TEXT NOT NULL,
       entity_type TEXT NOT NULL DEFAULT '',
       entity_id TEXT NOT NULL DEFAULT '',
@@ -249,6 +268,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}table_aliases (
       canonical TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       aliases JSONB NOT NULL DEFAULT '[]',
       source TEXT NOT NULL DEFAULT 'manual',
       updated_by TEXT NOT NULL DEFAULT '',
@@ -257,6 +277,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}releases (
       release_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       parent_release_id TEXT,
       version TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -272,6 +293,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}release_channels (
       channel_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       current_release_id TEXT REFERENCES ${p}releases(release_id),
       updated_by TEXT NOT NULL DEFAULT '',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -279,6 +301,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}agent_events (
       event_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       release_id TEXT NOT NULL,
       query TEXT NOT NULL,
       hit_component_ids JSONB NOT NULL DEFAULT '[]',
@@ -292,6 +315,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
 
     CREATE TABLE IF NOT EXISTS ${p}mcp_audit (
       audit_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
       session_id TEXT NOT NULL DEFAULT '',
       agent_role TEXT NOT NULL DEFAULT '',
       tool_name TEXT NOT NULL,
@@ -354,6 +378,20 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
   `);
 
   await adapter.exec(`
+    ALTER TABLE ${p}users ADD COLUMN IF NOT EXISTS current_project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}source_bundles ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}knowledge_build_runs ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}asset_packages ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}source_corrections ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}rule_dismissals ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}knowledge_events ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}table_aliases ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}release_channels ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}mcp_audit ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_hash TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_json JSONB NOT NULL DEFAULT '{}';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS parent_release_id TEXT;
@@ -386,6 +424,12 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}rule_dismissals ADD COLUMN IF NOT EXISTS component_ref TEXT NOT NULL DEFAULT '';
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_override ON ${p}annotation_examples(apply_mode, page_type, rule_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_active ON ${p}annotation_examples(active, apply_mode, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_source_bundles_project ON ${p}source_bundles(project_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_asset_packages_project ON ${p}asset_packages(project_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_build_runs_project ON ${p}knowledge_build_runs(project_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_releases_project ON ${p}releases(project_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_events_project ON ${p}agent_events(project_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_mcp_audit_project ON ${p}mcp_audit(project_id, created_at DESC);
   `);
 
   await adapter.exec(`
@@ -428,12 +472,28 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ON CONFLICT DO NOTHING;
   `);
 
+  await adapter.query(
+    `INSERT INTO ${p}projects (project_id, name, description, status, created_by, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $6)
+     ON CONFLICT (project_id) DO NOTHING`,
+    ["default_project", "默认项目", "现有知识库数据的默认游戏项目", "active", "system", new Date(0).toISOString()]
+  );
+
+  await adapter.query(`UPDATE ${p}users SET current_project_id = 'default_project' WHERE current_project_id = ''`);
+  await adapter.query(`UPDATE ${p}source_bundles SET project_id = 'default_project' WHERE project_id = ''`);
+  await adapter.query(`UPDATE ${p}asset_packages SET project_id = 'default_project' WHERE project_id = ''`);
+  await adapter.query(`UPDATE ${p}knowledge_build_runs SET project_id = 'default_project' WHERE project_id = ''`);
+  await adapter.query(`UPDATE ${p}releases SET project_id = 'default_project' WHERE project_id = ''`);
+  await adapter.query(`UPDATE ${p}release_channels SET project_id = 'default_project' WHERE project_id = ''`);
+  await adapter.query(`UPDATE ${p}agent_events SET project_id = 'default_project' WHERE project_id = ''`);
+  await adapter.query(`UPDATE ${p}mcp_audit SET project_id = 'default_project' WHERE project_id = ''`);
+
   // 默认资料集
   await adapter.query(
-    `INSERT INTO ${p}source_bundles (bundle_id, name, description, created_at)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO ${p}source_bundles (bundle_id, project_id, name, description, created_at)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (bundle_id) DO NOTHING`,
-    ["default", "默认资料集", "gamedata 表格 + gamedocs 文档统一版本化", new Date(0).toISOString()]
+    ["default", "default_project", "默认资料集", "gamedata 表格 + gamedocs 文档统一版本化", new Date(0).toISOString()]
   );
 
   const defaultQualityProfile = {

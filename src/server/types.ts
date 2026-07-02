@@ -25,6 +25,17 @@ export interface UserRecord {
   passwordHash: string;
   role: UserRole;
   displayName: string;
+  currentProjectId: string;
+}
+
+export interface ProjectRecord {
+  projectId: string;
+  name: string;
+  description: string;
+  status: "active" | "archived";
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type SourceCategory = "gamedata" | "gamedocs";
@@ -38,6 +49,7 @@ export interface SourceBlob {
 
 export interface SourceBundle {
   bundleId: string;
+  projectId: string;
   name: string;
   description: string;
   createdAt: string;
@@ -81,6 +93,7 @@ export interface ImportBundleResult {
 
 export interface AssetPackage {
   packageId: string;
+  projectId: string;
   name: string;
   kind: string;
   status: PackageStatus;
@@ -275,6 +288,7 @@ export interface RuleDismissal {
 
 export interface ReleaseRecord {
   releaseId: string;
+  projectId: string;
   parentReleaseId: string | null;
   version: string;
   status: "draft" | "published";
@@ -596,6 +610,7 @@ export type QualitySeverity = "blocking" | "warning" | "info";
 
 export interface KnowledgeBuildRun {
   runId: string;
+  projectId: string;
   sourceVersionId: string;
   packageId: string | null;
   adapter: "native";

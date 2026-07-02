@@ -11,6 +11,7 @@ export interface RunWorkspace {
 export interface BuildPipelineOptions {
   versionId: string;
   bundleId: string;
+  projectId?: string;
   requestedBy: string;
   stages: PipelineStage[];
   model: string;
