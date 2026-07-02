@@ -1,16 +1,16 @@
 import { deleteJson, getJson, patchJson, postEmpty, postJson } from "./http";
 import type { ReleaseRecord } from "./types";
 
-export async function listReleases(): Promise<ReleaseRecord[]> {
-  return (await getJson<{ releases: ReleaseRecord[] }>("/api/releases")).releases;
+export async function listReleases(projectId?: string): Promise<ReleaseRecord[]> {
+  return (await getJson<{ releases: ReleaseRecord[] }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/releases` : "/api/releases")).releases;
 }
 
-export async function getCurrentRelease(): Promise<ReleaseRecord | null> {
-  return (await getJson<{ release: ReleaseRecord | null }>("/api/releases/current")).release;
+export async function getCurrentRelease(projectId?: string): Promise<ReleaseRecord | null> {
+  return (await getJson<{ release: ReleaseRecord | null }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/releases/current` : "/api/releases/current")).release;
 }
 
-export async function createRelease(version: string, packageIds: string[], parentReleaseId?: string | null): Promise<ReleaseRecord> {
-  return (await postJson<{ release: ReleaseRecord }>("/api/releases", { version, packageIds, parentReleaseId })).release;
+export async function createRelease(version: string, packageIds: string[], parentReleaseId?: string | null, projectId?: string): Promise<ReleaseRecord> {
+  return (await postJson<{ release: ReleaseRecord }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/releases` : "/api/releases", { version, packageIds, parentReleaseId })).release;
 }
 
 export async function publishRelease(releaseId: string, options: { autoMode?: boolean } = {}): Promise<ReleaseRecord> {

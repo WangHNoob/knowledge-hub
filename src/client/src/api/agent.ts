@@ -1,12 +1,12 @@
 import { getJson, postJson } from "./http";
 import type { AgentEvent, AttributionAudit, FlywheelConvergenceSummary, FlywheelEvent, KnowledgeEnvelope, McpAuditRecord, McpConnectInfo } from "./types";
 
-export async function listAgentEvents(): Promise<AgentEvent[]> {
-  return (await getJson<{ events: AgentEvent[] }>("/api/agent/events")).events;
+export async function listAgentEvents(projectId?: string): Promise<AgentEvent[]> {
+  return (await getJson<{ events: AgentEvent[] }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/agent/events` : "/api/agent/events")).events;
 }
 
-export async function listMcpAudit(): Promise<McpAuditRecord[]> {
-  return (await getJson<{ audit: McpAuditRecord[] }>("/api/mcp/audit")).audit;
+export async function listMcpAudit(projectId?: string): Promise<McpAuditRecord[]> {
+  return (await getJson<{ audit: McpAuditRecord[] }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/mcp/audit` : "/api/mcp/audit")).audit;
 }
 
 export async function getMcpConnectInfo(): Promise<McpConnectInfo> {
@@ -21,8 +21,8 @@ export async function getFlywheelConvergenceSummary(): Promise<FlywheelConvergen
   return (await getJson<{ summary: FlywheelConvergenceSummary }>("/api/agent/flywheel-convergence")).summary;
 }
 
-export async function simulateMcpQuery(toolName: string, payload: Record<string, unknown>): Promise<KnowledgeEnvelope> {
-  return (await postJson<{ envelope: KnowledgeEnvelope }>("/api/mcp/query", { toolName, payload })).envelope;
+export async function simulateMcpQuery(toolName: string, payload: Record<string, unknown>, projectId?: string): Promise<KnowledgeEnvelope> {
+  return (await postJson<{ envelope: KnowledgeEnvelope }>("/api/mcp/query", { toolName, payload: projectId ? { ...payload, projectId } : payload })).envelope;
 }
 
 export async function listOutputAudits(): Promise<AttributionAudit[]> {

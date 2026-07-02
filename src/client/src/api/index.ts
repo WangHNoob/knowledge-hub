@@ -1,10 +1,14 @@
 export * from "./types";
 export { getToken, setToken } from "./http";
 export { login } from "./auth";
+export { createProject, listProjects, selectProject, updateProject } from "./projects";
 export { getDashboard, getFlywheelWorkbench } from "./dashboard";
 export {
   browseLocalFiles,
+  getBundleBuildPlan,
   getBundleVersion,
+  getSourceFilePreview,
+  getSourceVersionPreview,
   importSourceBundle,
   listBundleVersions,
   listSourceBundles,

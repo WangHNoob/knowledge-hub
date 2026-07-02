@@ -25,19 +25,21 @@ import { useWorkbench } from "../hooks/useWorkbench";
 import { errorMessage, formatTime, qualityScore, releaseVersion } from "../utils/format";
 import { componentLabel } from "../utils/componentLabel";
 import { IdChip, useNav } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
 
 type ReleaseTab = "compose" | "current";
 
 export function Release() {
   const { navigate, params } = useNav();
+  const { currentProjectId, currentProject } = useProject();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<ReleaseTab>("compose");
   const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
   const [version, setVersion] = useState(() => releaseVersion());
-  const packages = useQuery({ queryKey: ["packages"], queryFn: () => listPackages() });
+  const packages = useQuery({ queryKey: ["packages", currentProjectId], queryFn: () => listPackages({ projectId: currentProjectId }) });
   const tasks = useQuery({ queryKey: ["review", "blocking"], queryFn: () => listReviewTasks("blocking") });
-  const releases = useQuery({ queryKey: ["releases"], queryFn: listReleases });
-  const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
+  const releases = useQuery({ queryKey: ["releases", currentProjectId], queryFn: () => listReleases(currentProjectId) });
+  const current = useQuery({ queryKey: ["releases", "current", currentProjectId], queryFn: () => getCurrentRelease(currentProjectId) });
   const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
   const workbench = useWorkbench();
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
@@ -76,10 +78,10 @@ export function Release() {
     [flywheelEvents.data, releases.data]
   );
   const createMutation = useMutation({
-    mutationFn: () => createRelease(version.trim(), selectedPackageIds, current.data?.releaseId ?? null),
+    mutationFn: () => createRelease(version.trim(), selectedPackageIds, current.data?.releaseId ?? null, currentProjectId),
     onSuccess: async (release) => {
       setDraft(release);
-      await queryClient.invalidateQueries({ queryKey: ["releases"] });
+      await queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] });
     }
   });
   const publishMutation = useMutation({
@@ -88,8 +90,8 @@ export function Release() {
       setDraft(null);
       setVersion(releaseVersion());
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
@@ -99,8 +101,8 @@ export function Release() {
     mutationFn: rollbackRelease,
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
@@ -111,8 +113,8 @@ export function Release() {
       updateRelease(releaseId, patch),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] })
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] })
       ]);
     }
   });
@@ -121,8 +123,8 @@ export function Release() {
     onSuccess: async (_release, releaseId) => {
       if (draft?.releaseId === releaseId) setDraft(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
         queryClient.invalidateQueries({ queryKey: ["storage"] })
       ]);
@@ -133,7 +135,7 @@ export function Release() {
   if (packages.error || releases.error || current.error || tasks.error || flywheelEvents.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error ?? flywheelEvents.error} />;
 
   return (
-    <Page title="发布" subtitle="发布版本是 Agent 正式消费的不可变知识视图。">
+    <Page title="发布" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。发布版本是 Agent 正式消费的不可变知识视图。`}>
       <Tabs
         active={tab}
         onChange={setTab}

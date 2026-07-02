@@ -15,13 +15,14 @@ import {
   SearchCheck
 } from "lucide-react";
 import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getToken, searchAll, setToken } from "../api";
+import { createProject, getToken, listProjects, searchAll, selectProject, setToken } from "../api";
 import type { SearchHit } from "../api";
 import { LoginScreen } from "../pages/Login";
 import { useDebouncedValue } from "../utils/react";
 import { NavProvider, useNav, type NavParams, type View } from "./navigation";
+import { ProjectProvider, useProject } from "./projectContext";
 
 const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ default: module.Dashboard }));
 const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
@@ -84,6 +85,24 @@ export function App() {
   const [view, setView] = useState<View>("dashboard");
   const [navParams, setNavParams] = useState<NavParams>({});
   const queryClient = useQueryClient();
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: listProjects,
+    enabled: Boolean(token)
+  });
+  const switchProjectMutation = useMutation({
+    mutationFn: selectProject,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+    }
+  });
+  const createProjectMutation = useMutation({
+    mutationFn: createProject,
+    onSuccess: async (result) => {
+      await selectProject(result.project.projectId);
+      await queryClient.invalidateQueries();
+    }
+  });
 
   const navigate = useCallback((next: View, params: NavParams = {}) => {
     startTransition(() => {
@@ -100,7 +119,22 @@ export function App() {
     }} />;
   }
 
+  const currentProjectId = projects.data?.currentProjectId ?? "default_project";
+  const projectValue = {
+    projects: projects.data?.projects ?? [],
+    currentProjectId,
+    loading: projects.isLoading,
+    switching: switchProjectMutation.isPending || createProjectMutation.isPending,
+    switchProject: async (projectId: string) => {
+      await switchProjectMutation.mutateAsync(projectId);
+    },
+    createProject: async (input: { name: string; description?: string }) => {
+      await createProjectMutation.mutateAsync(input);
+    }
+  };
+
   return (
+    <ProjectProvider value={projectValue}>
     <NavProvider value={navValue}>
       <div className="shell">
         <aside className="sidebar">
@@ -111,6 +145,7 @@ export function App() {
               <span>资产飞轮管理台</span>
             </div>
           </div>
+          <ProjectSwitcher />
           <nav>
             {NAV.map((item) => {
               const Icon = item.icon;
@@ -164,6 +199,40 @@ export function App() {
         </a>
       </div>
     </NavProvider>
+    </ProjectProvider>
+  );
+}
+
+function ProjectSwitcher() {
+  const { projects, currentProjectId, currentProject, loading, switching, switchProject, createProject } = useProject();
+  return (
+    <div className="project-switcher">
+      <label>游戏项目</label>
+      <div className="project-select-row">
+        <select
+          value={currentProjectId}
+          disabled={loading || switching}
+          onChange={(event) => { void switchProject(event.target.value); }}
+        >
+          {projects.map((project) => (
+            <option key={project.projectId} value={project.projectId}>{project.name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={switching}
+          title="新建项目"
+          onClick={() => {
+            const name = window.prompt("新游戏项目名称");
+            if (!name?.trim()) return;
+            void createProject({ name: name.trim() });
+          }}
+        >
+          +
+        </button>
+      </div>
+      <small>{currentProject?.projectId ?? "default_project"}</small>
+    </div>
   );
 }
 

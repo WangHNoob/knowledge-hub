@@ -1,6 +1,16 @@
 export interface LoginResponse {
   token: string;
-  user: { id: string; username: string; role: string; displayName: string };
+  user: { id: string; username: string; role: string; displayName: string; currentProjectId?: string };
+}
+
+export interface ProjectRecord {
+  projectId: string;
+  name: string;
+  description: string;
+  status: "active" | "archived";
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SourceBundleDashboard {
@@ -13,6 +23,7 @@ export interface SourceBundleDashboard {
 
 export interface SourceBundle {
   bundleId: string;
+  projectId: string;
   name: string;
   description: string;
   createdAt: string;
@@ -47,6 +58,38 @@ export type SourceFileChange =
   | { kind: "modified"; logicalPath: string; category: string; contentHash: string; previousHash: string }
   | { kind: "removed"; logicalPath: string; category: string; previousHash: string };
 
+export interface SourcePreviewNode {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  category?: "gamedata" | "gamedocs";
+  byteSize?: number;
+  contentHash?: string;
+  fileType?: "markdown" | "spreadsheet" | "json" | "text" | "binary";
+  changeKind?: "added" | "modified" | "removed" | "unchanged";
+  children?: SourcePreviewNode[];
+}
+
+export interface SourceFilePreview {
+  logicalPath: string;
+  category: "gamedata" | "gamedocs";
+  byteSize: number;
+  contentHash: string;
+  fileType: SourcePreviewNode["fileType"];
+  preview: string[];
+  sheet?: string;
+  rows?: unknown[][];
+  truncated: boolean;
+}
+
+export interface SourceBuildPlan {
+  recommendedMode: "incremental" | "full";
+  targets: string[];
+  reason: string;
+  affectedKnowledge: Array<{ componentId: string; packageId: string; title: string; kind: string; legacyPath: string }>;
+  warnings: string[];
+}
+
 export interface ImportBundleResult {
   bundle: SourceBundle;
   version: SourceBundleVersion;
@@ -56,6 +99,7 @@ export interface ImportBundleResult {
 
 export interface AssetPackage {
   packageId: string;
+  projectId: string;
   name: string;
   kind: string;
   status: string;
@@ -329,6 +373,7 @@ export interface AnnotationExampleLifecycle {
 
 export interface KnowledgeBuildRun {
   runId: string;
+  projectId: string;
   sourceVersionId: string;
   packageId: string | null;
   adapter: string;
@@ -502,6 +547,7 @@ export interface ModelConnectivityResult {
 
 export interface ReleaseRecord {
   releaseId: string;
+  projectId: string;
   parentReleaseId: string | null;
   version: string;
   status: string;
