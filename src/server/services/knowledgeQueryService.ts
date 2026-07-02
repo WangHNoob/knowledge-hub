@@ -15,13 +15,14 @@ import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
 const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
 const GRAPH_TOOLS = new Set(["kb_get_entity", "kb_get_neighbors", "kb_list_entities", "kb_get_relations"]);
-const TABLE_TOOLS = new Set(["kb_get_page_tables", "kb_list_tables", "kb_get_table_schema", "kb_query_table", "kb_validate_table", "kb_check_table_value"]);
+const TABLE_TOOLS = new Set(["kb_get_page_tables", "kb_list_tables", "kb_get_table_schema", "kb_query_table", "kb_get_table_raw", "kb_validate_table", "kb_check_table_value"]);
 const REPORT_TOOLS = new Set(["kb_report_gap", "kb_report_bad_hit", "kb_report_stale"]);
 
 export interface KnowledgeQueryContext {
   sessionId?: string;
   agentRole?: string;
   traceId?: string;
+  projectId?: string;
 }
 
 interface ToolResult {
@@ -143,7 +144,8 @@ export class KnowledgeQueryService {
       context: { toolName, agentRole: context.agentRole },
       requestPayload: payload
     });
-    const release = await this.releaseService.getCurrent();
+    const projectId = optionalString(payload, "projectId") || context.projectId || "default_project";
+    const release = await this.releaseService.getCurrent(projectId);
     if (!release) {
       const error = new Error("No current published release. Publish a release before using Knowledge MCP tools.");
       await span?.fail(error);
@@ -183,6 +185,7 @@ export class KnowledgeQueryService {
 
       await this.writeAudit({
         context,
+        projectId,
         toolName,
         releaseId: release.releaseId,
         payload,
@@ -203,6 +206,7 @@ export class KnowledgeQueryService {
     } catch (error) {
       await this.writeAudit({
         context,
+        projectId,
         toolName,
         releaseId: release.releaseId,
         payload,
@@ -246,6 +250,8 @@ export class KnowledgeQueryService {
         return this.kbGetTableSchema(release, stringArg(payload, "table", "tableName", "name"));
       case "kb_query_table":
         return this.kbQueryTable(release, stringArg(payload, "table", "tableName", "name"), Number(payload.limit ?? 20), objectArg(payload.where ?? payload.filters));
+      case "kb_get_table_raw":
+        return this.kbGetTableRaw(release, stringArg(payload, "table", "tableName", "name"), Number(payload.headerRows ?? 0));
       case "kb_validate_table":
         return this.kbValidateTable(release, stringArg(payload, "table", "tableName", "name"));
       case "kb_check_table_value":
@@ -922,6 +928,47 @@ export class KnowledgeQueryService {
     throw new Error(`Source table file not found for ${schema.table_name}: ${schema.rel_path}`);
   }
 
+  /**
+   * 读取源表的**原始网格**（array-of-arrays），保留列顺序与空列——
+   * 不同于 readTableRows 的对象模式（会丢列序/空列）。用于忠实重建配表格式。
+   */
+  private async readTableGrid(release: ReleaseRecord, schema: TableSchema, sourceVersionIds?: string[]): Promise<{ sheet: string; grid: unknown[][] }> {
+    for (const versionId of (sourceVersionIds?.length ? sourceVersionIds : releaseSourceVersionIds(release))) {
+      const file = await this.sourceService.readFile(versionId, schema.rel_path);
+      if (!file) continue;
+      const workbook = xlsx.read(file.content, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const grid = xlsx.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1, defval: "", blankrows: true });
+      return { sheet: sheetName, grid };
+    }
+    throw new Error(`Source table file not found for ${schema.table_name}: ${schema.rel_path}`);
+  }
+
+  private async kbGetTableRaw(release: ReleaseRecord, table: string, headerRows: number): Promise<ToolResult> {
+    const found = await this.findTableSchema(release, table);
+    if (!found) return { result: { found: false, table }, componentIds: [] };
+    const { sheet, grid } = await this.readTableGrid(release, found.schema, found.sourceVersionIds);
+    const hdr = Math.max(0, Math.min(headerRows || 0, grid.length));
+    return {
+      result: {
+        found: true,
+        table: found.schema.table_name,
+        relPath: found.schema.rel_path,
+        sheet,
+        totalRows: grid.length,
+        ncols: grid.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0),
+        headerRows: hdr,
+        header: hdr > 0 ? grid.slice(0, hdr) : [],
+        rows: grid,
+        note: "原始网格(array-of-arrays)，保留列序与空列；第0行通常为列ID。headerRows 由调用方指定则拆分 header/数据，仅作提示，rows 始终为完整网格。",
+        trust: found.component.trust ?? null,
+      },
+      componentIds: [found.component.componentId],
+      artifactIds: [found.component.artifactId],
+      sourceVersionIds: releaseSourceVersionIds(release),
+    };
+  }
+
   private async findPageComponent(release: ReleaseRecord, page: string): Promise<AssetComponent | null> {
     const pages = await this.releaseComponents(release, ["wiki_page", "table_wiki_page", "topic_index"]);
     const normalized = normalize(page);
@@ -1111,6 +1158,7 @@ export class KnowledgeQueryService {
 
   private async writeAudit(input: {
     context: KnowledgeQueryContext;
+    projectId: string;
     toolName: string;
     releaseId: string;
     payload: Record<string, unknown>;
@@ -1121,10 +1169,11 @@ export class KnowledgeQueryService {
   }): Promise<void> {
     await this.adapter.query(
       `INSERT INTO mcp_audit
-        (audit_id, session_id, agent_role, tool_name, release_id, query_payload, hit_component_ids, quality_flags, status, latency_ms, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        (audit_id, project_id, session_id, agent_role, tool_name, release_id, query_payload, hit_component_ids, quality_flags, status, latency_ms, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         `audit_${Date.now()}_${nanoid(6)}`,
+        input.projectId,
         input.context.sessionId ?? "",
         input.context.agentRole ?? "",
         input.toolName,

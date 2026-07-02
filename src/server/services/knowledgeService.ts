@@ -139,9 +139,11 @@ export class KnowledgeService {
     };
   }
 
-  async listPackages(filter: { q?: string; status?: PackageStatus; kind?: string } = {}): Promise<AssetPackage[]> {
+  async listPackages(filter: { q?: string; status?: PackageStatus; kind?: string; projectId?: string } = {}): Promise<AssetPackage[]> {
     const where: string[] = [];
     const params: unknown[] = [];
+    where.push(`project_id = $${params.length + 1}`);
+    params.push(filter.projectId ?? "default_project");
     if (filter.q) {
       where.push(`(name ILIKE $${params.length + 1} OR description ILIKE $${params.length + 1})`);
       params.push(`%${filter.q}%`);
@@ -1293,13 +1295,19 @@ export class KnowledgeService {
     };
   }
 
-  async listReleases(): Promise<ReleaseRecord[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM releases ORDER BY published_at DESC NULLS LAST");
+  async listReleases(projectId = "default_project"): Promise<ReleaseRecord[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM releases WHERE project_id = $1 ORDER BY published_at DESC NULLS LAST",
+      [projectId],
+    );
     return rows.map(mapRelease);
   }
 
-  async listAgentEvents(): Promise<AgentEvent[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50");
+  async listAgentEvents(projectId = "default_project"): Promise<AgentEvent[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM agent_events WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50",
+      [projectId],
+    );
     const events = rows.map(mapAgentEvent);
     const componentIds = uniqueSorted(events.flatMap((event) => event.hitComponentIds));
     if (componentIds.length === 0) return events;
@@ -1334,8 +1342,11 @@ export class KnowledgeService {
     }));
   }
 
-  async listMcpAudit(): Promise<McpAuditRecord[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM mcp_audit ORDER BY created_at DESC LIMIT 100");
+  async listMcpAudit(projectId = "default_project"): Promise<McpAuditRecord[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM mcp_audit WHERE project_id = $1 ORDER BY created_at DESC LIMIT 100",
+      [projectId],
+    );
     const audits = rows.map(mapMcpAudit);
     const componentIds = uniqueSorted(audits.flatMap((audit) => audit.hitComponentIds));
     if (componentIds.length === 0) return audits;

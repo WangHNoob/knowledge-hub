@@ -9,6 +9,7 @@ export interface KnowledgeMcpContextDefaults extends KnowledgeQueryContext {
 }
 
 const contextFields = {
+  projectId: z.string().optional().describe("Knowledge Hub project/game id. Pass this to query a specific game knowledge base."),
   sessionId: z.string().optional().describe("Optional caller/session id for MCP audit records."),
   agentRole: z.string().optional().describe("Optional role label for MCP audit records, e.g. planner or qa-agent."),
 };
@@ -111,6 +112,13 @@ export const knowledgeMcpTools: Array<{
     title: "Query Table",
     description: "Read rows from a released source table with optional exact-match filters.",
     inputSchema: z.object({ ...contextFields, table: tableField, tableName: tableField.optional(), name: tableField.optional(), limit: limitField, where: z.record(z.string(), z.unknown()).optional(), filters: z.record(z.string(), z.unknown()).optional() }).passthrough(),
+    readOnly: true,
+  },
+  {
+    name: "kb_get_table_raw",
+    title: "Get Table Raw Grid",
+    description: "Read a released source table as a faithful raw grid (array-of-arrays), preserving column order, column-ID row and empty columns. Use this (not kb_query_table) when you need the exact table layout to regenerate importable config tables.",
+    inputSchema: z.object({ ...contextFields, table: tableField, tableName: tableField.optional(), name: tableField.optional(), headerRows: z.number().int().min(0).optional().describe("Optional: how many leading rows are headers, to split header/data in the response (rows always returns the full grid).") }).passthrough(),
     readOnly: true,
   },
   {
@@ -226,6 +234,7 @@ export function registerKnowledgeMcpTools(
           const envelope = await queryService.runTool(tool.name, payload, {
             sessionId: typeof payload.sessionId === "string" ? payload.sessionId : defaults.sessionId,
             agentRole: typeof payload.agentRole === "string" ? payload.agentRole : defaults.agentRole,
+            projectId: typeof payload.projectId === "string" ? payload.projectId : defaults.projectId,
             traceId: defaults.traceId,
           });
           return {

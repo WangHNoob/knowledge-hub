@@ -93,8 +93,8 @@ export class FeedbackService {
     const { release, toolName, payload, feedbackType, hitComponentIds, qualityFlags } = input;
     const query = feedbackQueryKey(toolName, payload);
     const { rows: countRows } = await this.adapter.query(
-      "SELECT COUNT(*)::int AS count FROM agent_events WHERE release_id = $1 AND feedback_type = $2 AND query = $3",
-      [release.releaseId, feedbackType, query]
+      "SELECT COUNT(*)::int AS count FROM agent_events WHERE project_id = $1 AND release_id = $2 AND feedback_type = $3 AND query = $4",
+      [release.projectId, release.releaseId, feedbackType, query]
     );
     const repeatedCount = Number(countRows[0]?.count ?? 0) + 1;
     const effectiveFeedbackType: FeedbackType = feedbackType === "miss" && repeatedCount >= 3 ? "repeated_query" : feedbackType;
@@ -117,10 +117,11 @@ export class FeedbackService {
 
     await this.adapter.query(
       `INSERT INTO review_tasks
-        (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at, task_kind, rule_id, candidates, confidence, context_snapshot)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        (task_id, project_id, package_id, component_id, severity, status, title, description, suggested_action, created_at, task_kind, rule_id, candidates, confidence, context_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         taskId,
+        release.projectId,
         targetComponent.packageId,
         targetComponent.componentId,
         severity,
@@ -138,10 +139,11 @@ export class FeedbackService {
     );
     await this.adapter.query(
       `INSERT INTO agent_events
-        (event_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        (event_id, project_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         `evt_${Date.now()}_${nanoid(6)}`,
+        release.projectId,
         release.releaseId,
         query,
         JSON.stringify(hitComponentIds),
@@ -164,7 +166,7 @@ export class FeedbackService {
       eventType: "agent.feedback.received",
       entityType: "component",
       entityId: targetComponent.componentId,
-      payload: { releaseId: release.releaseId, feedbackType: effectiveFeedbackType, query, taskId, qualityFlags, rebuildProposalTaskId },
+      payload: { projectId: release.projectId, releaseId: release.releaseId, feedbackType: effectiveFeedbackType, query, taskId, qualityFlags, rebuildProposalTaskId },
     });
     return {
       recorded: true,
@@ -203,18 +205,19 @@ export class FeedbackService {
     negativeFeedbackTaskId: string;
   }): Promise<string | null> {
     const { release, component, query, feedbackType, negativeFeedbackTaskId } = input;
-    const negativeCount = await this.negativeFeedbackCount(release.releaseId, component.componentId);
+    const negativeCount = await this.negativeFeedbackCount(release.projectId, release.releaseId, component.componentId);
     if (negativeCount < REBUILD_PROPOSAL_THRESHOLD) return null;
 
     const { rows: existingRows } = await this.adapter.query(
       `SELECT task_id
        FROM review_tasks
-       WHERE component_id = $1
+       WHERE project_id = $1
+         AND component_id = $2
          AND status = 'open'
          AND rule_id = 'agent_feedback.rebuild_candidate'
        ORDER BY created_at DESC
        LIMIT 1`,
-      [component.componentId],
+      [release.projectId, component.componentId],
     );
     if (existingRows.length > 0) return String(existingRows[0].task_id);
 
@@ -222,10 +225,11 @@ export class FeedbackService {
     const now = new Date().toISOString();
     await this.adapter.query(
       `INSERT INTO review_tasks
-        (task_id, package_id, component_id, severity, status, title, description, suggested_action, created_at, task_kind, rule_id, candidates, confidence, context_snapshot)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        (task_id, project_id, package_id, component_id, severity, status, title, description, suggested_action, created_at, task_kind, rule_id, candidates, confidence, context_snapshot)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         taskId,
+        release.projectId,
         component.packageId,
         component.componentId,
         "warning",
@@ -269,19 +273,20 @@ export class FeedbackService {
       eventType: "agent.feedback.rebuild_proposed",
       entityType: "component",
       entityId: component.componentId,
-      payload: { releaseId: release.releaseId, taskId, negativeFeedbackCount: negativeCount, threshold: REBUILD_PROPOSAL_THRESHOLD },
+      payload: { projectId: release.projectId, releaseId: release.releaseId, taskId, negativeFeedbackCount: negativeCount, threshold: REBUILD_PROPOSAL_THRESHOLD },
     });
     return taskId;
   }
 
-  private async negativeFeedbackCount(releaseId: string, componentId: string): Promise<number> {
+  private async negativeFeedbackCount(projectId: string, releaseId: string, componentId: string): Promise<number> {
     const { rows } = await this.adapter.query(
       `SELECT COUNT(*)::int AS count
        FROM agent_events
-       WHERE release_id = $1
+       WHERE project_id = $1
+         AND release_id = $2
          AND feedback_type <> 'hit'
-         AND hit_component_ids ? $2`,
-      [releaseId, componentId],
+         AND hit_component_ids ? $3`,
+      [projectId, releaseId, componentId],
     );
     return Number(rows[0]?.count ?? 0);
   }

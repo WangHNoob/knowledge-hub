@@ -306,6 +306,7 @@ export class KbBuilderPipelineService {
         entityId: runId,
         payload: {
           runId,
+          projectId: options.projectId ?? "default_project",
           packageId,
           sourceVersionId: options.versionId,
           requestedBy: options.requestedBy,
@@ -366,8 +367,11 @@ export class KbBuilderPipelineService {
     );
   }
 
-  async listRuns(): Promise<KnowledgeBuildRun[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM knowledge_build_runs ORDER BY started_at DESC");
+  async listRuns(projectId = "default_project"): Promise<KnowledgeBuildRun[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM knowledge_build_runs WHERE project_id = $1 ORDER BY started_at DESC",
+      [projectId],
+    );
     return this.enrichRunsWithWritebackTraces(rows.map(mapRun));
   }
 

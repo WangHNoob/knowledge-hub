@@ -7,11 +7,19 @@ import type { RouteContext } from "./context";
 
 export function registerReleaseRoutes(app: FastifyInstance, ctx: RouteContext) {
   app.get("/api/releases", { preHandler: app.authenticate }, async () => ({
-    releases: await ctx.service.listReleases()
+    releases: await ctx.service.listReleases("default_project")
   }));
 
   app.get("/api/releases/current", { preHandler: app.authenticate }, async () => ({
-    release: await ctx.releaseService.getCurrent()
+    release: await ctx.releaseService.getCurrent("default_project")
+  }));
+
+  app.get<{ Params: { projectId: string } }>("/api/projects/:projectId/releases", { preHandler: app.authenticate }, async (request) => ({
+    releases: await ctx.service.listReleases(request.params.projectId)
+  }));
+
+  app.get<{ Params: { projectId: string } }>("/api/projects/:projectId/releases/current", { preHandler: app.authenticate }, async (request) => ({
+    release: await ctx.releaseService.getCurrent(request.params.projectId)
   }));
 
   app.post("/api/releases", {
@@ -23,6 +31,25 @@ export function registerReleaseRoutes(app: FastifyInstance, ctx: RouteContext) {
       return {
         release: await ctx.releaseService.createDraft({
           ...parsed.data,
+          projectId: "default_project",
+          requestedBy: request.user.username
+        })
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "创建发布草案失败。" });
+    }
+  });
+
+  app.post<{ Params: { projectId: string }; Body: z.infer<typeof createReleaseSchema> }>("/api/projects/:projectId/releases", {
+    preHandler: [app.authenticate, requireRole("admin")]
+  }, async (request, reply) => {
+    const parsed = createReleaseSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid release payload." });
+    try {
+      return {
+        release: await ctx.releaseService.createDraft({
+          ...parsed.data,
+          projectId: request.params.projectId,
           requestedBy: request.user.username
         })
       };

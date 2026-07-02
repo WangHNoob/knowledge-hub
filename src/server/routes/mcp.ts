@@ -9,6 +9,8 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteContext) {
   app.get("/api/mcp/connect", { preHandler: app.authenticate }, async (request) => {
     const baseUrl = config.publicBaseUrl.trim() || requestBaseUrl(request);
     const mcpUrl = `${baseUrl.replace(/\/+$/u, "")}/mcp`;
+    const user = await ctx.service.getUserByUsername(request.user.username);
+    const currentProjectId = user?.currentProjectId ?? "default_project";
     return {
       transport: "streamable_http",
       url: mcpUrl,
@@ -20,6 +22,11 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteContext) {
       currentUser: {
         username: request.user.username,
         role: request.user.role,
+        currentProjectId,
+      },
+      project: {
+        projectId: currentProjectId,
+        defaultToolPayload: { projectId: currentProjectId },
       },
       examples: {
         generic: {
@@ -44,6 +51,7 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteContext) {
       },
       notes: [
         "Streamable HTTP endpoint is /mcp and requires the same JWT used by this web app.",
+        "For multi-game knowledge bases, pass projectId in each tool payload or switch the current project in the web app before connecting.",
         "Use a developer or admin account token if the Agent needs to send feedback; viewer can query read-only tools but should not mutate the knowledge base.",
         "Behind a reverse proxy, set KH_PUBLIC_BASE_URL to the public https origin so generated configs are stable.",
       ],
@@ -53,9 +61,11 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteContext) {
   app.all("/mcp", { preHandler: app.authenticate }, async (request, reply) => {
     reply.hijack();
 
+    const user = await ctx.service.getUserByUsername(request.user.username);
     const server = createKnowledgeMcpServer(ctx.queryService, {
       sessionId: `mcp-http:${request.user.username}`,
       agentRole: request.user.role,
+      projectId: user?.currentProjectId ?? "default_project",
       traceId: request.traceId,
     });
     const transport = new StreamableHTTPServerTransport({

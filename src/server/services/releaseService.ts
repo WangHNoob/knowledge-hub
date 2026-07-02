@@ -76,6 +76,7 @@ export interface CreateReleaseDraftInput {
   version: string;
   packageIds: string[];
   requestedBy: string;
+  projectId?: string;
   parentReleaseId?: string | null;
   note?: string;
 }
@@ -108,6 +109,7 @@ export class ReleaseService {
       context: { version: input.version, packageIds: input.packageIds }
     });
     const packageIds = uniqueSorted(input.packageIds);
+    const projectId = input.projectId ?? "default_project";
     try {
       if (packageIds.length === 0) throw new Error("Release must include at least one package.");
 
@@ -117,21 +119,26 @@ export class ReleaseService {
         const missing = packageIds.filter((id) => !found.has(id));
         throw new Error(`Unknown package(s): ${missing.join(", ")}`);
       }
+      const foreignPackages = packages.filter((pkg) => pkg.projectId !== projectId);
+      if (foreignPackages.length > 0) {
+        throw new Error(`Package(s) not in project ${projectId}: ${foreignPackages.map((pkg) => pkg.packageId).join(", ")}`);
+      }
 
       const releaseId = `rel_${compactDate(new Date())}_${nanoid(6)}`;
       const qualityGate = summarizePackages(packages);
       const createdAt = new Date().toISOString();
-      const parentReleaseId = input.parentReleaseId !== undefined ? input.parentReleaseId : (await this.getCurrent())?.releaseId ?? null;
+      const parentReleaseId = input.parentReleaseId !== undefined ? input.parentReleaseId : (await this.getCurrent(projectId))?.releaseId ?? null;
       if (parentReleaseId && !(await this.getRelease(parentReleaseId))) {
         throw new Error(`Unknown parent release: ${parentReleaseId}`);
       }
 
       await this.adapter.query(
         `INSERT INTO releases
-          (release_id, parent_release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          (release_id, project_id, parent_release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           releaseId,
+          projectId,
           parentReleaseId,
           input.version,
           "draft",
@@ -264,7 +271,7 @@ export class ReleaseService {
           ],
         );
         await this.updateComponentQualities(trustedComponents);
-        await this.pointChannelToRelease(releaseId, publishedBy);
+        await this.pointChannelToRelease(release.projectId, releaseId, publishedBy);
         await this.adapter.query("COMMIT");
       } catch (error) {
         await this.adapter.query("ROLLBACK");
@@ -294,7 +301,7 @@ export class ReleaseService {
       const release = await this.getRelease(releaseId);
       if (!release) throw new Error(`Unknown release: ${releaseId}`);
       if (release.status !== "published") throw new Error("Can only rollback to a published release.");
-      await this.pointChannelToRelease(releaseId, requestedBy);
+      await this.pointChannelToRelease(release.projectId, releaseId, requestedBy);
       await span?.complete({ version: release.version });
       return release;
     } catch (error) {
@@ -316,7 +323,7 @@ export class ReleaseService {
       if (!RELEASE_ID_PATTERN.test(releaseId)) throw new Error("Invalid release id.");
       const release = await this.getRelease(releaseId);
       if (!release) throw new Error(`Unknown release: ${releaseId}`);
-      const current = await this.getCurrent();
+      const current = await this.getCurrent(release.projectId);
       if (current?.releaseId === releaseId) throw new Error("Cannot delete the current Agent release. Roll back to another release first.");
 
       await this.adapter.query("BEGIN");
@@ -338,13 +345,13 @@ export class ReleaseService {
     }
   }
 
-  async getCurrent(): Promise<ReleaseRecord | null> {
+  async getCurrent(projectId = "default_project"): Promise<ReleaseRecord | null> {
     const { rows } = await this.adapter.query(
       `SELECT r.*
        FROM release_channels c
        JOIN releases r ON r.release_id = c.current_release_id
-       WHERE c.channel_id = $1`,
-      ["default"],
+       WHERE c.channel_id = $1 AND c.project_id = $2`,
+      [channelIdFor(projectId), projectId],
     );
     return rows.length ? mapRelease(rows[0]) : null;
   }
@@ -382,15 +389,16 @@ export class ReleaseService {
     return rows.length ? mapRelease(rows[0]) : null;
   }
 
-  private async pointChannelToRelease(releaseId: string, requestedBy: string): Promise<void> {
+  private async pointChannelToRelease(projectId: string, releaseId: string, requestedBy: string): Promise<void> {
     await this.adapter.query(
-      `INSERT INTO release_channels (channel_id, current_release_id, updated_by, updated_at)
-       VALUES ($1,$2,$3,$4)
+      `INSERT INTO release_channels (channel_id, project_id, current_release_id, updated_by, updated_at)
+       VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (channel_id)
        DO UPDATE SET current_release_id = EXCLUDED.current_release_id,
+                     project_id = EXCLUDED.project_id,
                      updated_by = EXCLUDED.updated_by,
                      updated_at = EXCLUDED.updated_at`,
-      ["default", releaseId, requestedBy, new Date().toISOString()],
+      [channelIdFor(projectId), projectId, releaseId, requestedBy, new Date().toISOString()],
     );
   }
 
@@ -432,7 +440,7 @@ export class ReleaseService {
         await this.adapter.query("COMMIT");
         return { release: null, created: false, reason: "unknown_package" };
       }
-      const current = await this.getCurrent();
+      const current = await this.getCurrent(pkg.projectId);
       if (!current) {
         await this.adapter.query("COMMIT");
         return { release: null, created: false, reason: "no_current_release" };
@@ -446,6 +454,7 @@ export class ReleaseService {
       const release = await this.createDraft({
         version: `${current.version}.rev.${compactDate(new Date())}`,
         packageIds: [input.packageId],
+        projectId: pkg.projectId,
         parentReleaseId: current.releaseId,
         requestedBy: input.requestedBy || "system",
         note: `自动草案：scoped build ${input.runId}${input.only ? ` (${input.only})` : ""}`,
@@ -1001,6 +1010,10 @@ function numberFromQuality(quality: Record<string, unknown>, keys: string[]): nu
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
+}
+
+function channelIdFor(projectId: string): string {
+  return `project:${projectId}:default`;
 }
 
 function stringArray(value: unknown): string[] {
