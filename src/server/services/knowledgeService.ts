@@ -61,13 +61,13 @@ export class KnowledgeService {
     return rows.length ? mapUser(rows[0]) : null;
   }
 
-  async getDashboardSummary() {
-    const sourceSummary = await this.getSourceBundleSummary();
-    const packages = await this.listPackages();
-    const components = await this.listComponents();
-    const tasks = await this.listReviewTasks({});
-    const releases = await this.listReleases();
-    const agentEvents = await this.listAgentEvents();
+  async getDashboardSummary(projectId = "default_project") {
+    const sourceSummary = await this.getSourceBundleSummary(projectId);
+    const packages = await this.listPackages({ projectId });
+    const components = await this.listComponents({ projectId });
+    const tasks = await this.listReviewTasks({ projectId });
+    const releases = await this.listReleases(projectId);
+    const agentEvents = await this.listAgentEvents(projectId);
 
     return {
       sources: sourceSummary,
@@ -99,12 +99,13 @@ export class KnowledgeService {
     };
   }
 
-  async getFlywheelWorkbench(input: { runs: KnowledgeBuildRun[] }): Promise<FlywheelWorkbench> {
+  async getFlywheelWorkbench(input: { runs: KnowledgeBuildRun[]; projectId?: string }): Promise<FlywheelWorkbench> {
+    const projectId = input.projectId ?? "default_project";
     const [tasks, annotations, events, releases] = await Promise.all([
-      this.listReviewTasks({ status: "open" }),
+      this.listReviewTasks({ status: "open", projectId }),
       this.listAnnotationExamples(),
-      this.listAgentEvents(),
-      this.listReleases(),
+      this.listAgentEvents(projectId),
+      this.listReleases(projectId),
     ]);
     return createFlywheelWorkbenchModel({
       tasks,
@@ -115,12 +116,23 @@ export class KnowledgeService {
     });
   }
 
-  async getSourceBundleSummary() {
-    const { rows: [bundlesRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundles");
-    const { rows: [versionsRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundle_versions");
+  async getSourceBundleSummary(projectId = "default_project") {
+    const { rows: [bundlesRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundles WHERE project_id = $1", [projectId]);
+    const { rows: [versionsRow] } = await this.adapter.query(
+      `SELECT COUNT(*)::int AS c
+       FROM source_bundle_versions v
+       JOIN source_bundles b ON b.bundle_id = v.bundle_id
+       WHERE b.project_id = $1`,
+      [projectId],
+    );
     const { rows: [blobsRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c, COALESCE(SUM(byte_size), 0)::bigint AS bytes FROM source_blobs");
     const { rows: latestRows } = await this.adapter.query(
-      "SELECT version_id, label, created_at, file_count FROM source_bundle_versions ORDER BY created_at DESC LIMIT 1"
+      `SELECT v.version_id, v.label, v.created_at, v.file_count
+       FROM source_bundle_versions v
+       JOIN source_bundles b ON b.bundle_id = v.bundle_id
+       WHERE b.project_id = $1
+       ORDER BY v.created_at DESC LIMIT 1`,
+      [projectId],
     );
     const latest = latestRows[0] ?? null;
     return {
@@ -245,9 +257,13 @@ export class KnowledgeService {
     return true;
   }
 
-  async listComponents(filter: { packageId?: string; group?: AssetGroup } = {}): Promise<AssetComponent[]> {
+  async listComponents(filter: { packageId?: string; group?: AssetGroup; projectId?: string } = {}): Promise<AssetComponent[]> {
     const where: string[] = [];
     const params: unknown[] = [];
+    if (filter.projectId) {
+      where.push(`package_id IN (SELECT package_id FROM asset_packages WHERE project_id = $${params.length + 1})`);
+      params.push(filter.projectId);
+    }
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
     if (filter.group) { where.push(`group_name = $${params.length + 1}`); params.push(filter.group); }
     const sql = `SELECT * FROM asset_components${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY group_name, title`;
@@ -264,9 +280,11 @@ export class KnowledgeService {
     return rows.length ? String(rows[0].package_id) : null;
   }
 
-  async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string; status?: ReviewStatus } = {}): Promise<ReviewTask[]> {
+  async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string; status?: ReviewStatus; projectId?: string } = {}): Promise<ReviewTask[]> {
     const where: string[] = [];
     const params: unknown[] = [];
+    where.push(`project_id = $${params.length + 1}`);
+    params.push(filter.projectId ?? "default_project");
     if (filter.severity) { where.push(`severity = $${params.length + 1}`); params.push(filter.severity); }
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
     if (filter.status) { where.push(`status = $${params.length + 1}`); params.push(filter.status); }
@@ -1387,11 +1405,12 @@ export class KnowledgeService {
     }));
   }
 
-  async listFlywheelEvents(): Promise<FlywheelEvent[]> {
+  async listFlywheelEvents(projectId = "default_project"): Promise<FlywheelEvent[]> {
     const { rows } = await this.adapter.query(
       `SELECT *
        FROM knowledge_events
-       WHERE event_type IN (
+       WHERE project_id = $1
+         AND event_type IN (
          'agent.feedback.rebuild_proposed',
          'agent.feedback.rebuild_started',
          'annotation.writeback_requested',
@@ -1403,6 +1422,7 @@ export class KnowledgeService {
        )
        ORDER BY created_at DESC
        LIMIT 100`,
+      [projectId],
     );
     return rows.map((row) => ({
       eventId: String(row.event_id),
@@ -1414,7 +1434,7 @@ export class KnowledgeService {
     }));
   }
 
-  async getFlywheelConvergenceSummary() {
+  async getFlywheelConvergenceSummary(projectId = "default_project") {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const [
       { rows: [annotationRow] },
@@ -1431,8 +1451,9 @@ export class KnowledgeService {
            COUNT(DISTINCT rule_id)::int AS rules,
            SUM(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END)::int AS recent,
            MAX(created_at) AS latest_at
-         FROM annotation_examples`,
-        [since],
+         FROM annotation_examples
+         WHERE project_id = $2`,
+        [since, projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1440,7 +1461,9 @@ export class KnowledgeService {
            COUNT(DISTINCT component_id) FILTER (WHERE active = true)::int AS components,
            COUNT(DISTINCT rule_id) FILTER (WHERE active = true)::int AS rules,
            MAX(created_at) FILTER (WHERE active = true) AS latest_at
-         FROM rule_dismissals`,
+         FROM rule_dismissals
+         WHERE project_id = $1`,
+        [projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1448,8 +1471,9 @@ export class KnowledgeService {
            SUM(CASE WHEN status = 'miss' OR feedback_type <> 'hit' OR jsonb_array_length(COALESCE(quality_flags, '[]'::jsonb)) > 0 THEN 1 ELSE 0 END)::int AS negative,
            SUM(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END)::int AS recent,
            MAX(created_at) AS latest_at
-         FROM agent_events`,
-        [since],
+         FROM agent_events
+         WHERE project_id = $2`,
+        [since, projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1458,7 +1482,9 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE task_kind = 'annotation')::int AS annotation_tasks,
            COUNT(*) FILTER (WHERE task_kind = 'annotation' AND status = 'open')::int AS open_annotation_tasks,
            COUNT(*) FILTER (WHERE status = 'open' AND severity = 'blocking')::int AS open_blocking_tasks
-         FROM review_tasks`,
+         FROM review_tasks
+         WHERE project_id = $1`,
+        [projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1467,7 +1493,9 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '' AND status = 'completed')::int AS completed,
            COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '' AND status = 'failed')::int AS failed,
            MAX(started_at) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '') AS latest_at
-         FROM knowledge_build_runs`,
+         FROM knowledge_build_runs
+         WHERE project_id = $1`,
+        [projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1475,7 +1503,9 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE event_type = 'release.auto_publish_succeeded')::int AS auto_published,
            COUNT(*) FILTER (WHERE event_type = 'release.auto_publish_skipped')::int AS auto_skipped,
            MAX(created_at) FILTER (WHERE event_type IN ('release.revision_proposed', 'release.auto_publish_succeeded', 'release.auto_publish_skipped')) AS latest_at
-         FROM knowledge_events`,
+         FROM knowledge_events
+         WHERE project_id = $1`,
+        [projectId],
       ),
     ]);
 

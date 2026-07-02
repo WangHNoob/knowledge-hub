@@ -69,14 +69,14 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     refetchInterval: 2000
   });
   const flywheelEvents = useQuery({
-    queryKey: ["agent", "flywheel-events"],
-    queryFn: listFlywheelEvents,
+    queryKey: ["agent", "flywheel-events", currentProjectId],
+    queryFn: () => listFlywheelEvents(currentProjectId),
     refetchInterval: 3000
   });
-  const workbench = useWorkbench();
+  const workbench = useWorkbench(currentProjectId);
   const blockingTasks = useQuery({
-    queryKey: ["review", "blocking"],
-    queryFn: () => listReviewTasks("blocking", "open"),
+    queryKey: ["review", "blocking", currentProjectId],
+    queryFn: () => listReviewTasks("blocking", "open", currentProjectId),
     refetchInterval: 5000
   });
 

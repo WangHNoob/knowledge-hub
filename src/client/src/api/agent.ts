@@ -13,12 +13,12 @@ export async function getMcpConnectInfo(): Promise<McpConnectInfo> {
   return await getJson<McpConnectInfo>("/api/mcp/connect");
 }
 
-export async function listFlywheelEvents(): Promise<FlywheelEvent[]> {
-  return (await getJson<{ events: FlywheelEvent[] }>("/api/agent/flywheel-events")).events;
+export async function listFlywheelEvents(projectId?: string): Promise<FlywheelEvent[]> {
+  return (await getJson<{ events: FlywheelEvent[] }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/agent/flywheel-events` : "/api/agent/flywheel-events")).events;
 }
 
-export async function getFlywheelConvergenceSummary(): Promise<FlywheelConvergenceSummary> {
-  return (await getJson<{ summary: FlywheelConvergenceSummary }>("/api/agent/flywheel-convergence")).summary;
+export async function getFlywheelConvergenceSummary(projectId?: string): Promise<FlywheelConvergenceSummary> {
+  return (await getJson<{ summary: FlywheelConvergenceSummary }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/agent/flywheel-convergence` : "/api/agent/flywheel-convergence")).summary;
 }
 
 export async function simulateMcpQuery(toolName: string, payload: Record<string, unknown>, projectId?: string): Promise<KnowledgeEnvelope> {

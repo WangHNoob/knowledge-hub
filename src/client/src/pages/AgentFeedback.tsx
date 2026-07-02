@@ -157,9 +157,9 @@ export function AgentFeedback() {
     setEnvelope(null);
   };
   const events = useQuery({ queryKey: ["agent-events", currentProjectId], queryFn: () => listAgentEvents(currentProjectId) });
-  const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
-  const convergence = useQuery({ queryKey: ["agent-flywheel-convergence"], queryFn: getFlywheelConvergenceSummary, refetchInterval: 5000 });
-  const workbench = useWorkbench();
+  const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events", currentProjectId], queryFn: () => listFlywheelEvents(currentProjectId), refetchInterval: 5000 });
+  const convergence = useQuery({ queryKey: ["agent-flywheel-convergence", currentProjectId], queryFn: () => getFlywheelConvergenceSummary(currentProjectId), refetchInterval: 5000 });
+  const workbench = useWorkbench(currentProjectId);
   const connect = useQuery({ queryKey: ["mcp-connect", currentProjectId], queryFn: getMcpConnectInfo });
   const audit = useQuery({ queryKey: ["mcp-audit", currentProjectId], queryFn: () => listMcpAudit(currentProjectId) });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });

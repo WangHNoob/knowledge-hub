@@ -7,6 +7,7 @@ import { useWorkbench } from "../hooks/useWorkbench";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
 import { IdChip, useNav } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
 
 const SEVERITY_OPTIONS = [
   { value: "", label: "全部级别" },
@@ -158,6 +159,7 @@ function rawRuleDetail(task: ReviewTask): string {
 
 export function Review() {
   const { navigate, params } = useNav();
+  const { currentProjectId, currentProject } = useProject();
   const queryClient = useQueryClient();
   const [severity, setSeverity] = useState("");
   const [status, setStatus] = useState("open");
@@ -168,10 +170,10 @@ export function Review() {
   const [applyModes, setApplyModes] = useState<Record<string, "hint" | "override">>({});
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["review", severity || "all", status || "all"],
-    queryFn: () => listReviewTasks(severity || undefined, status || undefined)
+    queryKey: ["review", currentProjectId, severity || "all", status || "all"],
+    queryFn: () => listReviewTasks(severity || undefined, status || undefined, currentProjectId)
   });
-  const workbench = useWorkbench();
+  const workbench = useWorkbench(currentProjectId);
 
   useEffect(() => {
     if (params.severity && params.severity !== severity) setSeverity(params.severity);
@@ -267,7 +269,7 @@ export function Review() {
   if (error) return <ErrorState error={error} />;
 
   return (
-    <Page title="审核中心" subtitle="把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。">
+    <Page title="审核中心" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。`}>
       <div className="detail-head review-toolbar">
         <div>
           <h2>审核任务</h2>

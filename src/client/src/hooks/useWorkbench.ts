@@ -4,10 +4,10 @@ import { getFlywheelWorkbench } from "../api";
 
 export const WORKBENCH_QUERY_KEY = ["dashboard", "workbench"] as const;
 
-export function useWorkbench() {
+export function useWorkbench(projectId?: string) {
   return useQuery({
-    queryKey: WORKBENCH_QUERY_KEY,
-    queryFn: getFlywheelWorkbench,
+    queryKey: projectId ? [...WORKBENCH_QUERY_KEY, projectId] : WORKBENCH_QUERY_KEY,
+    queryFn: () => getFlywheelWorkbench(projectId),
     refetchInterval: 5000,
   });
 }

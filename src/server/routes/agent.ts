@@ -13,11 +13,19 @@ export function registerAgentRoutes(app: FastifyInstance, ctx: RouteContext) {
   }));
 
   app.get("/api/agent/flywheel-events", { preHandler: app.authenticate }, async () => ({
-    events: await ctx.service.listFlywheelEvents()
+    events: await ctx.service.listFlywheelEvents("default_project")
+  }));
+
+  app.get<{ Params: { projectId: string } }>("/api/projects/:projectId/agent/flywheel-events", { preHandler: app.authenticate }, async (request) => ({
+    events: await ctx.service.listFlywheelEvents(request.params.projectId)
   }));
 
   app.get("/api/agent/flywheel-convergence", { preHandler: app.authenticate }, async () => ({
-    summary: await ctx.service.getFlywheelConvergenceSummary()
+    summary: await ctx.service.getFlywheelConvergenceSummary("default_project")
+  }));
+
+  app.get<{ Params: { projectId: string } }>("/api/projects/:projectId/agent/flywheel-convergence", { preHandler: app.authenticate }, async (request) => ({
+    summary: await ctx.service.getFlywheelConvergenceSummary(request.params.projectId)
   }));
 
   app.get("/api/mcp/audit", { preHandler: app.authenticate }, async () => ({

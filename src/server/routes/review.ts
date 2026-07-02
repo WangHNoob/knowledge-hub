@@ -17,7 +17,21 @@ export function registerReviewRoutes(app: FastifyInstance, ctx: RouteContext) {
       const status = request.query.status === "open" || request.query.status === "resolved" || request.query.status === "dismissed"
         ? (request.query.status as ReviewStatus)
         : undefined;
-      return { tasks: await ctx.service.listReviewTasks({ severity, status }) };
+      return { tasks: await ctx.service.listReviewTasks({ severity, status, projectId: "default_project" }) };
+    }
+  );
+
+  app.get<{ Params: { projectId: string }; Querystring: { severity?: string; status?: string } }>(
+    "/api/projects/:projectId/review/tasks",
+    { preHandler: app.authenticate },
+    async (request) => {
+      const severity = request.query.severity === "blocking" || request.query.severity === "warning" || request.query.severity === "info"
+        ? request.query.severity
+        : undefined;
+      const status = request.query.status === "open" || request.query.status === "resolved" || request.query.status === "dismissed"
+        ? (request.query.status as ReviewStatus)
+        : undefined;
+      return { tasks: await ctx.service.listReviewTasks({ severity, status, projectId: request.params.projectId }) };
     }
   );
 

@@ -37,11 +37,11 @@ export function Release() {
   const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
   const [version, setVersion] = useState(() => releaseVersion());
   const packages = useQuery({ queryKey: ["packages", currentProjectId], queryFn: () => listPackages({ projectId: currentProjectId }) });
-  const tasks = useQuery({ queryKey: ["review", "blocking"], queryFn: () => listReviewTasks("blocking") });
+  const tasks = useQuery({ queryKey: ["review", "blocking", currentProjectId], queryFn: () => listReviewTasks("blocking", undefined, currentProjectId) });
   const releases = useQuery({ queryKey: ["releases", currentProjectId], queryFn: () => listReleases(currentProjectId) });
   const current = useQuery({ queryKey: ["releases", "current", currentProjectId], queryFn: () => getCurrentRelease(currentProjectId) });
-  const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
-  const workbench = useWorkbench();
+  const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events", currentProjectId], queryFn: () => listFlywheelEvents(currentProjectId), refetchInterval: 5000 });
+  const workbench = useWorkbench(currentProjectId);
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
 
   useEffect(() => {
