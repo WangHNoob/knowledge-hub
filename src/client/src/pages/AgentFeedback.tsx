@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { getFlywheelConvergenceSummary, getMcpConnectInfo, getToken, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope, type McpConnectInfo } from "../api";
+import { getFlywheelConvergenceSummary, getMcpConnectInfo, getToken, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope, type McpAuditRecord, type McpConnectInfo } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { componentLabel } from "../utils/componentLabel";
@@ -365,14 +365,8 @@ export function AgentFeedback() {
                   <Badge label={record.status} tone={record.status === "miss" || record.status === "error" ? "hot" : "ok"} />
                   <div>
                     <strong>{record.toolName}</strong>
-                    <span>{record.hitComponentIds.length ? "命中组件：" : "无命中组件"} · {record.latencyMs} ms</span>
-                    {record.hitComponentIds.length > 0 && (
-                      <div className="asset-link">
-                        {record.hitComponentIds.map((componentId) => (
-                          <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
-                        ))}
-                      </div>
-                    )}
+                    <span>{auditQuerySummary(record.queryPayload)} · {record.latencyMs} ms</span>
+                    <AuditKnowledgeHits record={record} onNavigateAsset={(componentId) => navigate("assets", { componentId })} />
                   </div>
                   <small>{formatTime(record.createdAt)}</small>
                 </article>
@@ -675,6 +669,39 @@ function AutomationTimeline({
       ))}
     </div>
   );
+}
+
+function AuditKnowledgeHits({ record, onNavigateAsset }: { record: McpAuditRecord; onNavigateAsset: (componentId: string) => void }) {
+  if (record.components.length === 0) {
+    return <p className="subtle">{record.hitComponentIds.length > 0 ? "命中的知识资产已不存在或尚未同步摘要。" : "未查询到知识文件或结构化内容。"}</p>;
+  }
+  return (
+    <div className="audit-hit-list">
+      {record.components.map((component) => (
+        <button key={component.componentId} type="button" className="audit-hit" onClick={() => onNavigateAsset(component.componentId)}>
+          <span>
+            <strong>{component.title || component.legacyPath || component.artifactId}</strong>
+            <small>{component.legacyPath || component.artifactId}</small>
+          </span>
+          <span className="component-quality">
+            <Badge label={component.kind} />
+            {component.evidenceRecords > 0 && <Badge label={`${component.evidenceRecords} 条证据`} tone="ok" />}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function auditQuerySummary(payload: Record<string, unknown>): string {
+  const query = stringValue(payload.query) || stringValue(payload.topic) || stringValue(payload.page) || stringValue(payload.table) || stringValue(payload.entityId);
+  if (query) return `查询：${query}`;
+  const keys = Object.keys(payload);
+  return keys.length ? `参数：${keys.slice(0, 3).join("、")}` : "无参数";
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function McpConnectPanel({ info }: { info: McpConnectInfo }) {

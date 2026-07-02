@@ -466,6 +466,50 @@ nav {
 .task > .badge { flex-shrink: 0; }
 .event > div > .asset-link { margin-top: 2px; }
 
+.audit-hit-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.audit-hit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.audit-hit:hover {
+  border-color: var(--olive);
+}
+
+.audit-hit > span:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.audit-hit strong,
+.audit-hit small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-hit small {
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .detail-head {
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);

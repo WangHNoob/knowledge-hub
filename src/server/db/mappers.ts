@@ -173,6 +173,7 @@ export function mapMcpAudit(row: Record<string, unknown>): McpAuditRecord {
     releaseId: row.release_id ? String(row.release_id) : null,
     queryPayload: jsonObject(row.query_payload),
     hitComponentIds: jsonArray(row.hit_component_ids),
+    components: [],
     qualityFlags: jsonArray(row.quality_flags),
     status: row.status as McpAuditRecord["status"],
     latencyMs: Number(row.latency_ms ?? 0),

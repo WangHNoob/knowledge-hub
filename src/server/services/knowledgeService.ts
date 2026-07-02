@@ -1305,7 +1305,7 @@ export class KnowledgeService {
     if (componentIds.length === 0) return events;
     const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
     const { rows: componentRows } = await this.adapter.query(
-      `SELECT c.component_id, c.package_id, c.title, c.kind, c.artifact_id, c.quality, COUNT(e.evidence_id)::int AS evidence_records
+      `SELECT c.component_id, c.package_id, c.title, c.kind, c.artifact_id, c.legacy_path, c.quality, COUNT(e.evidence_id)::int AS evidence_records
        FROM asset_components c
        LEFT JOIN evidence_records e ON e.component_id = c.component_id
        WHERE c.component_id IN (${placeholders})
@@ -1321,6 +1321,7 @@ export class KnowledgeService {
         title: String(row.title),
         kind: String(row.kind),
         artifactId: String(row.artifact_id),
+        legacyPath: String(row.legacy_path ?? ""),
         quality,
         confidence: numberFromQuality(quality, ["confidence", "score", "overallScore"]),
         trust: trustFromQuality(quality),
@@ -1335,7 +1336,44 @@ export class KnowledgeService {
 
   async listMcpAudit(): Promise<McpAuditRecord[]> {
     const { rows } = await this.adapter.query("SELECT * FROM mcp_audit ORDER BY created_at DESC LIMIT 100");
-    return rows.map(mapMcpAudit);
+    const audits = rows.map(mapMcpAudit);
+    const componentIds = uniqueSorted(audits.flatMap((audit) => audit.hitComponentIds));
+    if (componentIds.length === 0) return audits;
+    const components = await this.componentSummaries(componentIds);
+    return audits.map((audit) => ({
+      ...audit,
+      components: audit.hitComponentIds.map((componentId) => components.get(componentId)).filter((component): component is NonNullable<typeof component> => Boolean(component)),
+    }));
+  }
+
+  private async componentSummaries(componentIds: string[]): Promise<Map<string, AgentEvent["components"][number]>> {
+    const ids = uniqueSorted(componentIds);
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT c.component_id, c.package_id, c.title, c.kind, c.artifact_id, c.legacy_path, c.quality, COUNT(e.evidence_id)::int AS evidence_records
+       FROM asset_components c
+       LEFT JOIN evidence_records e ON e.component_id = c.component_id
+       WHERE c.component_id IN (${placeholders})
+       GROUP BY c.component_id
+       ORDER BY c.kind, c.title`,
+      ids,
+    );
+    return new Map(rows.map((row) => {
+      const quality = jsonObject(row.quality);
+      return [String(row.component_id), {
+        componentId: String(row.component_id),
+        packageId: String(row.package_id),
+        title: String(row.title),
+        kind: String(row.kind),
+        artifactId: String(row.artifact_id),
+        legacyPath: String(row.legacy_path ?? ""),
+        quality,
+        confidence: numberFromQuality(quality, ["confidence", "score", "overallScore"]),
+        trust: trustFromQuality(quality),
+        evidenceRecords: Number(row.evidence_records ?? 0),
+      }] as const;
+    }));
   }
 
   async listFlywheelEvents(): Promise<FlywheelEvent[]> {

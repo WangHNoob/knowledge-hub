@@ -635,6 +635,7 @@ export interface AgentEventComponent {
   title: string;
   kind: string;
   artifactId: string;
+  legacyPath: string;
   quality: Record<string, unknown>;
   confidence: number | null;
   trust: TrustScore | null;
@@ -783,6 +784,7 @@ export interface McpAuditRecord {
   releaseId: string | null;
   queryPayload: Record<string, unknown>;
   hitComponentIds: string[];
+  components: AgentEventComponent[];
   qualityFlags: string[];
   status: "hit" | "miss" | "error";
   latencyMs: number;
