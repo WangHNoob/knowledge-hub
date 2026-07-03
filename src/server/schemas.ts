@@ -13,6 +13,27 @@ export const flywheelSyncSchema = z.object({
   mode: z.enum(["incremental", "full"]).optional()
 });
 
+export const governanceProfileUpdateSchema = z.object({
+  trust: z.object({
+    minAutoPublishScore: z.number().min(0).max(1).optional(),
+    requireEvidence: z.boolean().optional()
+  }).optional(),
+  lint: z.object({
+    autoGovernanceEnabled: z.boolean().optional(),
+    autoEligibleThreshold: z.number().min(0).max(1).optional()
+  }).optional(),
+  release: z.object({
+    autoPublishRevisions: z.boolean().optional(),
+    blockOnDeletes: z.boolean().optional(),
+    blockOnTrustDecline: z.boolean().optional(),
+    blockOnPendingCorrections: z.boolean().optional()
+  }).optional(),
+  feedback: z.object({
+    autoClusterEnabled: z.boolean().optional(),
+    highFrequencyThreshold: z.number().int().min(1).max(100).optional()
+  }).optional()
+});
+
 export const browseLocalFilesSchema = z.object({
   path: z.string().min(1).optional()
 });

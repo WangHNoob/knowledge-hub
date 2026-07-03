@@ -12,7 +12,7 @@ import {
   type FlywheelWorkbenchView,
   type HumanException,
 } from "../api";
-import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { Badge, ErrorState, Loading, Metric, Page, TechRef } from "../components/Atoms";
 import { useNav } from "../ui/navigation";
 import type { NavParams, View } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
@@ -188,10 +188,42 @@ function ExceptionCard({ item, onOpen }: { item: HumanException; onOpen: () => v
       <p>{item.body}</p>
       <p className="exception-why"><b>为何需要你：</b>{item.whyHumanNeeded}</p>
       <p className="exception-fix"><b>建议：</b>{item.recommendedAction}</p>
-      <button className="secondary-action" type="button" onClick={onOpen}>{item.primaryAction.label}</button>
+      <div className="card-row">
+        <button className="secondary-action" type="button" onClick={onOpen}>{item.primaryAction.label}</button>
+        <ExceptionTechIds ids={item.technicalIds} />
+      </div>
     </article>
   );
 }
+
+/**
+ * 阶段6：技术 ID 降噪。例外卡默认只显示业务信息，技术 ID 折叠进「排障 ID」详情，
+ * 排障人员展开后可逐个复制，主列表不再出现撑破 UI 的长串。
+ */
+function ExceptionTechIds({ ids }: { ids?: HumanException["technicalIds"] }) {
+  const entries = ids
+    ? (Object.entries(ids).filter(([, value]) => Boolean(value)) as Array<[string, string]>)
+    : [];
+  if (entries.length === 0) return null;
+  return (
+    <details className="exception-tech-ids">
+      <summary>排障 ID</summary>
+      <div className="exception-tech-id-list">
+        {entries.map(([key, value]) => (
+          <TechRef key={key} kind={TECH_ID_LABELS[key] ?? key} title={TECH_ID_LABELS[key] ?? key} technicalId={value} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+const TECH_ID_LABELS: Record<string, string> = {
+  componentId: "组件",
+  packageId: "资产包",
+  releaseId: "发布",
+  taskId: "任务",
+  eventId: "事件",
+};
 
 function AutomationRow({ item }: { item: FlywheelAutomationItem }) {
   return (

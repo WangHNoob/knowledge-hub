@@ -288,6 +288,13 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       UNIQUE (release_id, issue_id)
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}knowledge_governance_profiles (
+      project_id TEXT PRIMARY KEY,
+      config_json JSONB NOT NULL DEFAULT '{}',
+      updated_by TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}table_aliases (
       canonical TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default_project',

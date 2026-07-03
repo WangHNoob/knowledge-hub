@@ -5112,3 +5112,38 @@ button.id-chip.clickable:hover {
 
 .alias-import { margin: 12px 0; padding: 16px; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-md); }
 .alias-import textarea { width: 100%; min-height: 160px; margin-top: 8px; }
+
+/* 阶段7：项目治理规则页 */
+.governance-profile { display: flex; flex-direction: column; gap: 18px; }
+.governance-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.governance-head h3 { margin: 0 0 4px; }
+.governance-head p { margin: 0; max-width: 560px; }
+.governance-note { margin: -6px 0 0; }
+.governance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.governance-section { padding: 16px; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-md); }
+.governance-section h4 { margin: 0 0 4px; font-size: 15px; }
+.governance-section > p { margin: 0 0 12px; font-size: 13px; }
+.governance-fields { display: flex; flex-direction: column; gap: 14px; }
+.governance-field { display: flex; flex-direction: column; gap: 4px; }
+.governance-field-label { font-size: 14px; font-weight: 500; }
+.governance-field-hint { font-size: 12px; line-height: 1.4; }
+.governance-field input[type="number"] { width: 140px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: inherit; }
+.governance-field input:disabled { opacity: 0.6; cursor: not-allowed; }
+.governance-toggle .governance-field-main { display: inline-flex; align-items: center; gap: 8px; }
+.governance-toggle input[type="checkbox"] { width: 16px; height: 16px; }
+.governance-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.governance-updated { font-size: 12px; }
+.governance-error { color: var(--danger, #d94141); font-size: 13px; }
+
+/* 阶段6：技术 ID 降噪 —— 业务名主视觉，技术 ID 收进 tooltip + 复制按钮 */
+.tech-ref { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.tech-ref-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tech-ref-copy { display: inline-flex; align-items: center; justify-content: center; padding: 2px; border: none; background: transparent; color: var(--ink-muted); cursor: pointer; border-radius: var(--radius-sm); }
+.tech-ref-copy:hover { color: var(--ink); background: var(--surface-sunken); }
+.tech-ref-hint { color: var(--ink-muted); font-size: 12px; }
+.exception-tech-ids { margin-left: auto; }
+.exception-tech-ids summary { cursor: pointer; color: var(--ink-muted); font-size: 12px; list-style: none; }
+.exception-tech-ids summary::-webkit-details-marker { display: none; }
+.exception-tech-ids[open] summary { color: var(--ink); }
+.exception-tech-id-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding: 8px; background: var(--surface-sunken); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.exception-tech-id-list .tech-ref { font-size: 12px; color: var(--ink-muted); }

@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import type { DiagnosticLogger } from "./diagnosticService";
+import type { GovernanceProfileService } from "./governanceProfileService";
 import type { KbBuilderPipelineService } from "./kbBuilderService";
 import type { KnowledgeService } from "./knowledgeService";
 import type { LintRemediationService } from "./lintRemediationService";
@@ -31,9 +32,10 @@ import type {
  */
 const LOW_CONFIDENCE_THRESHOLD = 0.55;
 /**
- * 负反馈聚合阈值：同一归一化查询命中低质页面达到该次数才算「高频」，进入例外中心。
+ * 负反馈聚合阈值兜底：治理 profile 未解析出 highFrequencyThreshold 时用此默认值。
+ * 项目级治理规则（governanceProfileService）优先，见 listExceptions/listFeedbackClusters。
  */
-const HIGH_FREQUENCY_THRESHOLD = 2;
+const DEFAULT_HIGH_FREQUENCY_THRESHOLD = 2;
 
 export interface FlywheelServiceDeps {
   db: DatabaseHandle;
@@ -43,6 +45,7 @@ export interface FlywheelServiceDeps {
   releaseService: ReleaseService;
   projectService: ProjectService;
   lintRemediationService: LintRemediationService;
+  governanceProfileService: GovernanceProfileService;
   diagnostics?: DiagnosticLogger;
 }
 
@@ -64,6 +67,7 @@ export class FlywheelService {
   private readonly releases: ReleaseService;
   private readonly projects: ProjectService;
   private readonly remediations: LintRemediationService;
+  private readonly governance: GovernanceProfileService;
   private readonly diagnostics?: DiagnosticLogger;
 
   constructor(deps: FlywheelServiceDeps) {
@@ -75,6 +79,7 @@ export class FlywheelService {
     this.releases = deps.releaseService;
     this.projects = deps.projectService;
     this.remediations = deps.lintRemediationService;
+    this.governance = deps.governanceProfileService;
     this.diagnostics = deps.diagnostics;
   }
 
@@ -117,11 +122,12 @@ export class FlywheelService {
    * 不能自动治理的 lint 治理项）。普通 warning、已自动治理、纯观察项不进入此列表。
    */
   async listExceptions(projectId = "default_project"): Promise<HumanException[]> {
-    const [tasks, events, skips, needsHumanRemediations] = await Promise.all([
+    const [tasks, events, skips, needsHumanRemediations, profile] = await Promise.all([
       this.knowledge.listReviewTasks({ status: "open", projectId }),
       this.knowledge.listAgentEvents(projectId),
       this.listPendingPublishSkips(projectId),
       this.remediations.listRemediations({ projectId, status: "needs_human" }),
+      this.governance.resolve(projectId),
     ]);
 
     const out: HumanException[] = [];
@@ -130,7 +136,7 @@ export class FlywheelService {
       if (exception) out.push(exception);
     }
     for (const skip of skips) out.push(skip);
-    for (const cluster of clusterNegativeFeedback(events)) out.push(cluster);
+    for (const cluster of clusterNegativeFeedback(events, profile.feedback.highFrequencyThreshold)) out.push(cluster);
     for (const remediation of needsHumanRemediations) out.push(exceptionFromRemediation(remediation));
 
     return out.sort((a, b) => attentionRank(a) - attentionRank(b) || b.createdAt.localeCompare(a.createdAt));
@@ -141,6 +147,9 @@ export class FlywheelService {
    * 按「反馈类别 + 命中组件」聚合，输出业务化标题、示例查询和单一主动作。
    */
   async listFeedbackClusters(projectId = "default_project"): Promise<AgentFeedbackCluster[]> {
+    const profile = await this.governance.resolve(projectId);
+    if (!profile.feedback.autoClusterEnabled) return [];
+    const threshold = profile.feedback.highFrequencyThreshold;
     const events = (await this.knowledge.listAgentEvents(projectId)).filter(isNegativeFeedback);
     if (events.length === 0) return [];
 
@@ -166,7 +175,7 @@ export class FlywheelService {
       const type = clusterType(head);
       const count = list.length;
       const isMiss = list.some((event) => event.status === "miss");
-      const severity: ReviewSeverity = count >= HIGH_FREQUENCY_THRESHOLD && isMiss ? "blocking" : count >= HIGH_FREQUENCY_THRESHOLD ? "warning" : "info";
+      const severity: ReviewSeverity = count >= threshold && isMiss ? "blocking" : count >= threshold ? "warning" : "info";
       const queryExamples = [...new Set(list.map((event) => stripToolPrefix(event.query)).filter(Boolean))].slice(0, 3);
       const affectedComponents = dedupeComponents(list);
       const hasOpenTask = list.some((event) => event.taskId && openTaskIds.has(event.taskId));
@@ -557,7 +566,7 @@ function lintDomainLabel(domain: KnowledgeLintRemediation["domain"]): string {
   }
 }
 
-function clusterNegativeFeedback(events: AgentEvent[]): HumanException[] {
+function clusterNegativeFeedback(events: AgentEvent[], highFrequencyThreshold = DEFAULT_HIGH_FREQUENCY_THRESHOLD): HumanException[] {
   const groups = new Map<string, { events: AgentEvent[]; normalized: string }>();
   for (const event of events) {
     if (!isNegativeFeedback(event)) continue;
@@ -575,7 +584,7 @@ function clusterNegativeFeedback(events: AgentEvent[]): HumanException[] {
     const count = group.events.length;
     const isMiss = group.events.some((event) => event.status === "miss");
     // 只有高频或明确未命中才需要人工，避免例外中心被普通观察项淹没。
-    if (!isMiss && count < HIGH_FREQUENCY_THRESHOLD) continue;
+    if (!isMiss && count < highFrequencyThreshold) continue;
     const component = head.components[0];
     const title = head.query || "未解析查询";
     out.push({

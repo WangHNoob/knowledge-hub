@@ -5,6 +5,7 @@ import type { DiagnosticLogger } from "../services/diagnosticService";
 import type { KnowledgeService } from "../services/knowledgeService";
 import type { FlywheelService } from "../services/flywheelService";
 import type { LintRemediationService } from "../services/lintRemediationService";
+import type { GovernanceProfileService } from "../services/governanceProfileService";
 import type { SourceBundleService } from "../services/sourceBundleService";
 import type { KbBuilderPipelineService } from "../services/kbBuilderService";
 import type { ReleaseService } from "../services/releaseService";
@@ -21,6 +22,7 @@ export interface RouteContext {
   service: KnowledgeService;
   flywheelService: FlywheelService;
   lintRemediationService: LintRemediationService;
+  governanceProfileService: GovernanceProfileService;
   bundleService: SourceBundleService;
   kbBuilderService: KbBuilderPipelineService;
   releaseService: ReleaseService;

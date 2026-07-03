@@ -348,7 +348,7 @@ export function AgentFeedback() {
                   {envelope.trace.componentIds.length > 0 && (
                     <div className="asset-link">
                       {envelope.trace.componentIds.map((componentId) => (
-                        <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => navigate("assets", { componentId })} />
+                        <IdChip key={componentId} label={componentLabel(componentId)} title={`定位组件 · ${componentId}`} onClick={() => navigate("assets", { componentId })} />
                       ))}
                     </div>
                   )}
@@ -411,10 +411,10 @@ export function AgentFeedback() {
             {pressureRows.length > 0 && (
               <div className="feedback-pressure-grid">
                 {pressureRows.slice(0, 6).map((row) => (
-                  <button key={row.componentId} type="button" className="feedback-pressure" onClick={() => navigate("assets", { componentId: row.componentId })}>
+                  <button key={row.componentId} type="button" className="feedback-pressure" title={`组件 · ${row.componentId}`} onClick={() => navigate("assets", { componentId: row.componentId })}>
                     <span>
                       <strong>{row.title}</strong>
-                      <code title={row.componentId}>{row.componentId}</code>
+                      <small className="tech-ref-hint">点击定位资产</small>
                     </span>
                     <span className="component-quality">
                       <Badge label={`${row.negativeCount} 次负反馈`} tone={row.negativeCount >= 2 ? "warn" : "ok"} />
@@ -990,7 +990,7 @@ function AgentFeedbackCard({
         {insight.componentIds.length > 0 && (
           <div className="asset-link">
             {insight.componentIds.map((componentId) => (
-              <IdChip key={componentId} label={componentId} title="在知识资产中定位该组件" onClick={() => onNavigateAsset(componentId)} />
+              <IdChip key={componentId} label={componentLabel(componentId)} title={`定位组件 · ${componentId}`} onClick={() => onNavigateAsset(componentId)} />
             ))}
           </div>
         )}

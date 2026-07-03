@@ -1,9 +1,10 @@
 export * from "./types";
-export { getToken, setToken } from "./http";
+export { getToken, setToken, currentRole } from "./http";
 export { login } from "./auth";
 export { createProject, listProjects, selectProject, updateProject } from "./projects";
 export { getDashboard, getFlywheelWorkbench } from "./dashboard";
 export { getFlywheelStatus, listFlywheelExceptions, syncFlywheel, listFlywheelRemediations, listFeedbackClusters } from "./flywheel";
+export { getGovernanceProfile, updateGovernanceProfile, resetGovernanceProfile } from "./governance";
 export {
   browseLocalFiles,
   getBundleBuildPlan,

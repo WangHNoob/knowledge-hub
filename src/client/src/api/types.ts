@@ -887,6 +887,29 @@ export interface FlywheelEvent {
   payload: Record<string, unknown>;  createdAt: string;
 }
 
+export interface KnowledgeGovernanceProfile {
+  projectId: string;
+  trust: { minAutoPublishScore: number; requireEvidence: boolean };
+  lint: { autoGovernanceEnabled: boolean; autoEligibleThreshold: number };
+  release: {
+    autoPublishRevisions: boolean;
+    blockOnDeletes: boolean;
+    blockOnTrustDecline: boolean;
+    blockOnPendingCorrections: boolean;
+  };
+  feedback: { autoClusterEnabled: boolean; highFrequencyThreshold: number };
+  source: "default" | "project";
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export type KnowledgeGovernanceProfileInput = {
+  trust?: Partial<KnowledgeGovernanceProfile["trust"]>;
+  lint?: Partial<KnowledgeGovernanceProfile["lint"]>;
+  release?: Partial<KnowledgeGovernanceProfile["release"]>;
+  feedback?: Partial<KnowledgeGovernanceProfile["feedback"]>;
+};
+
 export interface FlywheelConvergenceSummary {
   annotations: {
     examples: number;

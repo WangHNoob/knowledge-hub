@@ -10,6 +10,7 @@ import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 import { createKnowledgeService } from "./services/knowledgeService";
 import { createFlywheelService } from "./services/flywheelService";
 import { createLintRemediationService } from "./services/lintRemediationService";
+import { createGovernanceProfileService } from "./services/governanceProfileService";
 import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
@@ -24,7 +25,8 @@ import { registerAgentRoutes } from "./routes/agent";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBuilderRoutes } from "./routes/builder";
 import { registerDashboardRoutes } from "./routes/dashboard";
-import { registerFlywheelRoutes } from "./routes/flywheel";import { registerDiagnosticsRoutes } from "./routes/diagnostics";
+import { registerFlywheelRoutes } from "./routes/flywheel";import { registerGovernanceRoutes } from "./routes/governance";
+import { registerDiagnosticsRoutes } from "./routes/diagnostics";
 import { registerLegacyRoutes } from "./routes/legacy";
 import { registerLegislationRoutes } from "./routes/legislation";
 import { registerMcpRoutes } from "./routes/mcp";
@@ -69,6 +71,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const releaseService = createReleaseService(options.db, dataDir, diagnostics);
   const projectService = createProjectService(options.db);
   const lintRemediationService = createLintRemediationService(options.db);
+  const governanceProfileService = createGovernanceProfileService(options.db, {
+    autoPublishRevisions: config.autoPublishRevisions,
+    lintAutoGovernanceEnabled: config.autoRemediationEnabled,
+    lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
+  });
   const ctx: RouteContext = {
     db: options.db,
     dataDir,
@@ -82,12 +89,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       releaseService,
       projectService,
       lintRemediationService,
+      governanceProfileService,
       diagnostics,
     }),
     bundleService,
     kbBuilderService,
     releaseService,
     lintRemediationService,
+    governanceProfileService,
     queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
     legislationService: createLegislationService(options.db),
     attributionAuditService: createAttributionAuditService(options.db),
@@ -142,6 +151,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerProjectRoutes(app, ctx);
   registerDashboardRoutes(app, ctx);
   registerFlywheelRoutes(app, ctx);
+  registerGovernanceRoutes(app, ctx);
   registerSourceRoutes(app, ctx);
   registerBuilderRoutes(app, ctx);
   registerPackageRoutes(app, ctx);

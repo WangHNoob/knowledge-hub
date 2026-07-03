@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createLintRemediationService } from "../src/server/services/lintRemediationService";
+import { createGovernanceProfileService } from "../src/server/services/governanceProfileService";
 import { createFlywheelService } from "../src/server/services/flywheelService";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
@@ -106,6 +107,7 @@ describe("agent feedback clusters", () => {
         releaseService: createReleaseService(fixture.db, "."),
         projectService: createProjectService(fixture.db),
         lintRemediationService: createLintRemediationService(fixture.db),
+        governanceProfileService: createGovernanceProfileService(fixture.db),
       });
 
       const clusters = await flywheel.listFeedbackClusters("default_project");

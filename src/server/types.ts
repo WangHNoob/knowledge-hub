@@ -586,6 +586,71 @@ export interface FlywheelEvent {
   createdAt: string;
 }
 
+/**
+ * 阶段6：技术 ID 降噪。读模型对外一律以业务对象（标题/路径/类型）示人，
+ * 技术 ID 收进 technicalIds，前端只在 tooltip / 折叠详情 / 复制按钮里展示。
+ */
+export interface KnowledgeDisplayRef {
+  title: string;
+  path: string;
+  kind: string;
+  sourcePath?: string;
+  projectName?: string;
+  technicalIds: {
+    componentId?: string;
+    packageId?: string;
+    runId?: string;
+    releaseId?: string;
+  };
+}
+
+/**
+ * 阶段7：项目级治理规则覆盖层。把 trust / lint 自动治理 / 发布策略 / 反馈聚合
+ * 四组开关集中到项目级 profile；未设置的项目回退到环境变量默认值。
+ * 与既有 KnowledgeGovernanceRules（策划立法 Profile 内的 schema/evidence/trust/lint/agent）
+ * 并存：立法 Profile 管「知识规范」，本 profile 管「运营策略」。
+ */
+export interface GovernanceTrustPolicy {
+  minAutoPublishScore: number;
+  requireEvidence: boolean;
+}
+
+export interface GovernanceLintPolicy {
+  autoGovernanceEnabled: boolean;
+  autoEligibleThreshold: number;
+}
+
+export interface GovernanceReleasePolicy {
+  autoPublishRevisions: boolean;
+  blockOnDeletes: boolean;
+  blockOnTrustDecline: boolean;
+  blockOnPendingCorrections: boolean;
+}
+
+export interface GovernanceFeedbackPolicy {
+  autoClusterEnabled: boolean;
+  highFrequencyThreshold: number;
+}
+
+export interface KnowledgeGovernanceProfile {
+  projectId: string;
+  trust: GovernanceTrustPolicy;
+  lint: GovernanceLintPolicy;
+  release: GovernanceReleasePolicy;
+  feedback: GovernanceFeedbackPolicy;
+  /** "default"=全部沿用环境变量默认；"project"=存在项目级覆盖。 */
+  source: "default" | "project";
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export type KnowledgeGovernanceProfileInput = {
+  trust?: Partial<GovernanceTrustPolicy>;
+  lint?: Partial<GovernanceLintPolicy>;
+  release?: Partial<GovernanceReleasePolicy>;
+  feedback?: Partial<GovernanceFeedbackPolicy>;
+};
+
 export interface PageTypeSpec {
   id: string;
   label: string;

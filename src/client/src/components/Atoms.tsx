@@ -1,5 +1,5 @@
-import { BookOpen } from "lucide-react";
-import type { ComponentType, ReactNode } from "react";
+import { BookOpen, Check, Copy } from "lucide-react";
+import { useState, type ComponentType, type ReactNode } from "react";
 
 export function Page({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
   return (
@@ -90,5 +90,45 @@ export function EmptyWork({ title, body }: { title: string; body: string }) {
       <h2>{title}</h2>
       <p>{body}</p>
     </section>
+  );
+}
+
+/**
+ * 阶段6：技术 ID 降噪。默认只显示业务名称（title），技术 ID 收进 tooltip + 复制按钮。
+ * 排障人员点复制即可拿到完整 ID，但主列表不再被 cmp_pkg... / release... 长串撑破。
+ */
+export function TechRef({
+  title,
+  technicalId,
+  kind,
+}: {
+  title: string;
+  technicalId?: string;
+  kind?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const label = title || technicalId || "未命名";
+  const copy = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!technicalId) return;
+    void navigator.clipboard?.writeText(technicalId).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  };
+  return (
+    <span className="tech-ref" title={technicalId ? `${kind ? `${kind}: ` : ""}${technicalId}` : label}>
+      <span className="tech-ref-title">{label}</span>
+      {technicalId && (
+        <button
+          type="button"
+          className="tech-ref-copy"
+          aria-label={`复制技术 ID：${technicalId}`}
+          onClick={copy}
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      )}
+    </span>
   );
 }

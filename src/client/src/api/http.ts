@@ -14,6 +14,21 @@ export function authHeaders(): HeadersInit {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
+/** 从本地 JWT 解出当前角色（仅用于 UI 展示/门控，真正权限仍由服务端校验）。 */
+export function currentRole(): "admin" | "developer" | "viewer" | null {
+  const token = getToken();
+  if (!token) return null;
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const json = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+    const role = json?.role;
+    return role === "admin" || role === "developer" || role === "viewer" ? role : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { headers: authHeaders() });
   return parseResponse(response);
