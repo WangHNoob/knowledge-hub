@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
+import { LintRemediationPanel } from "../components/LintRemediationPanel";
 import { WritebackSteps } from "../components/WritebackSteps";
 import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
@@ -319,6 +320,11 @@ export function Review() {
           </div>
 
           <section className="review-flow">
+            <LintRemediationPanel
+              projectId={currentProjectId}
+              compact
+              onShowBuild={(runId) => navigate("buildrelease", { runId })}
+            />
             {workbench.data && (() => {
               const wb = workbench.data!;
               const focusedInWorkbench = params.taskId

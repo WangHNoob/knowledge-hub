@@ -21,6 +21,7 @@ import {
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
 import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRunCard";
+import { LintRemediationPanel } from "../components/LintRemediationPanel";
 import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
@@ -439,6 +440,15 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                 <RefreshCw size={16} />
               </button>
             </div>
+            <LintRemediationPanel
+              projectId={currentProjectId}
+              compact
+              title="自动治理触发的构建"
+              onShowBuild={(runId) => {
+                setActiveRunId(runId);
+                setTab("runs");
+              }}
+            />
             <div className="run-list">
               {selectedRuns.length === 0 && <p>暂无构建记录。</p>}
               {selectedRuns.map((run) => (

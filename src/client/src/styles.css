@@ -245,6 +245,7 @@ nav {
 .legacy-summary,
 .build-panel,
 .quality-gate-panel,
+.lint-remediation-panel,
 .run-card {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1537,6 +1538,132 @@ button.writeback-step:disabled {
   overflow-wrap: anywhere;
 }
 
+.lint-remediation-panel {
+  border-left: 4px solid var(--gold);
+}
+
+.lint-remediation-panel.compact {
+  padding: 16px;
+  box-shadow: var(--shadow-soft);
+}
+
+.lint-remediation-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.lint-remediation-summary span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.lint-remediation-summary strong {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.lint-remediation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.lint-remediation-row {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.lint-remediation-row.running {
+  border-color: color-mix(in srgb, var(--gold) 36%, var(--line));
+}
+
+.lint-remediation-row.failed,
+.lint-remediation-row.needs_human {
+  border-color: color-mix(in srgb, var(--rust) 32%, var(--line));
+}
+
+.lint-remediation-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink-muted);
+}
+
+.lint-remediation-main {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.lint-remediation-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.lint-remediation-title strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.lint-remediation-main p,
+.lint-remediation-main small,
+.lint-remediation-main em {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.lint-remediation-main em {
+  color: var(--rust);
+  font-style: normal;
+}
+
+.lint-remediation-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.lint-remediation-meta code {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.lint-remediation-meta span {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
 .feedback-components {
   display: grid;
   gap: 8px;
@@ -2467,7 +2594,8 @@ button.writeback-step:disabled {
 }
 
 .builder-panel,
-.builder-runs {
+.builder-runs,
+.lint-remediation-panel {
   display: grid;
   gap: 16px;
   border-radius: var(--radius-md);
@@ -2476,6 +2604,7 @@ button.writeback-step:disabled {
 
 .builder-panel h2,
 .builder-runs h2,
+.lint-remediation-panel h2,
 .release-panel h2,
 .mcp-panel h2 {
   margin: 0 0 6px;
@@ -2485,6 +2614,7 @@ button.writeback-step:disabled {
 
 .builder-panel p,
 .builder-runs p,
+.lint-remediation-panel p,
 .release-panel p,
 .mcp-panel p {
   margin: 0;
@@ -4921,6 +5051,7 @@ form button:active:not(:disabled) {
   .annotation-lifecycle-grid,
   .annotation-writeback-timeline,
   .build-writeback-row,
+  .lint-remediation-row,
   .flywheel-command,
   .workbench-board,
   .health-grid,
