@@ -14,13 +14,13 @@ import {
   rollbackRelease,
   updateRelease,
   type FlywheelEvent,
-  type FlywheelWorkbench,
   type KnowledgeLintSummary,
   type ReleaseAuditSummary,
   type ReleaseRecord
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
+import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { errorMessage, formatTime, qualityScore, releaseVersion } from "../utils/format";
 import { componentLabel } from "../utils/componentLabel";
@@ -145,17 +145,27 @@ export function Release() {
           { id: "current", label: "当前与历史", count: releases.data?.length }
         ]}
       />
-      {workbench.data && (
-        <ReleaseWorkbenchContext
-          workbench={workbench.data}
-          focusedReleaseId={params.releaseId}
-          onShowRelease={(releaseId) => {
-            setTab("current");
-            navigate("release", releaseId ? { releaseId } : {});
-          }}
-          onOpenReview={() => navigate("review")}
-        />
-      )}
+      {workbench.data && (() => {
+        const wb = workbench.data!;
+        const focused = params.releaseId
+          ? wb.publishItems.some((release) => release.releaseId === params.releaseId)
+          : false;
+        const firstDraft = wb.publishItems[0];
+        const blocking = wb.riskItems.filter((item) => item.label === "阻断").length;
+        const actions: Array<{ label: string; onClick: () => void }> = [];
+        if (firstDraft) actions.push({ label: "定位待发布", onClick: () => { setTab("current"); navigate("release", { releaseId: firstDraft.releaseId }); } });
+        if (blocking > 0) actions.push({ label: "处理阻断", onClick: () => navigate("review") });
+        if (actions.length === 0) return null;
+        return (
+          <WorkbenchStrip
+            kicker="飞轮发布位"
+            headline={firstDraft ? `${wb.publishItems.length} 个版本待发布` : "发布前仍有阻断项"}
+            summary={firstDraft ? "这些 draft / revision 已经进入工作台，检查无阻断后应尽快推给 Agent 消费。" : "先回审核中心处理 blocking，再创建或发布版本。"}
+            focused={focused}
+            actions={actions}
+          />
+        );
+      })()}
       <div className={`release-workbench ${tab}`} key={tab}>
         {tab === "compose" && (
           <>
@@ -338,38 +348,6 @@ export function Release() {
         )}
       </div>
     </Page>
-  );
-}
-
-function ReleaseWorkbenchContext({
-  workbench,
-  focusedReleaseId,
-  onShowRelease,
-  onOpenReview,
-}: {
-  workbench: FlywheelWorkbench;
-  focusedReleaseId?: string;
-  onShowRelease: (releaseId?: string) => void;
-  onOpenReview: () => void;
-}) {
-  const focused = focusedReleaseId
-    ? workbench.publishItems.some((release) => release.releaseId === focusedReleaseId)
-    : false;
-  const firstDraft = workbench.publishItems[0];
-  const blocking = workbench.riskItems.filter((item) => item.label === "阻断").length;
-  if (!firstDraft && blocking === 0) return null;
-  return (
-    <section className={focused ? "release-workbench-context focused" : "release-workbench-context"}>
-      <div>
-        <span className="command-kicker">飞轮发布位</span>
-        <strong>{firstDraft ? `${workbench.publishItems.length} 个版本待发布` : "发布前仍有阻断项"}</strong>
-        <p>{firstDraft ? "这些 draft / revision 已经进入工作台，检查无阻断后应尽快推给 Agent 消费。" : "先回审核中心处理 blocking，再创建或发布版本。"}</p>
-      </div>
-      <div className="task-primary-actions">
-        {firstDraft && <button className="secondary-action" type="button" onClick={() => onShowRelease(firstDraft.releaseId)}>定位待发布</button>}
-        {blocking > 0 && <button className="secondary-action" type="button" onClick={onOpenReview}>处理阻断</button>}
-      </div>
-    </section>
   );
 }
 

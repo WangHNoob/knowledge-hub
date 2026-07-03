@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
+import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { WritebackSteps } from "../components/WritebackSteps";
+import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
@@ -307,15 +308,28 @@ export function Review() {
       )}
 
       <section className="review-flow">
-        {workbench.data && (
-          <ReviewWorkbenchContext
-            workbench={workbench.data}
-            focusedTaskId={params.taskId}
-            onNavigateAgent={(query) => navigate("agent", { query })}
-            onNavigateBuilder={() => navigate("builder")}
-            onNavigateRelease={(releaseId) => navigate("release", releaseId ? { releaseId } : {})}
-          />
-        )}
+        {workbench.data && (() => {
+          const wb = workbench.data!;
+          const focusedInWorkbench = params.taskId
+            ? wb.annotationTasks.some((task) => task.taskId === params.taskId)
+              || wb.riskItems.some((item) => item.params?.taskId === params.taskId)
+            : false;
+          const firstRetest = wb.retestItems[0];
+          const firstDraft = wb.publishItems[0];
+          const actions: Array<{ label: string; onClick: () => void }> = [];
+          if (firstRetest) actions.push({ label: "复测最新反馈", onClick: () => navigate("agent", { query: firstRetest.query }) });
+          if (firstDraft) actions.push({ label: "检查待发布", onClick: () => navigate("release", { releaseId: firstDraft.releaseId }) });
+          if (!firstRetest && !firstDraft) actions.push({ label: "查看构建", onClick: () => navigate("builder") });
+          return (
+            <WorkbenchStrip
+              kicker="飞轮主线"
+              headline={wb.headline}
+              summary={focusedInWorkbench ? "当前任务来自工作台优先队列，处理后应继续复测或发布验证。" : wb.summary}
+              focused={focusedInWorkbench}
+              actions={actions}
+            />
+          );
+        })()}
         <div className="metrics compact">
           <Metric label="待处理" value={taskStats.open} hint="当前筛选范围" tone={taskStats.open ? "warn" : "ok"} />
           <Metric label="阻断" value={taskStats.blocking} hint="先处理，影响发布" tone={taskStats.blocking ? "hot" : "ok"} />
@@ -369,41 +383,6 @@ export function Review() {
         {tasks.length === 0 && <p className="subtle">没有符合条件的审核任务。</p>}
       </div>
     </Page>
-  );
-}
-
-function ReviewWorkbenchContext({
-  workbench,
-  focusedTaskId,
-  onNavigateAgent,
-  onNavigateBuilder,
-  onNavigateRelease,
-}: {
-  workbench: FlywheelWorkbench;
-  focusedTaskId?: string;
-  onNavigateAgent: (query: string) => void;
-  onNavigateBuilder: () => void;
-  onNavigateRelease: (releaseId?: string) => void;
-}) {
-  const focusedInWorkbench = focusedTaskId
-    ? workbench.annotationTasks.some((task) => task.taskId === focusedTaskId)
-      || workbench.riskItems.some((item) => item.params?.taskId === focusedTaskId)
-    : false;
-  const firstRetest = workbench.retestItems[0];
-  const firstDraft = workbench.publishItems[0];
-  return (
-    <div className={focusedInWorkbench ? "review-workbench-context focused" : "review-workbench-context"}>
-      <div>
-        <span className="command-kicker">飞轮主线</span>
-        <strong>{workbench.headline}</strong>
-        <p>{focusedInWorkbench ? "当前任务来自工作台优先队列，处理后应继续复测或发布验证。" : workbench.summary}</p>
-      </div>
-      <div className="task-primary-actions">
-        {firstRetest && <button className="secondary-action" type="button" onClick={() => onNavigateAgent(firstRetest.query)}>复测最新反馈</button>}
-        {firstDraft && <button className="secondary-action" type="button" onClick={() => onNavigateRelease(firstDraft.releaseId)}>检查待发布</button>}
-        {!firstRetest && !firstDraft && <button className="secondary-action" type="button" onClick={onNavigateBuilder}>查看构建</button>}
-      </div>
-    </div>
   );
 }
 

@@ -15,13 +15,13 @@ import {
   testModelConnectivity,
   type BuildModelConfig,
   type FlywheelEvent,
-  type FlywheelWorkbench,
   type KnowledgeBuildRun,
   type ReviewTask
 } from "../api";
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
 import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRunCard";
+import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
@@ -271,14 +271,24 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       )}
 
       <Tabs items={tabs} active={tab} onChange={setTab} />
-      {workbench.data && (
-        <BuilderWorkbenchContext
-          workbench={workbench.data}
-          onOpenReview={(taskId) => navigate("review", taskId ? { taskId } : {})}
-          onOpenAgent={(query) => navigate("agent", { query })}
-          onOpenRelease={(releaseId) => navigate("release", releaseId ? { releaseId } : {})}
-        />
-      )}
+      {workbench.data && (() => {
+        const wb = workbench.data;
+        const annotation = wb.annotationTasks[0];
+        const retest = wb.retestItems[0];
+        const release = wb.publishItems[0];
+        const actions: Array<{ label: string; onClick: () => void }> = [];
+        if (annotation) actions.push({ label: "处理标注", onClick: () => navigate("review", { taskId: annotation.taskId }) });
+        if (!annotation && retest) actions.push({ label: "复测反馈", onClick: () => navigate("agent", { query: retest.query }) });
+        if (!annotation && !retest && release) actions.push({ label: "检查发布", onClick: () => navigate("release", { releaseId: release.releaseId }) });
+        return (
+          <WorkbenchStrip
+            kicker="构建后的下一步"
+            headline={wb.headline}
+            summary={wb.summary}
+            actions={actions}
+          />
+        );
+      })()}
 
       <div className="tab-panel" key={tab}>
         {tab === "build" && (
@@ -453,37 +463,6 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
         )}
       </div>
     </Page>
-  );
-}
-
-function BuilderWorkbenchContext({
-  workbench,
-  onOpenReview,
-  onOpenAgent,
-  onOpenRelease,
-}: {
-  workbench: FlywheelWorkbench;
-  onOpenReview: (taskId?: string) => void;
-  onOpenAgent: (query: string) => void;
-  onOpenRelease: (releaseId?: string) => void;
-}) {
-  const annotation = workbench.annotationTasks[0];
-  const retest = workbench.retestItems[0];
-  const release = workbench.publishItems[0];
-  if (!annotation && !retest && !release && workbench.runningRuns.length === 0) return null;
-  return (
-    <section className="builder-workbench-context">
-      <div>
-        <span className="command-kicker">构建后的下一步</span>
-        <strong>{workbench.headline}</strong>
-        <p>{workbench.summary}</p>
-      </div>
-      <div className="task-primary-actions">
-        {annotation && <button className="secondary-action" type="button" onClick={() => onOpenReview(annotation.taskId)}>处理标注</button>}
-        {!annotation && retest && <button className="secondary-action" type="button" onClick={() => onOpenAgent(retest.query)}>复测反馈</button>}
-        {!annotation && !retest && release && <button className="secondary-action" type="button" onClick={() => onOpenRelease(release.releaseId)}>检查发布</button>}
-      </div>
-    </section>
   );
 }
 
