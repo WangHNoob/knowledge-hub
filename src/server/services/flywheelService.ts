@@ -123,11 +123,12 @@ export class FlywheelService {
    * 不能自动治理的 lint 治理项）。普通 warning、已自动治理、纯观察项不进入此列表。
    */
   async listExceptions(projectId = "default_project"): Promise<HumanException[]> {
-    const [tasks, events, skips, needsHumanRemediations, profile] = await Promise.all([
+    const [tasks, events, skips, needsHumanRemediations, failedRemediations, profile] = await Promise.all([
       this.knowledge.listReviewTasks({ status: "open", projectId }),
       this.knowledge.listAgentEvents(projectId),
       this.listPendingPublishSkips(projectId),
       this.remediations.listRemediations({ projectId, status: "needs_human" }),
+      this.remediations.listRemediations({ projectId, status: "failed" }),
       this.governance.resolve(projectId),
     ]);
 
@@ -138,7 +139,7 @@ export class FlywheelService {
     }
     for (const skip of skips) out.push(skip);
     for (const cluster of clusterNegativeFeedback(events, profile.feedback.highFrequencyThreshold)) out.push(cluster);
-    for (const remediation of needsHumanRemediations) out.push(exceptionFromRemediation(remediation));
+    for (const remediation of [...needsHumanRemediations, ...failedRemediations]) out.push(exceptionFromRemediation(remediation));
 
     return out.sort((a, b) => attentionRank(a) - attentionRank(b) || b.createdAt.localeCompare(a.createdAt));
   }
@@ -574,17 +575,22 @@ function exceptionFromTask(task: ReviewTask): HumanException | null {
   return null;
 }
 
-/** 把不能自动治理的 lint 治理任务（needs_human）转成例外中心条目。 */
+/** 把不能自动治理/治理失败的 lint 治理任务转成例外中心条目。 */
 function exceptionFromRemediation(remediation: KnowledgeLintRemediation): HumanException {
   const target = remediationTarget(remediation);
+  const failed = remediation.status === "failed";
   return {
     id: `remediation-${remediation.remediationId}`,
     type: "lint",
-    attentionLevel: remediation.severity === "blocking" ? "blocking" : "needs_decision",
-    severity: remediation.severity,
+    attentionLevel: failed || remediation.severity === "blocking" ? "blocking" : "needs_decision",
+    severity: failed ? "blocking" : remediation.severity,
     title: remediation.title || `${lintDomainLabel(remediation.domain)}治理项`,
-    body: remediation.diagnosis || remediation.remediation || "Knowledge Lint 发现需要人工处理的问题。",
-    whyHumanNeeded: remediation.actionType === "rebuild"
+    body: failed && remediation.error
+      ? `${remediation.diagnosis || remediation.title}。失败原因：${remediation.error}`
+      : remediation.diagnosis || remediation.remediation || "Knowledge Lint 发现需要人工处理的问题。",
+    whyHumanNeeded: failed
+      ? "系统已尝试自动治理，但执行失败，需要人工查看错误并决定是否重建或修正规则。"
+      : remediation.actionType === "rebuild"
       ? "该问题需要触发重建或补数据，无法在无人确认时安全自动修复。"
       : "该问题无法映射到确定性自动治理动作，需要人工判断。",
     recommendedAction: remediation.remediation || "打开对应资产或发布页，按建议修复后重新发布。",

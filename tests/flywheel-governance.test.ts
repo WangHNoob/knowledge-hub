@@ -149,3 +149,42 @@ describe("agent feedback clusters", () => {
     }
   }, 20000);
 });
+
+describe("flywheel lint remediation exceptions", () => {
+  it("surfaces failed lint remediations as human exceptions", async () => {
+    const fixture = await createTestDb();
+    try {
+      const remediationService = createLintRemediationService(fixture.db);
+      await remediationService.recordFromReport({ projectId: "default_project", releaseId: "rel_gov", report: lintReport() });
+      await remediationService.executePending({
+        projectId: "default_project",
+        releaseId: "rel_gov",
+        requestedBy: "system",
+        kbBuilderService: {
+          startScopedRebuildForComponent: async () => {
+            throw new Error("scoped rebuild failed");
+          },
+        },
+      });
+
+      const flywheel = createFlywheelService({
+        db: fixture.db,
+        knowledgeService: createKnowledgeService(fixture.db),
+        bundleService: createSourceBundleService(fixture.db, "."),
+        kbBuilderService: createKbBuilderPipelineService(fixture.db, "."),
+        releaseService: createReleaseService(fixture.db, "."),
+        projectService: createProjectService(fixture.db),
+        lintRemediationService: remediationService,
+        governanceProfileService: createGovernanceProfileService(fixture.db),
+      });
+
+      const exceptions = await flywheel.listExceptions("default_project");
+      const failed = exceptions.find((item) => item.id.startsWith("remediation-") && item.body.includes("scoped rebuild failed"));
+      expect(failed).toBeTruthy();
+      expect(failed?.attentionLevel).toBe("blocking");
+      expect(failed?.type).toBe("lint");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 20000);
+});
