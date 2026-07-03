@@ -335,7 +335,8 @@ export class FlywheelService {
            'release.auto_publish_succeeded',
            'agent.feedback.rebuild_started',
            'annotation.writeback_rebuild_started',
-           'source_correction.confirmed'
+           'source_correction.confirmed',
+           'knowledge_lint.remediation_completed'
          )`,
       [projectId, since],
     );
@@ -770,6 +771,14 @@ function automationTitle(eventType: string, payload: Record<string, unknown>): s
       return "已请求把标注写回资料";
     case "annotation.writeback_rebuild_started":
       return "已根据标注启动重建";
+    case "knowledge_lint.remediations_recorded":
+      return "已生成 Knowledge Lint 治理队列";
+    case "knowledge_lint.remediation_started":
+      return "已启动 Knowledge Lint 自动治理";
+    case "knowledge_lint.remediation_completed":
+      return "Knowledge Lint 自动治理完成";
+    case "knowledge_lint.remediation_failed":
+      return "Knowledge Lint 自动治理失败";
     default:
       return eventType;
   }
@@ -777,6 +786,7 @@ function automationTitle(eventType: string, payload: Record<string, unknown>): s
 
 function automationStatus(eventType: string): FlywheelAutomationItem["status"] {
   if (eventType === "release.auto_publish_skipped") return "skipped";
+  if (eventType === "knowledge_lint.remediation_failed") return "failed";
   if (eventType.endsWith("_started") || eventType.endsWith("_requested") || eventType.endsWith("_proposed")) return "running";
   return "completed";
 }
