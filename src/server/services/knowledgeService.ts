@@ -786,8 +786,9 @@ export class KnowledgeService {
   }
 
   /**
-   * Append LLM-generated candidate suggestions to an open review task.
-   * Existing candidates are preserved; new suggestions get id `llm_<index>`.
+   * Prepend LLM-generated candidate suggestions to an open review task.
+   * Existing candidates are preserved after the fresh diagnosis so reviewers
+   * see the newest auto-remediation decision first.
    */
   async addLlmSuggestions(
     taskId: string,
@@ -813,7 +814,7 @@ export class KnowledgeService {
       rationale: s.rationale ?? "",
       source: "llm_auto_remediation"
     }));
-    const merged = [...arr, ...additions];
+    const merged = [...additions, ...arr];
     await this.adapter.query(
       "UPDATE review_tasks SET candidates = $2 WHERE task_id = $1",
       [taskId, JSON.stringify(merged)]
