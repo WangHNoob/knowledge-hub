@@ -1,6 +1,6 @@
 import type { DiagnosticLogger } from "./diagnosticService";
 import { emitKnowledgeEvent, onKnowledgeEvent } from "./eventService";
-import type { ReleaseService } from "./releaseService";
+import { AutoPublishEligibilityError, type ReleaseService } from "./releaseService";
 import type { DatabaseHandle } from "../types";
 
 export function registerReleaseAutomation(options: {
@@ -141,6 +141,7 @@ async function publishCompletedBuild(options: {
       context: { packageId: options.packageId, sourceEventId: options.sourceEventId },
     });
   } catch (error) {
+    const check = error instanceof AutoPublishEligibilityError ? error.check : null;
     await emitKnowledgeEvent(options.db, {
       eventType: "release.auto_publish_skipped",
       entityType: "release",
@@ -152,6 +153,9 @@ async function publishCompletedBuild(options: {
         sourceEventId: options.sourceEventId,
         mode: "build_and_publish",
         reason: error instanceof Error ? error.message : String(error),
+        reasons: check?.reasons ?? [],
+        reasonDetails: check?.reasonDetails ?? [],
+        autoPublishCheck: check,
       },
     });
     await options.diagnostics?.write({
@@ -211,6 +215,7 @@ async function tryAutoPublishRevision(options: {
       context: { packageId: options.packageId, sourceEventId: options.sourceEventId },
     });
   } catch (error) {
+    const check = error instanceof AutoPublishEligibilityError ? error.check : null;
     await emitKnowledgeEvent(options.db, {
       eventType: "release.auto_publish_skipped",
       entityType: "release",
@@ -221,6 +226,9 @@ async function tryAutoPublishRevision(options: {
         packageId: options.packageId,
         sourceEventId: options.sourceEventId,
         reason: error instanceof Error ? error.message : String(error),
+        reasons: check?.reasons ?? [],
+        reasonDetails: check?.reasonDetails ?? [],
+        autoPublishCheck: check,
       },
     });
     await options.diagnostics?.write({

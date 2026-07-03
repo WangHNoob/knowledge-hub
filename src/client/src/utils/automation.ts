@@ -15,6 +15,46 @@ export function parseAutoPublishReasons(reason: string): string[] {
     .filter(Boolean);
 }
 
+export interface AutoPublishReasonDetailView {
+  code: string;
+  label: string;
+  severity: "info" | "warning" | "blocking";
+  description: string;
+  action: string;
+  count: number;
+  sampleIds: string[];
+}
+
+export function parseAutoPublishReasonDetails(value: unknown, fallbackReasons: string[] = []): AutoPublishReasonDetailView[] {
+  if (Array.isArray(value)) {
+    const details = value.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const record = item as Record<string, unknown>;
+      const code = stringValue(record.code);
+      if (!code) return [];
+      return [{
+        code,
+        label: stringValue(record.label) || autoPublishReasonLabel(code),
+        severity: severityValue(record.severity),
+        description: stringValue(record.description),
+        action: stringValue(record.action) || autoPublishReasonAction(code),
+        count: numberValue(record.count),
+        sampleIds: Array.isArray(record.sampleIds) ? record.sampleIds.map(String).filter(Boolean).slice(0, 8) : [],
+      }];
+    });
+    if (details.length > 0) return details;
+  }
+  return fallbackReasons.map((reason) => ({
+    code: reason,
+    label: autoPublishReasonLabel(reason),
+    severity: reason === "no_component_changes" ? "info" : "blocking",
+    description: "",
+    action: autoPublishReasonAction(reason),
+    count: 0,
+    sampleIds: [],
+  }));
+}
+
 export function autoPublishReasonLabel(reason: string): string {
   switch (reason) {
     case "changed_components_have_blocking_tasks":
@@ -32,6 +72,19 @@ export function autoPublishReasonLabel(reason: string): string {
     default:
       return reason;
   }
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function severityValue(value: unknown): AutoPublishReasonDetailView["severity"] {
+  if (value === "info" || value === "warning" || value === "blocking") return value;
+  return "warning";
 }
 
 export function autoPublishReasonAction(reason: string): string {

@@ -192,6 +192,12 @@ describe("ReleaseService", () => {
         }
       });
       expect(manifest.autoPublish.reasons).toContain("has_pending_review_corrections");
+      expect(manifest.autoPublish.reasonDetails).toContainEqual(expect.objectContaining({
+        code: "has_pending_review_corrections",
+        label: "存在待复核的确定性源覆盖",
+        count: 1,
+        sampleIds: expect.arrayContaining(["gamedocs/demo.md · config_table"])
+      }));
     } finally {
       await fixture.cleanup();
     }
@@ -268,6 +274,7 @@ describe("ReleaseService", () => {
         eligible: true,
         mode: "auto",
         reasons: [],
+        reasonDetails: [],
         changedComponentIds: ["cmp_pkg_auto_ok_page"],
       });
     } finally {
@@ -308,6 +315,7 @@ describe("ReleaseService", () => {
         eligible: true,
         mode: "auto",
         reasons: [],
+        reasonDetails: [],
         changedComponentIds: ["cmp_pkg_v2_page"],
       });
     } finally {

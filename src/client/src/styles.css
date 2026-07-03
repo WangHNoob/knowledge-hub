@@ -3133,7 +3133,8 @@ button.writeback-step:disabled {
   gap: 8px;
 }
 
-.auto-publish-reasons p {
+.auto-publish-reasons p,
+.auto-publish-reason {
   display: grid;
   gap: 3px;
   margin: 0;
@@ -3141,6 +3142,17 @@ button.writeback-step:disabled {
   border: 1px solid rgba(201, 162, 39, 0.2);
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
+}
+
+.auto-publish-reason {
+  gap: 6px;
+}
+
+.auto-publish-reason > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .auto-publish-reasons strong {
@@ -3151,6 +3163,17 @@ button.writeback-step:disabled {
   color: var(--ink-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.auto-publish-samples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.auto-publish-samples .id-chip {
+  max-width: 100%;
 }
 
 .auto-publish-actions {
