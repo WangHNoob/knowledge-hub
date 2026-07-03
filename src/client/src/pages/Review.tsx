@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
-import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
 import { WritebackSteps } from "../components/WritebackSteps";
 import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
@@ -32,6 +32,12 @@ const SEVERITY_TONE: Record<string, "hot" | "warn" | undefined> = {
 };
 
 const STATUS_LABEL: Record<string, string> = { open: "待处理", resolved: "已解决", dismissed: "已忽略" };
+type ReviewTab = "tasks" | "autoFixed";
+
+const REVIEW_TABS: TabItem<ReviewTab>[] = [
+  { id: "tasks", label: "处理任务" },
+  { id: "autoFixed", label: "自动修复" }
+];
 
 function taskCategory(task: ReviewTask): string {
   if (task.ruleId === "annotation_example.review") return "样例复盘";
@@ -170,6 +176,7 @@ export function Review() {
   const [selectedCandidates, setSelectedCandidates] = useState<Record<string, string>>({});
   const [dismissRules, setDismissRules] = useState<Record<string, boolean>>({});
   const [applyModes, setApplyModes] = useState<Record<string, "hint" | "override">>({});
+  const [reviewTab, setReviewTab] = useState<ReviewTab>("tasks");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["review", currentProjectId, severity || "all", status || "all"],
@@ -272,28 +279,7 @@ export function Review() {
 
   return (
     <Page title="审核中心" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。`}>
-      <div className="detail-head review-toolbar">
-        <div>
-          <h2>审核任务</h2>
-          {params.packageId
-            ? <p>已按资产包 <code>{params.packageId}</code>{params.taskId ? <> 和任务 <code>{params.taskId}</code></> : null} 过滤。</p>
-            : <p>按级别与状态筛选门禁与反馈生成的任务。</p>}
-        </div>
-        <div className="review-controls">
-          <select value={severity} onChange={(event) => setSeverity(event.target.value)}>
-            {SEVERITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-          <select value={status} onChange={(event) => setStatus(event.target.value)}>
-            {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-          {status === "open" && tasks.length > 0 && (
-            <>
-              <button className="secondary-action" type="button" disabled={transition.isPending} onClick={() => bulk("resolved")}>全部解决</button>
-              <button className="secondary-action" type="button" disabled={transition.isPending} onClick={() => bulk("dismissed")}>全部忽略</button>
-            </>
-          )}
-        </div>
-      </div>
+      <Tabs items={REVIEW_TABS} active={reviewTab} onChange={setReviewTab} />
 
       {(transition.error || annotate.error || rebuild.error) && (
         <p className="error">
@@ -307,54 +293,74 @@ export function Review() {
         </p>
       )}
 
-      <section className="review-flow">
-        {workbench.data && (() => {
-          const wb = workbench.data!;
-          const focusedInWorkbench = params.taskId
-            ? wb.annotationTasks.some((task) => task.taskId === params.taskId)
-              || wb.riskItems.some((item) => item.params?.taskId === params.taskId)
-            : false;
-          const firstRetest = wb.retestItems[0];
-          const firstDraft = wb.publishItems[0];
-          const actions: Array<{ label: string; onClick: () => void }> = [];
-          if (firstRetest) actions.push({ label: "复测最新反馈", onClick: () => navigate("agent", { query: firstRetest.query }) });
-          if (firstDraft) actions.push({ label: "检查待发布", onClick: () => navigate("buildrelease", { releaseId: firstDraft.releaseId }) });
-          if (!firstRetest && !firstDraft) actions.push({ label: "查看构建", onClick: () => navigate("buildrelease") });
-          return (
-            <WorkbenchStrip
-              kicker="飞轮主线"
-              headline={wb.headline}
-              summary={focusedInWorkbench ? "当前任务来自工作台优先队列，处理后应继续复测或发布验证。" : wb.summary}
-              focused={focusedInWorkbench}
-              actions={actions}
-            />
-          );
-        })()}
-        <div className="metrics compact">
-          <Metric label="待处理" value={taskStats.open} hint="当前筛选范围" tone={taskStats.open ? "warn" : "ok"} />
-          <Metric label="阻断" value={taskStats.blocking} hint="先处理，影响发布" tone={taskStats.blocking ? "hot" : "ok"} />
-          <Metric label="可后置" value={taskStats.warning} hint="warning 可试发布后迭代" tone={taskStats.warning ? "warn" : "ok"} />
-          <Metric label="Agent 回流" value={taskStats.agent} hint="由消费反馈生成" tone={taskStats.agent ? "warn" : "ok"} />
-        </div>
-        <div className="flow-cards">
-          <button type="button" className="flow-card" onClick={() => navigate("assets", params.packageId ? { packageId: params.packageId } : {})}>
-            <strong>1. 定位资产</strong>
-            <span>从任务里的资产包 / 组件直接跳到资产详情，先看来源、质量与证据记录。</span>
-          </button>
-          <button type="button" className="flow-card" onClick={() => navigate("agent")}>
-            <strong>2. 复测 Agent</strong>
-            <span>修完后去 MCP 控制台跑同一个查询，看 hit、trace、quality flags 是否收敛。</span>
-          </button>
-        </div>
-      </section>
+      {reviewTab === "tasks" && (
+        <>
+          <div className="detail-head review-toolbar">
+            <div>
+              <h2>审核任务</h2>
+              {params.packageId
+                ? <p>已按资产包 <code>{params.packageId}</code>{params.taskId ? <> 和任务 <code>{params.taskId}</code></> : null} 过滤。</p>
+                : <p>按级别与状态筛选门禁与反馈生成的任务。</p>}
+            </div>
+            <div className="review-controls">
+              <select value={severity} onChange={(event) => setSeverity(event.target.value)}>
+                {SEVERITY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+              <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+              {status === "open" && tasks.length > 0 && (
+                <>
+                  <button className="secondary-action" type="button" disabled={transition.isPending} onClick={() => bulk("resolved")}>全部解决</button>
+                  <button className="secondary-action" type="button" disabled={transition.isPending} onClick={() => bulk("dismissed")}>全部忽略</button>
+                </>
+              )}
+            </div>
+          </div>
 
-      <AutoFixedAuditSection
-        projectId={currentProjectId}
-        onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
-      />
+          <section className="review-flow">
+            {workbench.data && (() => {
+              const wb = workbench.data!;
+              const focusedInWorkbench = params.taskId
+                ? wb.annotationTasks.some((task) => task.taskId === params.taskId)
+                  || wb.riskItems.some((item) => item.params?.taskId === params.taskId)
+                : false;
+              const firstRetest = wb.retestItems[0];
+              const firstDraft = wb.publishItems[0];
+              const actions: Array<{ label: string; onClick: () => void }> = [];
+              if (firstRetest) actions.push({ label: "复测最新反馈", onClick: () => navigate("agent", { query: firstRetest.query }) });
+              if (firstDraft) actions.push({ label: "检查待发布", onClick: () => navigate("buildrelease", { releaseId: firstDraft.releaseId }) });
+              if (!firstRetest && !firstDraft) actions.push({ label: "查看构建", onClick: () => navigate("buildrelease") });
+              return (
+                <WorkbenchStrip
+                  kicker="飞轮主线"
+                  headline={wb.headline}
+                  summary={focusedInWorkbench ? "当前任务来自工作台优先队列，处理后应继续复测或发布验证。" : wb.summary}
+                  focused={focusedInWorkbench}
+                  actions={actions}
+                />
+              );
+            })()}
+            <div className="metrics compact">
+              <Metric label="待处理" value={taskStats.open} hint="当前筛选范围" tone={taskStats.open ? "warn" : "ok"} />
+              <Metric label="阻断" value={taskStats.blocking} hint="先处理，影响发布" tone={taskStats.blocking ? "hot" : "ok"} />
+              <Metric label="可后置" value={taskStats.warning} hint="warning 可试发布后迭代" tone={taskStats.warning ? "warn" : "ok"} />
+              <Metric label="Agent 回流" value={taskStats.agent} hint="由消费反馈生成" tone={taskStats.agent ? "warn" : "ok"} />
+            </div>
+            <div className="flow-cards">
+              <button type="button" className="flow-card" onClick={() => navigate("assets", params.packageId ? { packageId: params.packageId } : {})}>
+                <strong>1. 定位资产</strong>
+                <span>从任务里的资产包 / 组件直接跳到资产详情，先看来源、质量与证据记录。</span>
+              </button>
+              <button type="button" className="flow-card" onClick={() => navigate("agent")}>
+                <strong>2. 复测 Agent</strong>
+                <span>修完后去 MCP 控制台跑同一个查询，看 hit、trace、quality flags 是否收敛。</span>
+              </button>
+            </div>
+          </section>
 
-      <div className="task-list">
-        {tasks.map((task) => (
+          <div className="task-list">
+            {tasks.map((task) => (
           <ReviewTaskCard
             key={task.taskId}
             task={task}
@@ -379,9 +385,19 @@ export function Review() {
             onNavigateRelease={() => navigate("buildrelease", task.writeback?.releaseId ? { releaseId: task.writeback.releaseId } : {})}
             onRetest={(insight) => navigate("agent", { toolName: insight.toolName, query: insight.queryText })}
           />
-        ))}
-        {tasks.length === 0 && <p className="subtle">没有符合条件的审核任务。</p>}
-      </div>
+            ))}
+            {tasks.length === 0 && <p className="subtle">没有符合条件的审核任务。</p>}
+          </div>
+        </>
+      )}
+
+      {reviewTab === "autoFixed" && (
+        <AutoFixedAuditSection
+          projectId={currentProjectId}
+          onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
+          alwaysVisible
+        />
+      )}
     </Page>
   );
 }
@@ -750,9 +766,11 @@ function LearningStrip({ task }: { task: ReviewTask }) {  const learning = task.
 function AutoFixedAuditSection({
   projectId,
   onNavigateAsset,
+  alwaysVisible = false,
 }: {
   projectId: string;
   onNavigateAsset: (packageId: string, componentId: string) => void;
+  alwaysVisible?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
@@ -772,7 +790,21 @@ function AutoFixedAuditSection({
     },
   });
   const tasks = data ?? [];
-  if (isLoading || error || tasks.length === 0) return null;
+  if (!alwaysVisible && (isLoading || error || tasks.length === 0)) return null;
+  if (isLoading) return <Loading title="正在读取自动修复记录" />;
+  if (error) return <ErrorState error={error} />;
+  if (tasks.length === 0) {
+    return (
+      <section className="auto-fixed-audit">
+        <div className="detail-head">
+          <div>
+            <h2>自动修复审计</h2>
+            <p>暂无 LLM 自动落盘的修复。产生高置信自动修复后，会在这里显示诊断、置信度和回滚入口。</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
   const displayed = expanded ? tasks : tasks.slice(0, 3);
   return (
     <section className="auto-fixed-audit">

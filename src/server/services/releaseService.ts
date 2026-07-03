@@ -50,14 +50,25 @@ interface PublishOptions {
   autoMode?: boolean;
 }
 
-interface AutoPublishCheck {
+export interface AutoPublishCheck {
   eligible: boolean;
   mode: "manual" | "auto";
   reasons: string[];
+  reasonDetails: AutoPublishReasonDetail[];
   changedComponentIds: string[];
   blockingTaskIds: string[];
   trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
   pendingSourceCorrections: PendingSourceCorrection[];
+}
+
+export interface AutoPublishReasonDetail {
+  code: string;
+  label: string;
+  severity: "info" | "warning" | "blocking";
+  description: string;
+  action: string;
+  count: number;
+  sampleIds: string[];
 }
 
 interface PendingSourceCorrection {
@@ -91,6 +102,12 @@ export function createReleaseService(db: DatabaseHandle, dataDirOrDiagnostics?: 
   return typeof dataDirOrDiagnostics === "string"
     ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics)
     : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics);
+}
+
+export class AutoPublishEligibilityError extends Error {
+  constructor(readonly check: AutoPublishCheck) {
+    super(`Auto publish is not eligible: ${check.reasons.join(", ")}`);
+  }
 }
 
 export class ReleaseService {
@@ -210,7 +227,7 @@ export class ReleaseService {
       const pendingSourceCorrections = await this.loadPendingSourceCorrections(packages);
       const autoPublish = await this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode), pendingSourceCorrections);
       if (options.autoMode && !autoPublish.eligible) {
-        throw new Error(`Auto publish is not eligible: ${autoPublish.reasons.join(", ")}`);
+        throw new AutoPublishEligibilityError(autoPublish);
       }
       const auditSummary = await buildReleaseAuditSummary({
         adapter: this.adapter,
@@ -550,11 +567,20 @@ export class ReleaseService {
     const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
     if (trustDeclines.length > 0) reasons.push("trust_score_declined_or_missing");
     if (pendingSourceCorrections.length > 0) reasons.push("has_pending_review_corrections");
+    const details = buildAutoPublishReasonDetails({
+      reasons,
+      revision,
+      changedComponentIds,
+      blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
+      trustDeclines,
+      pendingSourceCorrections,
+    });
 
     return {
       eligible: reasons.length === 0,
       mode: autoMode ? "auto" : "manual",
       reasons,
+      reasonDetails: details,
       changedComponentIds,
       blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
       trustDeclines,
@@ -799,6 +825,94 @@ function buildManifest(input: {
     publishedAt: input.publishedAt,
     publishedBy: input.publishedBy,
   };
+}
+
+function buildAutoPublishReasonDetails(input: {
+  reasons: string[];
+  revision: ReleaseRevision;
+  changedComponentIds: string[];
+  blockingTaskIds: string[];
+  trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
+  pendingSourceCorrections: PendingSourceCorrection[];
+}): AutoPublishReasonDetail[] {
+  return input.reasons.map((reason) => {
+    switch (reason) {
+      case "missing_parent_release":
+        return {
+          code: reason,
+          label: "缺少可比较的发布基线",
+          severity: "blocking",
+          description: "自动发布只处理基于当前版本的小修订；首次发布或没有 parent release 时，系统无法判断本次变化是否安全。",
+          action: "先由管理员手动发布一个基线版本，后续增量 revision 才能进入自动发布判断。",
+          count: input.revision.parentReleaseId ? 0 : 1,
+          sampleIds: input.revision.parentReleaseId ? [input.revision.parentReleaseId] : [],
+        };
+      case "removed_components_present":
+        return {
+          code: reason,
+          label: "本次变更包含组件删除",
+          severity: "blocking",
+          description: "组件删除会直接影响 Agent 可检索的知识范围，不能由自动发布静默完成。",
+          action: "确认这些知识确实应该下线后，改用手动发布；如果是增量构建误删，需要重新构建完整或正确的目标范围。",
+          count: input.revision.diff.componentIds.removed.length,
+          sampleIds: input.revision.diff.componentIds.removed.slice(0, 8),
+        };
+      case "no_component_changes":
+        return {
+          code: reason,
+          label: "没有检测到可发布的组件变化",
+          severity: "info",
+          description: "与父发布相比，没有新增或正文变化的组件，自动发布不会制造一个空 revision。",
+          action: "通常不需要处理；如果你预期有变化，回到构建页确认增量目标是否命中了正确资料。",
+          count: input.changedComponentIds.length,
+          sampleIds: [],
+        };
+      case "changed_components_have_blocking_tasks":
+        return {
+          code: reason,
+          label: "变更组件仍有阻断任务",
+          severity: "blocking",
+          description: "至少一个本次新增或修改的组件还有 open blocking 审核任务，发布后会把未解决问题暴露给 Agent。",
+          action: "进入审核中心处理这些 blocking 任务，或确认规则不适用后再重新发布。",
+          count: input.blockingTaskIds.length,
+          sampleIds: input.blockingTaskIds.slice(0, 8),
+        };
+      case "trust_score_declined_or_missing":
+        return {
+          code: reason,
+          label: "可信度下降或缺失",
+          severity: "blocking",
+          description: "变更组件相对父发布的可信度降低，或无法计算可信度；自动发布要求变更不能降低 Agent 消费质量。",
+          action: "查看资产组件的可信度明细，优先补证据、完成标注复核，或修正导致低分的来源覆盖。",
+          count: input.trustDeclines.length,
+          sampleIds: input.trustDeclines.map((item) => `${item.componentId} ${formatScore(item.previousScore)}→${formatScore(item.nextScore)}`).slice(0, 8),
+        };
+      case "has_pending_review_corrections":
+        return {
+          code: reason,
+          label: "存在待复核的确定性源覆盖",
+          severity: "warning",
+          description: "本次发布仍携带人工回写的源覆盖，但这些覆盖还没有随最新资料变化完成复核。",
+          action: "在策划立法/审核链路中确认这些源覆盖仍然有效，或退役过期覆盖后重新构建。",
+          count: input.pendingSourceCorrections.length,
+          sampleIds: input.pendingSourceCorrections.map((item) => `${item.sourcePath} · ${item.factKey || item.ruleId}`).slice(0, 8),
+        };
+      default:
+        return {
+          code: reason,
+          label: reason,
+          severity: "warning",
+          description: "系统返回了未登记的自动发布约束。",
+          action: "查看关联构建、资产包和审核任务后决定是否手动发布。",
+          count: 0,
+          sampleIds: [],
+        };
+    }
+  });
+}
+
+function formatScore(value: number | null): string {
+  return value === null ? "无" : `${Math.round(value * 100)}%`;
 }
 
 function buildReleaseDiff(parent: ReleaseRecord | null, packages: AssetPackage[], components: AssetComponent[]): ReleaseDiff {

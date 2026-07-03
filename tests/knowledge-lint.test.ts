@@ -61,6 +61,14 @@ describe("Knowledge Lint", () => {
       expect(report.domains.trust.total).toBeGreaterThan(0);
       expect(report.domains.table_dependencies.total).toBeGreaterThan(0);
       expect(report.domains.mcp_feedback.total).toBeGreaterThan(0);
+      expect(report.governance).toMatchObject({
+        source: "rule_fallback",
+        analyzed: report.issues.length,
+      });
+      expect(report.issues[0].governance).toMatchObject({
+        source: "rule_fallback",
+        autoEligible: false,
+      });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -30,6 +30,7 @@ export interface OkfExportManifest {
   lintUri: string;
   lintMarkdownUri: string;
   lintSummary: KnowledgeLintReport["summary"];
+  lintGovernance: KnowledgeLintReport["governance"];
   exporterVersion: number;
   okfVersion: "0.1";
   bundleHash: string;
@@ -132,7 +133,7 @@ export class OkfExportService {
     writeFileSync(join(this.dataDir, ...reportMarkdownUri.split(posix.sep)), renderReportMarkdown(report), "utf8");
     const auditSummary = withOkfAuditSummary(input.auditSummary, report, { reportUri, reportMarkdownUri });
     writeFileSync(join(bundleDir, "log.md"), renderReleaseAuditLog(auditSummary), "utf8");
-    const lint = exportKnowledgeLintReport({
+    const lint = await exportKnowledgeLintReport({
       releaseId: input.release.releaseId,
       generatedAt: input.publishedAt,
       bundleDir,
@@ -160,6 +161,7 @@ export class OkfExportService {
         lintUri: lint.jsonUri,
         lintMarkdownUri: lint.markdownUri,
         lintSummary: lint.report.summary,
+        lintGovernance: lint.report.governance,
         exporterVersion: OKF_EXPORTER_VERSION,
         okfVersion: report.okfVersion,
         bundleHash: hashExportedBundle(bundleDir, exportedPaths),

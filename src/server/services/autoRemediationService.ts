@@ -175,10 +175,11 @@ async function handleFeedbackEvent(
       generatedAt: new Date().toISOString()
     };
 
+    const validation = validateCorrectValue(component.kind, parsed.correctValue);
     const shouldAutoFix =
       parsed.fixType === "annotation_override" &&
       parsed.confidence >= config.autoRemediationConfidenceThreshold &&
-      Object.keys(parsed.correctValue).length > 0;
+      validation.valid;
 
     if (shouldAutoFix) {
       await deps.knowledgeService.annotateReviewTask({
@@ -212,8 +213,19 @@ async function handleFeedbackEvent(
       return;
     }
 
-    if (parsed.suggestions.length > 0) {
-      await deps.knowledgeService.addLlmSuggestions(taskId, parsed.suggestions.map((s) => ({
+    const suggestions = validation.valid || Object.keys(parsed.correctValue).length === 0
+      ? parsed.suggestions
+      : [
+          {
+            label: `LLM 建议未自动执行：${validation.reason}`,
+            value: parsed.correctValue,
+            rationale: parsed.rationale
+          },
+          ...parsed.suggestions
+        ];
+
+    if (suggestions.length > 0) {
+      await deps.knowledgeService.addLlmSuggestions(taskId, suggestions.map((s) => ({
         label: s.label,
         value: s.value,
         rationale: s.rationale
@@ -223,12 +235,36 @@ async function handleFeedbackEvent(
       action: "human_needed",
       confidence: parsed.confidence,
       fixType: parsed.fixType,
-      suggestionCount: parsed.suggestions.length,
+      suggestionCount: suggestions.length,
+      validationReason: validation.reason,
       diagnosis: parsed.diagnosis.slice(0, 200)
     });
   } catch (error) {
     await span.fail(error, { stage: "unknown" });
   }
+}
+
+function validateCorrectValue(componentKind: string, value: Record<string, unknown>): { valid: boolean; reason: string } {
+  if (Object.keys(value).length === 0) return { valid: false, reason: "correctValue 为空" };
+  if (componentKind === "wiki_page" || componentKind === "table_wiki_page" || componentKind === "topic_index") {
+    const markdown = typeof value.markdown === "string" ? value.markdown.trim() : "";
+    const replaceBody = typeof value.replaceBody === "string" ? value.replaceBody.trim() : "";
+    if (markdown.length >= 20 || replaceBody.length >= 20) return { valid: true, reason: "" };
+    return { valid: false, reason: "wiki 修复缺少可用正文 markdown/replaceBody" };
+  }
+  if (componentKind === "table") {
+    if (Array.isArray(value.rows) || Array.isArray(value.columns)) return { valid: true, reason: "" };
+    return { valid: false, reason: "表格修复缺少 rows 或 columns" };
+  }
+  if (componentKind === "entity") {
+    if (typeof value.name === "string" && value.name.trim()) return { valid: true, reason: "" };
+    return { valid: false, reason: "实体修复缺少 name" };
+  }
+  if (componentKind === "graph_snapshot") {
+    if (Array.isArray(value.nodes) && Array.isArray(value.edges)) return { valid: true, reason: "" };
+    return { valid: false, reason: "图谱修复缺少 nodes/edges" };
+  }
+  return { valid: true, reason: "" };
 }
 
 /**

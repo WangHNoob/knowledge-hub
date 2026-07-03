@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
 
+import { z } from "zod";
+
+import { config } from "../../config";
+import { createLlmClient, type JsonSchemaSpec, type LlmClient } from "../kbBuilder/llmClient";
+import { parseModelJson } from "../kbBuilder/jsonParse";
+import { extractMaxTokens, type PipelineModelConfig } from "../kbBuilder/modelConfig";
 import type { ReleaseAuditSummary } from "../releaseAudit";
 import type { ConformanceReport, OkfIssue } from "./types";
 import type { OkfSearchIndex } from "./searchIndex";
@@ -17,6 +23,18 @@ export interface KnowledgeLintIssue {
   okfPath?: string;
   componentId?: string;
   suggestedAction: string;
+  governance?: KnowledgeLintGovernance;
+}
+
+export interface KnowledgeLintGovernance {
+  source: "llm" | "rule_fallback";
+  confidence: number;
+  actionType: "auto_remediation" | "rebuild" | "manual_review" | "monitor";
+  autoEligible: boolean;
+  diagnosis: string;
+  risk: string;
+  remediation: string;
+  rationale: string;
 }
 
 export interface KnowledgeLintReport {
@@ -35,6 +53,15 @@ export interface KnowledgeLintReport {
     info: number;
     total: number;
   }>;
+  governance: {
+    source: "llm" | "rule_fallback";
+    analyzed: number;
+    autoEligible: number;
+    manualReview: number;
+    rebuild: number;
+    monitor: number;
+    warnings: string[];
+  };
   issues: KnowledgeLintIssue[];
 }
 
@@ -43,6 +70,26 @@ export interface KnowledgeLintExport {
   jsonUri: string;
   markdownUri: string;
 }
+
+const MAX_LLM_GOVERNED_ISSUES = 12;
+
+const GovernanceSchema = z.object({
+  issues: z.array(z.object({
+    id: z.string(),
+    confidence: z.number(),
+    actionType: z.enum(["auto_remediation", "rebuild", "manual_review", "monitor"]),
+    autoEligible: z.boolean(),
+    diagnosis: z.string(),
+    risk: z.string(),
+    remediation: z.string(),
+    rationale: z.string(),
+  })),
+});
+
+const GOVERNANCE_JSON_SCHEMA: JsonSchemaSpec = {
+  name: "knowledge_lint_governance",
+  schema: z.toJSONSchema(GovernanceSchema) as Record<string, unknown>,
+};
 
 interface GraphAsset {
   nodes?: Array<{ id?: string; label?: string; wiki_page?: string }>;
@@ -53,15 +100,15 @@ interface TableSchemaManifest {
   tables?: Array<{ schema?: { table_name?: string } }>;
 }
 
-export function exportKnowledgeLintReport(input: {
+export async function exportKnowledgeLintReport(input: {
   releaseId: string;
   generatedAt: string;
   bundleDir: string;
   releaseDir: string;
   conformance: ConformanceReport;
   audit: ReleaseAuditSummary;
-}): KnowledgeLintExport {
-  const report = buildKnowledgeLintReport(input);
+}): Promise<KnowledgeLintExport> {
+  const report = await governKnowledgeLintReport(buildKnowledgeLintReport(input));
   const jsonUri = posix.join("releases", input.releaseId, "knowledge_lint.json");
   const markdownUri = posix.join("releases", input.releaseId, "knowledge_lint.md");
   writeFileSync(join(input.releaseDir, "knowledge_lint.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -83,7 +130,7 @@ export function buildKnowledgeLintReport(input: {
     ...issuesFromTrust(input.audit),
     ...issuesFromTableDependencies(input.bundleDir),
     ...issuesFromMcpFeedback(input.audit),
-  ];
+  ].map((issue) => ({ ...issue, governance: fallbackGovernance(issue) }));
   const summary = severitySummary(issues);
   return {
     version: 1,
@@ -94,6 +141,7 @@ export function buildKnowledgeLintReport(input: {
       score: lintScore(summary),
     },
     domains: domainSummaries(issues),
+    governance: governanceSummary(issues, "rule_fallback", []),
     issues,
   };
 }
@@ -124,6 +172,11 @@ export function renderKnowledgeLintMarkdown(report: KnowledgeLintReport): string
       lines.push(`- [${issue.severity}] ${issue.title}${location ? ` (${location})` : ""}`);
       lines.push(`  - ${issue.message}`);
       lines.push(`  - action: ${issue.suggestedAction}`);
+      if (issue.governance) {
+        lines.push(`  - governance: ${issue.governance.actionType}, confidence ${issue.governance.confidence}, autoEligible ${issue.governance.autoEligible}`);
+        lines.push(`  - diagnosis: ${issue.governance.diagnosis}`);
+        lines.push(`  - remediation: ${issue.governance.remediation}`);
+      }
     }
     lines.push("");
   }
@@ -361,6 +414,187 @@ function domainSummaries(issues: KnowledgeLintIssue[]): KnowledgeLintReport["dom
 
 function lintScore(summary: { blocking: number; warning: number; info: number }): number {
   return Math.max(0, Math.round((1 - Math.min(1, summary.blocking * 0.2 + summary.warning * 0.035 + summary.info * 0.01)) * 100) / 100);
+}
+
+async function governKnowledgeLintReport(report: KnowledgeLintReport): Promise<KnowledgeLintReport> {
+  const warnings: string[] = [];
+  const fallbackIssues = report.issues.map((issue) => ({ ...issue, governance: fallbackGovernance(issue) }));
+  const client = createKnowledgeLintLlmClient(warnings);
+  if (!client || fallbackIssues.length === 0) {
+    return {
+      ...report,
+      governance: governanceSummary(fallbackIssues, "rule_fallback", warnings),
+      issues: fallbackIssues,
+    };
+  }
+
+  try {
+    const governed = await governIssuesWithLlm(client, fallbackIssues, warnings);
+    return {
+      ...report,
+      governance: governanceSummary(governed, "llm", warnings),
+      issues: governed,
+    };
+  } catch (error) {
+    warnings.push(`knowledge lint LLM governance failed: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      ...report,
+      governance: governanceSummary(fallbackIssues, "rule_fallback", warnings),
+      issues: fallbackIssues,
+    };
+  }
+}
+
+async function governIssuesWithLlm(
+  client: LlmClient,
+  issues: KnowledgeLintIssue[],
+  warnings: string[],
+): Promise<KnowledgeLintIssue[]> {
+  const targetIssues = issues
+    .slice()
+    .sort((a, b) => severityRank(a.severity) - severityRank(b.severity))
+    .slice(0, MAX_LLM_GOVERNED_ISSUES);
+  const targetIds = new Set(targetIssues.map((issue) => issue.id));
+  if (issues.length > MAX_LLM_GOVERNED_ISSUES) {
+    warnings.push(`knowledge lint LLM governance capped at ${MAX_LLM_GOVERNED_ISSUES}; ${issues.length - MAX_LLM_GOVERNED_ISSUES} issues used rule fallback`);
+  }
+
+  const completion = await client.complete({
+    system: [
+      "你是知识库治理助手。你不会直接修改发布包，只给出治理决策。",
+      "只允许把低风险、可由已有确定性回写/重建链路处理的问题标记为 auto_remediation。",
+      "证据缺失、可信度下降、删除知识、MCP 高频 miss 通常需要人工确认或重建，不要强行自动修。",
+      "输出 JSON，必须覆盖输入中的每个 issue id。"
+    ].join("\n"),
+    user: JSON.stringify({
+      releaseId: "knowledge_lint",
+      issues: targetIssues.map((issue) => ({
+        id: issue.id,
+        domain: issue.domain,
+        severity: issue.severity,
+        title: issue.title,
+        message: issue.message,
+        okfPath: issue.okfPath ?? "",
+        componentId: issue.componentId ?? "",
+        suggestedAction: issue.suggestedAction,
+      })),
+    }, null, 2),
+    maxTokens: extractMaxTokens(),
+    jsonSchema: GOVERNANCE_JSON_SCHEMA,
+    jsonMode: true,
+  });
+  const parsed = GovernanceSchema.parse(parseModelJson(completion.text, "knowledge_lint_governance"));
+  const governanceById = new Map(parsed.issues.map((item) => [item.id, item] as const));
+  return issues.map((issue) => {
+    if (!targetIds.has(issue.id)) return issue;
+    const governance = governanceById.get(issue.id);
+    if (!governance) {
+      warnings.push(`knowledge lint LLM governance missed issue ${issue.id}; used rule fallback`);
+      return issue;
+    }
+    return {
+      ...issue,
+      governance: {
+        source: "llm",
+        confidence: clamp(governance.confidence),
+        actionType: governance.actionType,
+        autoEligible: Boolean(governance.autoEligible && governance.actionType === "auto_remediation" && governance.confidence >= 0.85),
+        diagnosis: governance.diagnosis.trim(),
+        risk: governance.risk.trim(),
+        remediation: governance.remediation.trim(),
+        rationale: governance.rationale.trim(),
+      },
+    };
+  });
+}
+
+function fallbackGovernance(issue: KnowledgeLintIssue): KnowledgeLintGovernance {
+  const actionType = fallbackActionType(issue);
+  return {
+    source: "rule_fallback",
+    confidence: 0.6,
+    actionType,
+    autoEligible: false,
+    diagnosis: issue.message,
+    risk: fallbackRisk(issue),
+    remediation: issue.suggestedAction,
+    rationale: "未启用或未成功调用 LLM，使用确定性 Knowledge Lint 规则给出治理建议。",
+  };
+}
+
+function fallbackActionType(issue: KnowledgeLintIssue): KnowledgeLintGovernance["actionType"] {
+  if (issue.domain === "links" && issue.severity !== "blocking") return "auto_remediation";
+  if (issue.domain === "table_dependencies" && issue.componentId) return "auto_remediation";
+  if (issue.domain === "graph" || issue.domain === "evidence" || issue.domain === "trust") return "rebuild";
+  if (issue.domain === "mcp_feedback") return "manual_review";
+  return issue.severity === "info" ? "monitor" : "manual_review";
+}
+
+function fallbackRisk(issue: KnowledgeLintIssue): string {
+  if (issue.severity === "blocking") return "会阻断或显著降低 Agent 对当前发布知识的可靠消费。";
+  if (issue.severity === "warning") return "不会立即阻断发布，但会降低检索、引用或关系消费质量。";
+  return "作为观察项记录，不需要立即处理。";
+}
+
+function governanceSummary(
+  issues: KnowledgeLintIssue[],
+  source: KnowledgeLintReport["governance"]["source"],
+  warnings: string[],
+): KnowledgeLintReport["governance"] {
+  return {
+    source,
+    analyzed: issues.filter((issue) => issue.governance).length,
+    autoEligible: issues.filter((issue) => issue.governance?.autoEligible).length,
+    manualReview: issues.filter((issue) => issue.governance?.actionType === "manual_review").length,
+    rebuild: issues.filter((issue) => issue.governance?.actionType === "rebuild").length,
+    monitor: issues.filter((issue) => issue.governance?.actionType === "monitor").length,
+    warnings,
+  };
+}
+
+function createKnowledgeLintLlmClient(warnings: string[]): LlmClient | null {
+  const modelConfig = resolveKnowledgeLintModelConfig();
+  if (modelConfig.provider === "deterministic") {
+    warnings.push("knowledge lint LLM governance disabled: no LLM config or API key");
+    return null;
+  }
+  try {
+    return createLlmClient(modelConfig);
+  } catch (error) {
+    warnings.push(`knowledge lint LLM governance disabled: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+function resolveKnowledgeLintModelConfig(): PipelineModelConfig {
+  const provider = process.env.KH_KNOWLEDGE_LINT_LLM_PROVIDER || config.autoRemediationLlmProvider;
+  if (provider === "anthropic") {
+    const apiKey = process.env.KH_KNOWLEDGE_LINT_LLM_API_KEY || process.env.ANTHROPIC_API_KEY || config.autoRemediationLlmApiKey;
+    if (!apiKey) return { provider: "deterministic", model: "deterministic" };
+    return {
+      provider: "anthropic",
+      baseUrl: process.env.KH_KNOWLEDGE_LINT_LLM_BASE_URL || config.autoRemediationLlmBaseUrl || "https://api.anthropic.com/v1",
+      model: process.env.KH_KNOWLEDGE_LINT_LLM_MODEL || config.autoRemediationLlmModel || "claude-sonnet-4-5",
+      apiKey,
+    };
+  }
+  const apiKey = process.env.KH_KNOWLEDGE_LINT_LLM_API_KEY || process.env.OPENAI_API_KEY || config.autoRemediationLlmApiKey;
+  if (!apiKey) return { provider: "deterministic", model: "deterministic" };
+  return {
+    provider: "openai-compatible",
+    baseUrl: process.env.KH_KNOWLEDGE_LINT_LLM_BASE_URL || process.env.OPENAI_BASE_URL || config.autoRemediationLlmBaseUrl || "https://api.openai.com/v1",
+    model: process.env.KH_KNOWLEDGE_LINT_LLM_MODEL || process.env.OPENAI_MODEL || config.autoRemediationLlmModel || "gpt-4.1-mini",
+    apiKey,
+  };
+}
+
+function severityRank(severity: KnowledgeLintSeverity): number {
+  return severity === "blocking" ? 0 : severity === "warning" ? 1 : 2;
+}
+
+function clamp(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
 
 function tableSchemaNames(bundleDir: string): Set<string> {

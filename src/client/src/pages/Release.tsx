@@ -26,7 +26,7 @@ import { errorMessage, formatTime, qualityScore, releaseVersion } from "../utils
 import { componentLabel } from "../utils/componentLabel";
 import { IdChip, useNav } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
-import { autoPublishReasonAction, autoPublishReasonLabel, parseAutoPublishReasons } from "../utils/automation";
+import { parseAutoPublishReasonDetails, parseAutoPublishReasons, type AutoPublishReasonDetailView } from "../utils/automation";
 
 type ReleaseTab = "compose" | "current";
 
@@ -401,14 +401,7 @@ function AutoPublishEventsPanel({
               </div>
 
               {event.type === "skipped" ? (
-                <div className="auto-publish-reasons">
-                  {event.reasons.map((reason) => (
-                    <p key={reason}>
-                      <strong>{autoPublishReasonLabel(reason)}</strong>
-                      <span>{autoPublishReasonAction(reason)}</span>
-                    </p>
-                  ))}
-                </div>
+                <AutoPublishReasonList details={event.reasonDetails} />
               ) : (
                 <p className="notice">本次 revision 满足自动发布条件，已经成为 Agent 当前可消费版本。</p>
               )}
@@ -425,6 +418,29 @@ function AutoPublishEventsPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function AutoPublishReasonList({ details }: { details: AutoPublishReasonDetailView[] }) {
+  if (details.length === 0) return <p className="subtle">自动发布被跳过，但没有返回约束明细。请查看关联构建日志。</p>;
+  return (
+    <div className="auto-publish-reasons">
+      {details.map((detail) => (
+        <article className={`auto-publish-reason ${detail.severity}`} key={detail.code}>
+          <div>
+            <strong>{detail.label}</strong>
+            <Badge label={detail.count > 0 ? `${detail.count} 项` : detail.severity} tone={detail.severity === "blocking" ? "hot" : detail.severity === "warning" ? "warn" : undefined} />
+          </div>
+          {detail.description && <span>{detail.description}</span>}
+          <span>{detail.action}</span>
+          {detail.sampleIds.length > 0 && (
+            <div className="auto-publish-samples">
+              {detail.sampleIds.map((id) => <IdChip key={id} label={componentLabel(id)} title={id} />)}
+            </div>
+          )}
+        </article>
+      ))}
+    </div>
   );
 }
 
@@ -459,7 +475,7 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
         <Metric label="审核未关" value={audit.review.open} hint={`${audit.review.blocking} blocking`} tone={audit.review.blocking ? "hot" : audit.review.open ? "warn" : "ok"} />
         <Metric label="反馈回流" value={audit.agentFeedback.feedbackEvents} hint={`${audit.agentFeedback.mcpCalls} MCP calls`} tone={audit.agentFeedback.mcpMisses || audit.agentFeedback.mcpErrors ? "warn" : "ok"} />
         <Metric label="变更组件" value={revision ? revision.summary.componentsChanged + revision.summary.componentsAdded + revision.summary.componentsRemoved : "-"} hint={revision?.mode ?? "无版本链"} />
-        <Metric label="自动发布" value={autoPublish?.eligible ? "可用" : "不可用"} hint={autoPublish?.reasons[0] ?? autoPublish?.mode ?? "未检查"} tone={autoPublish?.eligible ? "ok" : "warn"} />
+        <Metric label="自动发布" value={autoPublish?.eligible ? "可用" : "不可用"} hint={autoPublish?.reasonDetails[0]?.label ?? autoPublish?.mode ?? "未检查"} tone={autoPublish?.eligible ? "ok" : "warn"} />
       </div>
 
       {revision && (
@@ -474,6 +490,19 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
           debt={correctionDebt}
           onNavigateComponent={(componentId) => navigate("assets", { componentId })}
         />
+      )}
+
+      {autoPublish && !autoPublish.eligible && (
+        <section className="revision-patch">
+          <div className="revision-patch-head">
+            <div>
+              <h4>自动发布约束</h4>
+              <p>这些门槛决定当前 revision 为什么不能自动成为 Agent 当前版本。</p>
+            </div>
+            <Badge label={`${autoPublish.reasonDetails.length || autoPublish.reasons.length} 项`} tone="warn" />
+          </div>
+          <AutoPublishReasonList details={autoPublish.reasonDetails} />
+        </section>
       )}
 
       <div className="audit-grid">
@@ -549,6 +578,12 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
                   <strong>{Math.round(okf.lintSummary.score * 100)}%</strong>
                 </>
               )}
+              {okf?.lintGovernance && (
+                <>
+                  <span>治理来源</span>
+                  <strong>{okf.lintGovernance.source === "llm" ? "LLM" : "规则兜底"}</strong>
+                </>
+              )}
               <span>Warning</span>
               <strong>{okfStats.summary.warning}</strong>
               {okf?.lintSummary && (
@@ -563,6 +598,12 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
               <strong>{okfStats.linkSummary.resolved}</strong>
               <span>断链</span>
               <strong>{okfStats.linkSummary.unresolved}</strong>
+              {okf?.lintGovernance && (
+                <>
+                  <span>自动候选</span>
+                  <strong>{okf.lintGovernance.autoEligible}</strong>
+                </>
+              )}
             </div>
           ) : (
             <p className="subtle">暂无 OKF 扫描结果。</p>
@@ -664,6 +705,7 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
     lintUri: String(okf.lintUri ?? ""),
     lintMarkdownUri: String(okf.lintMarkdownUri ?? ""),
     lintSummary: lintSummary(okf.lintSummary),
+    lintGovernance: lintGovernance(okf.lintGovernance),
     summary: {
       blocking: Number(summary.blocking ?? 0),
       warning: Number(summary.warning ?? 0),
@@ -677,6 +719,21 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
       required: Number(citationSummary.required ?? 0),
       present: Number(citationSummary.present ?? 0),
     },
+  };
+}
+
+function lintGovernance(value: unknown): OkfManifest["lintGovernance"] {
+  const governance = objectValue(value);
+  if (Object.keys(governance).length === 0) return null;
+  const source = governance.source === "llm" ? "llm" : "rule_fallback";
+  return {
+    source,
+    analyzed: Number(governance.analyzed ?? 0),
+    autoEligible: Number(governance.autoEligible ?? 0),
+    manualReview: Number(governance.manualReview ?? 0),
+    rebuild: Number(governance.rebuild ?? 0),
+    monitor: Number(governance.monitor ?? 0),
+    warnings: Array.isArray(governance.warnings) ? governance.warnings.map(String) : [],
   };
 }
 
@@ -790,10 +847,12 @@ function revisionInfo(release: ReleaseRecord): ReleaseRevision | null {
 function autoPublishInfo(release: ReleaseRecord): AutoPublishInfo | null {
   const value = objectValue(release.manifest.autoPublish);
   if (Object.keys(value).length === 0) return null;
+  const reasons = Array.isArray(value.reasons) ? value.reasons.filter((item): item is string => typeof item === "string") : [];
   return {
     eligible: Boolean(value.eligible),
     mode: String(value.mode ?? "manual"),
-    reasons: Array.isArray(value.reasons) ? value.reasons.filter((item): item is string => typeof item === "string") : [],
+    reasons,
+    reasonDetails: parseAutoPublishReasonDetails(value.reasonDetails, reasons),
   };
 }
 
@@ -848,7 +907,12 @@ function buildAutoPublishEvents(events: FlywheelEvent[], releases: ReleaseRecord
         releaseVersion: releaseById.get(releaseId)?.version ?? "",
         runId: stringField(payload.runId),
         packageId: stringField(payload.packageId),
-        reasons: parseAutoPublishReasons(stringField(payload.reason)),
+        reasons: Array.isArray(payload.reasons)
+          ? payload.reasons.filter((item): item is string => typeof item === "string")
+          : parseAutoPublishReasons(stringField(payload.reason)),
+        reasonDetails: parseAutoPublishReasonDetails(payload.reasonDetails, Array.isArray(payload.reasons)
+          ? payload.reasons.filter((item): item is string => typeof item === "string")
+          : parseAutoPublishReasons(stringField(payload.reason))),
         createdAt: event.createdAt,
       };
     });
@@ -879,6 +943,15 @@ interface OkfManifest {
   lintUri: string;
   lintMarkdownUri: string;
   lintSummary: KnowledgeLintSummary | null;
+  lintGovernance: {
+    source: "llm" | "rule_fallback";
+    analyzed: number;
+    autoEligible: number;
+    manualReview: number;
+    rebuild: number;
+    monitor: number;
+    warnings: string[];
+  } | null;
   summary: { blocking: number; warning: number; info: number };
   linkSummary: { resolved: number; unresolved: number };
   citationSummary: { required: number; present: number };
@@ -916,6 +989,7 @@ interface AutoPublishInfo {
   eligible: boolean;
   mode: string;
   reasons: string[];
+  reasonDetails: AutoPublishReasonDetailView[];
 }
 
 interface ReleaseSourceCorrectionDebt {
@@ -942,5 +1016,6 @@ interface AutoPublishEventView {
   runId: string;
   packageId: string;
   reasons: string[];
+  reasonDetails: AutoPublishReasonDetailView[];
   createdAt: string;
 }
