@@ -45,6 +45,7 @@ export interface ReleaseAuditSummary {
     missingComponents: number;
     evidenceRecords: number;
     coverageRate: number;
+    missingComponentRefs: Array<{ componentId: string; title: string; artifactId: string; kind: string }>;
   };
   trust: {
     averageScore: number | null;
@@ -324,7 +325,7 @@ async function buildSummary(adapter: DatabaseAdapter, packages: AssetPackage[]):
 async function evidenceSummary(adapter: DatabaseAdapter, components: AssetComponent[]): Promise<ReleaseAuditSummary["evidence"]> {
   const requiredComponentIds = components.filter((component) => EVIDENCE_REQUIRED_KINDS.has(component.kind)).map((component) => component.componentId);
   if (requiredComponentIds.length === 0) {
-    return { requiredComponents: 0, coveredComponents: 0, missingComponents: 0, evidenceRecords: 0, coverageRate: 1 };
+    return { requiredComponents: 0, coveredComponents: 0, missingComponents: 0, evidenceRecords: 0, coverageRate: 1, missingComponentRefs: [] };
   }
   const placeholders = requiredComponentIds.map((_, index) => `$${index + 1}`).join(",");
   const { rows } = await adapter.query(
@@ -336,12 +337,22 @@ async function evidenceSummary(adapter: DatabaseAdapter, components: AssetCompon
   );
   const covered = rows.filter((row) => Number(row.records ?? 0) > 0).length;
   const records = rows.reduce((sum, row) => sum + Number(row.records ?? 0), 0);
+  const coveredIds = new Set(rows.filter((row) => Number(row.records ?? 0) > 0).map((row) => String(row.component_id)));
+  const missing = components
+    .filter((component) => EVIDENCE_REQUIRED_KINDS.has(component.kind) && !coveredIds.has(component.componentId))
+    .map((component) => ({
+      componentId: component.componentId,
+      title: component.title,
+      artifactId: component.artifactId,
+      kind: component.kind,
+    }));
   return {
     requiredComponents: requiredComponentIds.length,
     coveredComponents: covered,
     missingComponents: Math.max(requiredComponentIds.length - covered, 0),
     evidenceRecords: records,
     coverageRate: covered / requiredComponentIds.length,
+    missingComponentRefs: missing,
   };
 }
 

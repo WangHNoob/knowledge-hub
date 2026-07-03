@@ -202,6 +202,17 @@ function issuesFromConformance(report: ConformanceReport): KnowledgeLintIssue[] 
 
 function issuesFromEvidence(audit: ReleaseAuditSummary): KnowledgeLintIssue[] {
   if (audit.evidence.missingComponents <= 0) return [];
+  if (audit.evidence.missingComponentRefs?.length) {
+    return audit.evidence.missingComponentRefs.slice(0, 50).map((component) => ({
+      id: `evidence_missing_${slug(component.componentId)}`,
+      domain: "evidence" as const,
+      severity: audit.evidence.coveredComponents === 0 ? "blocking" as const : "warning" as const,
+      title: "知识组件缺少证据记录",
+      message: `${component.title || component.artifactId || component.componentId} 没有 evidence_records 或 OKF Citations。`,
+      componentId: component.componentId,
+      suggestedAction: "补充 evidence_records/source refs，或从正确资料版本重新构建生成 Citations，然后重新发布。",
+    }));
+  }
   return [{
     id: "evidence_missing_components",
     domain: "evidence",

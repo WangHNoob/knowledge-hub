@@ -61,6 +61,9 @@ describe("Knowledge Lint", () => {
         componentId: "cmp_one",
       });
       expect(report.domains.evidence.total).toBeGreaterThan(0);
+      expect(report.issues.find((issue) => issue.id === "evidence_missing_cmp_one")).toMatchObject({
+        componentId: "cmp_one",
+      });
       expect(report.domains.graph.total).toBeGreaterThan(0);
       expect(report.domains.trust.total).toBeGreaterThan(0);
       expect(report.domains.table_dependencies.total).toBeGreaterThan(0);
@@ -130,6 +133,7 @@ function auditFixture(): ReleaseAuditSummary {
       missingComponents: 1,
       evidenceRecords: 0,
       coverageRate: 0,
+      missingComponentRefs: [{ componentId: "cmp_one", title: "One", artifactId: "wiki/systems/one.md", kind: "wiki_page" }],
     },
     trust: {
       averageScore: 0.42,
