@@ -1,230 +1,263 @@
-import { ArrowRight, CircleDot, GitBranch, SearchCheck, ShieldAlert } from "lucide-react";
-import type { ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { ArrowRight, RefreshCw, ShieldAlert, Sparkles, Workflow } from "lucide-react";
+import { useMemo, useRef } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   getDashboard,
-  type AgentEvent,
-  type FlywheelRiskItem,
-  type FlywheelWorkbenchTarget,
-  type ReleaseRecord,
-  type ReviewTask
+  getFlywheelStatus,
+  syncFlywheel,
+  type FlywheelAutomationItem,
+  type FlywheelPrimaryAction,
+  type FlywheelStatus,
+  type FlywheelWorkbenchView,
+  type HumanException,
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
-import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
 import type { NavParams, View } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
-import { componentLabel } from "../utils/componentLabel";
 import { formatCounts, formatPercent, formatTime } from "../utils/format";
+
+const STATE_TONE: Record<FlywheelStatus["state"], "hot" | "warn" | "ok"> = {
+  needs_attention: "hot",
+  building: "warn",
+  source_changed: "warn",
+  ready_to_publish: "warn",
+  published: "ok",
+  idle: "ok",
+};
 
 export function Dashboard() {
   const { navigate } = useNav();
+  const queryClient = useQueryClient();
   const { currentProjectId, currentProject } = useProject();
+  const exceptionsRef = useRef<HTMLElement | null>(null);
+
   const dashboard = useQuery({ queryKey: ["dashboard", currentProjectId], queryFn: () => getDashboard(currentProjectId) });
-  const workbenchQuery = useWorkbench(currentProjectId);
+  const statusQuery = useQuery({
+    queryKey: ["flywheel", "status", currentProjectId],
+    queryFn: () => getFlywheelStatus(currentProjectId),
+    refetchInterval: 5000,
+  });
 
-  const isLoading = dashboard.isLoading || workbenchQuery.isLoading;
-  const error = dashboard.error ?? workbenchQuery.error;
+  const syncMutation = useMutation({
+    mutationFn: () => syncFlywheel(currentProjectId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", currentProjectId] });
+    },
+  });
+
+  const status = statusQuery.data;
+
+  const runPrimaryAction = useMemo(
+    () => (action: FlywheelPrimaryAction) => {
+      switch (action.action) {
+        case "sync_and_publish":
+          syncMutation.mutate();
+          break;
+        case "open_exceptions":
+          exceptionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          break;
+        case "open_sources":
+          navigate("sources", action.params as NavParams | undefined);
+          break;
+        case "open_release":
+          navigate("buildrelease", action.params as NavParams | undefined);
+          break;
+        case "retest_agent":
+          navigate("agent", action.params as NavParams | undefined);
+          break;
+        default:
+          break;
+      }
+    },
+    [navigate, syncMutation],
+  );
+
+  if (statusQuery.isLoading || dashboard.isLoading) return <Loading title="正在整理知识运营台" />;
+  if (statusQuery.error || !status) return <ErrorState error={statusQuery.error} />;
+
   const data = dashboard.data;
-  const workbench = workbenchQuery.data;
-
-  if (isLoading) return <Loading title="正在整理飞轮工作台" />;
-  if (error || !data || !workbench) return <ErrorState error={error} />;
+  const isSyncing = syncMutation.isPending || status.state === "building";
 
   return (
-    <Page title="飞轮工作台" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。把 Agent 反馈、标注、重建、发布收敛成可直接处理的任务队列。`}>
-      <section className={`flywheel-command ${workbench.state}`}>
+    <Page
+      title="知识运营台"
+      subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。构建、治理、发布尽量自动完成，你只处理少量例外。`}
+    >
+      <section className={`flywheel-command ${STATE_TONE[status.state]}`}>
         <div>
-          <span className="command-kicker">当前主线</span>
-          <h2>{workbench.headline}</h2>
-          <p>{workbench.summary}</p>
+          <span className="command-kicker">当前状态</span>
+          <h2>{status.headline}</h2>
+          <p>{status.summary}</p>
+          {syncMutation.data?.message && (
+            <p className="command-note">{syncMutation.data.message}</p>
+          )}
+          {syncMutation.error && (
+            <p className="command-note error">
+              {syncMutation.error instanceof Error ? syncMutation.error.message : "同步失败，请重试。"}
+            </p>
+          )}
         </div>
-        <button className="primary-action" type="button" onClick={() => navigateTarget(navigate, workbench.primary)}>
-          {workbench.primary.label}
-          <ArrowRight size={16} />
+        <button
+          className="primary-action"
+          type="button"
+          disabled={status.primaryAction.action === "sync_and_publish" && isSyncing}
+          onClick={() => runPrimaryAction(status.primaryAction)}
+        >
+          {status.primaryAction.action === "sync_and_publish" && isSyncing ? "正在同步…" : status.primaryAction.label}
+          {status.primaryAction.action === "sync_and_publish" ? <RefreshCw size={16} /> : <ArrowRight size={16} />}
         </button>
       </section>
 
       <div className="metrics workbench-metrics">
-        <Metric label="待标注" value={workbench.annotationTasks.length} hint="AI 不确定，需要人选答案" tone={workbench.annotationTasks.length ? "warn" : "ok"} />
-        <Metric label="待复测" value={workbench.retestItems.length} hint="来自 Agent 负反馈" tone={workbench.retestItems.length ? "warn" : "ok"} />
-        <Metric label="待发布" value={workbench.publishItems.length} hint="draft / revision 可检查" tone={workbench.publishItems.length ? "warn" : "ok"} />
-        <Metric label="风险知识" value={workbench.riskItems.length} hint="低可信或证据不足" tone={workbench.riskItems.length ? "hot" : "ok"} />
-        <Metric label="证据覆盖" value={formatPercent(data.evidence.coverageRate)} hint={`${data.evidence.coveredComponents}/${data.evidence.totalComponents} 组件`} tone={data.evidence.missingComponents > 0 ? "warn" : "ok"} />
+        <Metric label="待处理例外" value={status.metrics.pendingExceptions} hint="必须人工判断的问题" tone={status.metrics.pendingExceptions ? "hot" : "ok"} />
+        <Metric label="资料待同步" value={status.metrics.sourceChanges} hint="最新资料尚未构建" tone={status.metrics.sourceChanges ? "warn" : "ok"} />
+        <Metric label="构建进行中" value={status.metrics.runningBuilds} hint="自动流水线运行中" tone={status.metrics.runningBuilds ? "warn" : "ok"} />
+        <Metric label="Agent 反馈" value={status.metrics.agentFeedbackOpen} hint="可复测的负反馈" tone={status.metrics.agentFeedbackOpen ? "warn" : "ok"} />
+        <Metric label="今日自动治理" value={status.metrics.autoGovernedToday} hint={`Lint 自动 ${status.remediation.autoGoverned} / 人工 ${status.remediation.needsHuman}`} tone="ok" />
+        <Metric label="当前发布" value={status.metrics.currentReleaseVersion || "未发布"} hint="Agent 正在消费的版本" tone={status.metrics.currentReleaseVersion ? "ok" : "warn"} />
       </div>
 
-      <section className="workbench-board">
-        <WorkbenchLane
-          title="1. 待标注"
-          icon={CircleDot}
-          empty="没有待标注任务。"
-          caption="优先处理 AI 不确定、样例复盘和可沉淀为规则的问题。"
-        >
-          {workbench.annotationTasks.map((task) => (
-            <TaskCard key={task.taskId} task={task} onOpen={() => navigate("review", { taskId: task.taskId })} />
-          ))}
-        </WorkbenchLane>
+      <section className="workbench-board dual">
+        <section className="workbench-lane" ref={exceptionsRef}>
+          <div className="lane-head">
+            <ShieldAlert size={17} />
+            <div>
+              <h2>需要你处理的例外</h2>
+              <p>只列出系统无法自动处理的问题；正常情况下这里应接近为空。</p>
+            </div>
+          </div>
+          <div className="lane-list">
+            {status.attentionItems.length === 0 ? (
+              <p className="lane-empty">没有需要人工处理的例外，飞轮在自动运转。</p>
+            ) : (
+              status.attentionItems.map((item) => (
+                <ExceptionCard key={item.id} item={item} onOpen={() => openException(navigate, item)} />
+              ))
+            )}
+          </div>
+        </section>
 
-        <WorkbenchLane
-          title="2. 待复测"
-          icon={SearchCheck}
-          empty="没有新的 Agent 反馈需要复测。"
-          caption="沿用原查询复测，判断修改是否真的让 MCP 命中收敛。"
-        >
-          {workbench.retestItems.map((item) => (
-            <AgentCard key={item.eventId} event={item} onRetest={() => navigate("agent", { eventId: item.eventId, query: item.query })} onReview={() => navigate("review", { taskId: item.taskId })} />
-          ))}
-        </WorkbenchLane>
-
-        <WorkbenchLane
-          title="3. 待发布"
-          icon={GitBranch}
-          empty="没有待发布版本。"
-          caption="构建完成后，检查 draft / revision 是否可以推给 Agent。"
-        >
-          {workbench.publishItems.map((release) => (
-            <ReleaseCard key={release.releaseId} release={release} onOpen={() => navigate("buildrelease", { releaseId: release.releaseId })} />
-          ))}
-        </WorkbenchLane>
-
-        <WorkbenchLane
-          title="4. 风险知识"
-          icon={ShieldAlert}
-          empty="暂无高风险知识。"
-          caption="低可信、缺证据、负反馈复发会进入这里。"
-        >
-          {workbench.riskItems.map((item) => (
-            <RiskCard key={item.key} item={item} onOpen={() => navigateTarget(navigate, item)} />
-          ))}
-        </WorkbenchLane>
+        <section className="workbench-lane">
+          <div className="lane-head">
+            <Sparkles size={17} />
+            <div>
+              <h2>最近自动化</h2>
+              <p>系统最近自动完成或跳过的构建、治理与发布动作。</p>
+            </div>
+          </div>
+          <div className="lane-list">
+            {status.recentAutomation.length === 0 ? (
+              <p className="lane-empty">还没有自动化记录。</p>
+            ) : (
+              status.recentAutomation.map((item) => <AutomationRow key={item.id} item={item} />)
+            )}
+          </div>
+        </section>
       </section>
 
-      <section className="band workbench-health">
-        <div>
-          <h2>系统健康</h2>
-          <p>工程健康指标仍保留，但不再抢占策划主工作流。</p>
-        </div>
-        <div className="health-grid">
-          <span><b>资料版本</b><strong>{data.sources.versions}</strong><small>{data.sources.latest ? `最新 ${data.sources.latest.label}` : "尚未导入"}</small></span>
-          <span><b>知识资产包</b><strong>{data.packages.total}</strong><small>{formatCounts(data.packages.byStatus)}</small></span>
-          <span><b>待修问题</b><strong>{data.review.open}</strong><small>{data.review.blocking} 个阻断</small></span>
-          <span><b>Agent 查询</b><strong>{data.agent.recentQueries}</strong><small>{data.agent.misses} 次未命中</small></span>
-          <span><b>当前发布</b><strong>{data.release.current?.version ?? "未发布"}</strong><small>{data.release.current?.releaseId ?? "no published release"}</small></span>
-        </div>
-      </section>
+      {data && (
+        <section className="band workbench-health">
+          <div>
+            <h2>系统健康</h2>
+            <p>工程细节仍可追溯，但不再抢占主工作流。需要排障时从这里进入详情页。</p>
+          </div>
+          <div className="health-grid">
+            <span><b>资料版本</b><strong>{data.sources.versions}</strong><small>{data.sources.latest ? `最新 ${data.sources.latest.label}` : "尚未导入"}</small></span>
+            <span><b>知识资产包</b><strong>{data.packages.total}</strong><small>{formatCounts(data.packages.byStatus)}</small></span>
+            <span><b>待修问题</b><strong>{data.review.open}</strong><small>{data.review.blocking} 个阻断</small></span>
+            <span><b>证据覆盖</b><strong>{formatPercent(data.evidence.coverageRate)}</strong><small>{data.evidence.coveredComponents}/{data.evidence.totalComponents} 组件</small></span>
+            <span><b>Agent 查询</b><strong>{data.agent.recentQueries}</strong><small>{data.agent.misses} 次未命中</small></span>
+          </div>
+        </section>
+      )}
     </Page>
   );
 }
 
-function WorkbenchLane({
-  title,
-  icon: Icon,
-  caption,
-  empty,
-  children
-}: {
-  title: string;
-  icon: typeof CircleDot;
-  caption: string;
-  empty: string;
-  children: ReactNode;
-}) {
-  const hasChildren = Array.isArray(children) ? children.length > 0 : Boolean(children);
-  return (
-    <section className="workbench-lane">
-      <div className="lane-head">
-        <Icon size={17} />
-        <div>
-          <h2>{title}</h2>
-          <p>{caption}</p>
-        </div>
-      </div>
-      <div className="lane-list">
-        {hasChildren ? children : <p className="lane-empty">{empty}</p>}
-      </div>
-    </section>
-  );
-}
-
-function TaskCard({ task, onOpen }: { task: ReviewTask; onOpen: () => void }) {
-  return (
-    <article className="workbench-card">
-      <div className="card-row">
-        <Badge label={task.ruleId === "annotation_example.review" ? "样例复盘" : task.taskKind === "annotation" ? "标注" : "审核"} tone={task.severity === "blocking" ? "hot" : task.severity === "warning" ? "warn" : undefined} />
-        <span>{confidenceLabel(task.confidence)}</span>
-      </div>
-      <strong>{task.title}</strong>
-      <p>{task.suggestedAction || task.description}</p>
-      <code title={task.componentId}>{componentLabel(task.componentId)}</code>
-      <button className="secondary-action" type="button" onClick={onOpen}>去处理</button>
-    </article>
-  );
-}
-
-function AgentCard({ event, onRetest, onReview }: { event: AgentEvent; onRetest: () => void; onReview: () => void }) {
-  const component = event.components[0];
-  return (
-    <article className="workbench-card">
-      <div className="card-row">
-        <Badge label={agentFeedbackLabel(event.feedbackType)} tone={event.status === "miss" ? "hot" : "warn"} />
-        <span>{formatTime(event.createdAt)}</span>
-      </div>
-      <strong>{event.query || "未解析查询"}</strong>
-      <p>{event.suggestedAction || "复测该查询，确认命中与证据是否已收敛。"}</p>
-      <code title={component?.componentId ?? event.hitComponentIds[0] ?? ""}>{componentLabel(component?.componentId ?? event.hitComponentIds[0] ?? "", component?.title)}</code>
-      <div className="card-actions">
-        {event.taskId && <button className="secondary-action" type="button" onClick={onReview}>看任务</button>}
-        <button className="primary-action" type="button" onClick={onRetest}>复测</button>
-      </div>
-    </article>
-  );
-}
-
-function ReleaseCard({ release, onOpen }: { release: ReleaseRecord; onOpen: () => void }) {
-  return (
-    <article className="workbench-card">
-      <div className="card-row">
-        <Badge label={release.parentReleaseId ? "revision" : "draft"} tone="warn" />
-        <span>{formatTime(release.createdAt)}</span>
-      </div>
-      <strong>{release.version}</strong>
-      <p>{release.note || "检查变更组件、Lint 和可信度后发布给 Agent。"}</p>
-      <code>{release.releaseId}</code>
-      <button className="secondary-action" type="button" onClick={onOpen}>去发布</button>
-    </article>
-  );
-}
-
-function RiskCard({ item, onOpen }: { item: FlywheelRiskItem; onOpen: () => void }) {
+function ExceptionCard({ item, onOpen }: { item: HumanException; onOpen: () => void }) {
   return (
     <article className="workbench-card risk">
       <div className="card-row">
-        <Badge label={item.label} tone={item.tone} />
-        <span>{item.meta}</span>
+        <Badge label={attentionLevelLabel(item.attentionLevel)} tone={attentionTone(item.attentionLevel)} />
+        <span>{formatTime(item.createdAt)}</span>
       </div>
       <strong>{item.title}</strong>
       <p>{item.body}</p>
-      <code title={item.code}>{componentLabel(item.code)}</code>
-      <button className="secondary-action" type="button" onClick={onOpen}>查看</button>
+      <p className="exception-why"><b>为何需要你：</b>{item.whyHumanNeeded}</p>
+      <p className="exception-fix"><b>建议：</b>{item.recommendedAction}</p>
+      <button className="secondary-action" type="button" onClick={onOpen}>{item.primaryAction.label}</button>
     </article>
   );
 }
 
-function confidenceLabel(confidence: number): string {
-  if (!confidence) return "未评分";
-  return `confidence ${Math.round(confidence * 100)}%`;
+function AutomationRow({ item }: { item: FlywheelAutomationItem }) {
+  return (
+    <article className="workbench-card automation">
+      <div className="card-row">
+        <Badge label={automationStatusLabel(item.status)} tone={automationTone(item.status)} />
+        <span>{formatTime(item.createdAt)}</span>
+      </div>
+      <strong>{item.title}</strong>
+    </article>
+  );
 }
 
-function navigateTarget(navigate: (view: View, params?: NavParams) => void, target: FlywheelWorkbenchTarget) {
-  navigate(target.view as View, target.params as NavParams | undefined);
+function openException(navigate: (view: View, params?: NavParams) => void, item: HumanException) {
+  if (!item.target) return;
+  navigate(mapPageToView(item.target.page), item.target.params as NavParams | undefined);
 }
 
-function agentFeedbackLabel(type: string): string {
-  if (type === "miss") return "未命中";
-  if (type === "low_quality_hit") return "低质命中";
-  if (type === "evidence_insufficient") return "证据不足";
-  if (type === "repeated_query") return "重复查询";
-  if (type === "relation_inference_failed") return "关系失败";
-  return type || "反馈";
+function mapPageToView(page: FlywheelWorkbenchView): View {
+  switch (page) {
+    case "release":
+    case "builder":
+      return "buildrelease";
+    case "legislation":
+    case "aliases":
+      return "rules";
+    case "review":
+      return "review";
+    case "agent":
+      return "agent";
+    case "sources":
+      return "sources";
+    case "assets":
+      return "assets";
+    case "storage":
+    case "diagnostics":
+    case "maintenance":
+      return "system";
+    case "dashboard":
+    default:
+      return "dashboard";
+  }
+}
+
+function attentionLevelLabel(level: HumanException["attentionLevel"]): string {
+  if (level === "blocking") return "阻断";
+  if (level === "needs_decision") return "待决策";
+  return "观察";
+}
+
+function attentionTone(level: HumanException["attentionLevel"]): "hot" | "warn" | undefined {
+  if (level === "blocking") return "hot";
+  if (level === "needs_decision") return "warn";
+  return undefined;
+}
+
+function automationStatusLabel(status: FlywheelAutomationItem["status"]): string {
+  if (status === "running") return "进行中";
+  if (status === "completed") return "已完成";
+  if (status === "skipped") return "已跳过";
+  return "失败";
+}
+
+function automationTone(status: FlywheelAutomationItem["status"]): "hot" | "warn" | "ok" | undefined {
+  if (status === "failed") return "hot";
+  if (status === "skipped") return "warn";
+  if (status === "completed") return "ok";
+  return undefined;
 }

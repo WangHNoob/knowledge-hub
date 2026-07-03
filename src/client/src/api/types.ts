@@ -746,13 +746,145 @@ export interface FlywheelWorkbench {
   runningRuns: KnowledgeBuildRun[];
 }
 
+export type FlywheelState =
+  | "idle"
+  | "source_changed"
+  | "building"
+  | "ready_to_publish"
+  | "published"
+  | "needs_attention";
+
+export type FlywheelPrimaryActionType =
+  | "sync_and_publish"
+  | "open_exceptions"
+  | "open_sources"
+  | "open_release"
+  | "retest_agent";
+
+export interface FlywheelPrimaryAction {
+  label: string;
+  action: FlywheelPrimaryActionType;
+  params?: Record<string, string>;
+}
+
+export interface FlywheelMetrics {
+  sourceChanges: number;
+  runningBuilds: number;
+  pendingExceptions: number;
+  currentReleaseVersion: string;
+  agentFeedbackOpen: number;
+  autoGovernedToday: number;
+}
+
+export type FlywheelAttentionType = "exception" | "feedback" | "publish_blocker" | "lint";
+export type FlywheelAttentionLevel = "blocking" | "needs_decision" | "watch";
+
+export interface HumanException {
+  id: string;
+  type: FlywheelAttentionType;
+  attentionLevel: FlywheelAttentionLevel;
+  severity: "blocking" | "warning" | "info";
+  title: string;
+  body: string;
+  whyHumanNeeded: string;
+  recommendedAction: string;
+  primaryAction: {
+    label: string;
+    type: "annotate" | "approve" | "reject" | "open_asset" | "rerun";
+  };
+  target?: { page: FlywheelWorkbenchView; params?: Record<string, string> };
+  technicalIds?: { componentId?: string; packageId?: string; releaseId?: string; taskId?: string; eventId?: string };
+  createdAt: string;
+}
+
+export interface FlywheelAutomationItem {
+  id: string;
+  title: string;
+  status: "running" | "completed" | "skipped" | "failed";
+  createdAt: string;
+}
+
+export type LintRemediationActionType = "auto_remediation" | "rebuild" | "manual_review" | "monitor";
+export type LintRemediationStatus = "pending" | "running" | "completed" | "failed" | "needs_human";
+
+export interface KnowledgeLintRemediation {
+  remediationId: string;
+  projectId: string;
+  releaseId: string;
+  issueId: string;
+  domain: "links" | "evidence" | "graph" | "trust" | "table_dependencies" | "mcp_feedback";
+  severity: "blocking" | "warning" | "info";
+  actionType: LintRemediationActionType;
+  confidence: number;
+  autoEligible: boolean;
+  status: LintRemediationStatus;
+  title: string;
+  diagnosis: string;
+  remediation: string;
+  targetComponentId: string;
+  targetOkfPath: string;
+  error: string;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface LintRemediationSummary {
+  releaseId: string;
+  total: number;
+  autoGoverned: number;
+  needsHuman: number;
+  failed: number;
+  pending: number;
+  byStatus: Record<LintRemediationStatus, number>;
+}
+
+export type FeedbackClusterType = "knowledge_gap" | "bad_hit" | "stale_knowledge" | "low_trust_hit";
+
+export interface AgentFeedbackCluster {
+  clusterId: string;
+  projectId: string;
+  type: FeedbackClusterType;
+  title: string;
+  queryExamples: string[];
+  affectedComponents: Array<{ componentId: string; title: string }>;
+  count: number;
+  severity: "blocking" | "warning" | "info";
+  recommendedAction: string;
+  status: "open" | "auto_governing" | "needs_human" | "resolved" | "ignored";
+  primaryAction: { label: string; type: "rerun" | "annotate" | "ignore" };
+  lastSeenAt: string;
+}
+
+export interface FlywheelStatus {
+  state: FlywheelState;
+  headline: string;
+  summary: string;
+  primaryAction: FlywheelPrimaryAction;
+  metrics: FlywheelMetrics;
+  attentionItems: HumanException[];
+  recentAutomation: FlywheelAutomationItem[];
+  remediation: LintRemediationSummary;
+}
+
+export interface FlywheelSyncResult {
+  syncId: string;
+  status: "started" | "completed" | "needs_attention" | "failed";
+  buildRunIds: string[];
+  packageIds: string[];
+  releaseId?: string;
+  published: boolean;
+  mode: "incremental" | "full";
+  message: string;
+  attentionItems: HumanException[];
+  automationEvents: string[];
+}
+
 export interface FlywheelEvent {
   eventId: string;
   eventType: string;
   entityType: string;
   entityId: string;
-  payload: Record<string, unknown>;
-  createdAt: string;
+  payload: Record<string, unknown>;  createdAt: string;
 }
 
 export interface FlywheelConvergenceSummary {

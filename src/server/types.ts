@@ -356,7 +356,7 @@ export interface AgentEvent {
   hitComponentIds: string[];
   qualityFlags: string[];
   status: "hit" | "miss";
-  feedbackType: "hit" | "miss" | "low_quality_hit" | "repeated_query" | "evidence_insufficient" | "relation_inference_failed";
+  feedbackType: "hit" | "miss" | "low_quality_hit" | "repeated_query" | "evidence_insufficient" | "relation_inference_failed" | "knowledge_gap" | "bad_hit" | "stale_knowledge";
   suggestedAction: string;
   taskId: string;
   createdAt: string;
@@ -419,6 +419,162 @@ export interface FlywheelWorkbench {
   publishItems: ReleaseRecord[];
   riskItems: FlywheelRiskItem[];
   runningRuns: KnowledgeBuildRun[];
+}
+
+/**
+ * 轻量知识运营台的总控台状态机。区别于 FlywheelWorkbench（4 泳道任务队列），
+ * FlywheelStatus 只回答「当前一句话状态 + 下一步一个主动作」，把细节降级为 metrics / attentionItems。
+ */
+export type FlywheelState =
+  | "idle"
+  | "source_changed"
+  | "building"
+  | "ready_to_publish"
+  | "published"
+  | "needs_attention";
+
+export type FlywheelPrimaryActionType =
+  | "sync_and_publish"
+  | "open_exceptions"
+  | "open_sources"
+  | "open_release"
+  | "retest_agent";
+
+export interface FlywheelPrimaryAction {
+  label: string;
+  action: FlywheelPrimaryActionType;
+  params?: Record<string, string>;
+}
+
+export interface FlywheelMetrics {
+  sourceChanges: number;
+  runningBuilds: number;
+  pendingExceptions: number;
+  currentReleaseVersion: string;
+  agentFeedbackOpen: number;
+  autoGovernedToday: number;
+}
+
+/**
+ * 例外中心的一条待人工处理项。requiresHuman=false 的问题不会进入这里。
+ * attentionLevel 决定排序与首页曝光：blocking > needs_decision > watch。
+ */
+export type FlywheelAttentionType = "exception" | "feedback" | "publish_blocker" | "lint";
+export type FlywheelAttentionLevel = "blocking" | "needs_decision" | "watch";
+
+export interface HumanException {
+  id: string;
+  type: FlywheelAttentionType;
+  attentionLevel: FlywheelAttentionLevel;
+  severity: ReviewSeverity;
+  /** 用户视角的问题标题（业务对象优先，避免裸技术 ID） */
+  title: string;
+  /** 影响了哪个知识 + 展开细节 */
+  body: string;
+  /** 为什么不能自动处理 */
+  whyHumanNeeded: string;
+  /** 推荐修复方式 */
+  recommendedAction: string;
+  primaryAction: {
+    label: string;
+    type: "annotate" | "approve" | "reject" | "open_asset" | "rerun";
+  };
+  /** 主按钮的导航目标（复用运营台/子页面路由） */
+  target?: { page: FlywheelWorkbenchView; params?: Record<string, string> };
+  /** 技术 ID（默认降噪，仅排障用） */
+  technicalIds?: { componentId?: string; packageId?: string; releaseId?: string; taskId?: string; eventId?: string };
+  createdAt: string;
+}
+
+export interface FlywheelAutomationItem {
+  id: string;
+  title: string;
+  status: "running" | "completed" | "skipped" | "failed";
+  createdAt: string;
+}
+
+export interface FlywheelStatus {
+  state: FlywheelState;
+  headline: string;
+  summary: string;
+  primaryAction: FlywheelPrimaryAction;
+  metrics: FlywheelMetrics;
+  attentionItems: HumanException[];
+  recentAutomation: FlywheelAutomationItem[];
+  remediation: LintRemediationSummary;
+}
+
+export interface FlywheelSyncResult {
+  syncId: string;
+  status: "started" | "completed" | "needs_attention" | "failed";
+  buildRunIds: string[];
+  packageIds: string[];
+  releaseId?: string;
+  published: boolean;
+  mode: "incremental" | "full";
+  message: string;
+  attentionItems: HumanException[];
+  automationEvents: string[];
+}
+
+/**
+ * 阶段4：Knowledge Lint 自动治理队列。把发布时生成的 lint issue.governance
+ * 从「报告里的建议」落成可追踪的治理任务。autoEligible 的进入自动链路（pending/running），
+ * 不能自动的进入 needs_human 并被例外中心收纳。
+ */
+export type LintRemediationActionType = "auto_remediation" | "rebuild" | "manual_review" | "monitor";
+export type LintRemediationStatus = "pending" | "running" | "completed" | "failed" | "needs_human";
+
+export interface KnowledgeLintRemediation {
+  remediationId: string;
+  projectId: string;
+  releaseId: string;
+  issueId: string;
+  domain: "links" | "evidence" | "graph" | "trust" | "table_dependencies" | "mcp_feedback";
+  severity: ReviewSeverity;
+  actionType: LintRemediationActionType;
+  confidence: number;
+  autoEligible: boolean;
+  status: LintRemediationStatus;
+  title: string;
+  diagnosis: string;
+  remediation: string;
+  targetComponentId: string;
+  targetOkfPath: string;
+  error: string;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface LintRemediationSummary {
+  releaseId: string;
+  total: number;
+  autoGoverned: number;
+  needsHuman: number;
+  failed: number;
+  pending: number;
+  byStatus: Record<LintRemediationStatus, number>;
+}
+
+/**
+ * 阶段5：把 MCP 原始反馈事件聚合成策划能理解的知识问题。
+ * 用户不需要读 MCP payload，只看「哪类知识问题、影响什么、建议怎么做」。
+ */
+export type FeedbackClusterType = "knowledge_gap" | "bad_hit" | "stale_knowledge" | "low_trust_hit";
+
+export interface AgentFeedbackCluster {
+  clusterId: string;
+  projectId: string;
+  type: FeedbackClusterType;
+  title: string;
+  queryExamples: string[];
+  affectedComponents: Array<{ componentId: string; title: string }>;
+  count: number;
+  severity: ReviewSeverity;
+  recommendedAction: string;
+  status: "open" | "auto_governing" | "needs_human" | "resolved" | "ignored";
+  primaryAction: { label: string; type: "rerun" | "annotate" | "ignore" };
+  lastSeenAt: string;
 }
 
 export interface FlywheelEvent {
@@ -614,7 +770,7 @@ export interface KnowledgeEnvelope<T = unknown> {
 }
 
 export type DiagnosticLogLevel = "debug" | "info" | "warn" | "error";
-export type DiagnosticLogCategory = "http" | "source_import" | "kb_build" | "llm" | "release" | "mcp" | "db" | "system";
+export type DiagnosticLogCategory = "http" | "source_import" | "kb_build" | "llm" | "release" | "mcp" | "db" | "system" | "flywheel";
 export type DiagnosticLogStatus = "started" | "completed" | "failed" | "event";
 
 export interface DiagnosticLogRecord {

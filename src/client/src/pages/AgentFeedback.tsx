@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { getFlywheelConvergenceSummary, getMcpConnectInfo, getToken, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope, type McpAuditRecord, type McpConnectInfo } from "../api";
+import { getFlywheelConvergenceSummary, getMcpConnectInfo, getToken, listAgentEvents, listFeedbackClusters, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type AgentFeedbackCluster, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope, type McpAuditRecord, type McpConnectInfo } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { componentLabel } from "../utils/componentLabel";
@@ -157,6 +157,7 @@ export function AgentFeedback() {
     setEnvelope(null);
   };
   const events = useQuery({ queryKey: ["agent-events", currentProjectId], queryFn: () => listAgentEvents(currentProjectId) });
+  const clusters = useQuery({ queryKey: ["agent-feedback-clusters", currentProjectId], queryFn: () => listFeedbackClusters(currentProjectId), refetchInterval: 5000 });
   const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events", currentProjectId], queryFn: () => listFlywheelEvents(currentProjectId), refetchInterval: 5000 });
   const convergence = useQuery({ queryKey: ["agent-flywheel-convergence", currentProjectId], queryFn: () => getFlywheelConvergenceSummary(currentProjectId), refetchInterval: 5000 });
   const workbench = useWorkbench(currentProjectId);
@@ -381,6 +382,11 @@ export function AgentFeedback() {
         {tab === "feedback" && (
           <section className="mcp-panel">
             <h2>反馈回流</h2>
+            <FeedbackClusterPanel
+              clusters={clusters.data ?? []}
+              onRetest={(query) => retest({ toolName: "kb_search", queryText: query } as FeedbackInsight)}
+              onAnnotate={() => navigate("review")}
+            />
             {workbench.data && (
               <FeedbackWorkbenchPanel
                 retestItems={workbench.data.retestItems}
@@ -459,6 +465,59 @@ export function AgentFeedback() {
       </div>
     </Page>
   );
+}
+
+function FeedbackClusterPanel({
+  clusters,
+  onRetest,
+  onAnnotate,
+}: {
+  clusters: AgentFeedbackCluster[];
+  onRetest: (query: string) => void;
+  onAnnotate: (componentId?: string) => void;
+}) {
+  if (clusters.length === 0) {
+    return <p className="subtle">暂无需要处理的 Agent 反馈问题。Agent 消费顺畅时这里应为空。</p>;
+  }
+  return (
+    <div className="feedback-cluster-list">
+      {clusters.map((cluster) => (
+        <article key={cluster.clusterId} className="feedback-cluster">
+          <div className="card-row">
+            <Badge label={clusterTypeLabel(cluster.type)} tone={cluster.severity === "blocking" ? "hot" : cluster.severity === "warning" ? "warn" : undefined} />
+            <span>{cluster.count} 次 · {formatTime(cluster.lastSeenAt)}</span>
+          </div>
+          <strong>{cluster.title}</strong>
+          <p>{cluster.recommendedAction}</p>
+          {cluster.affectedComponents.length > 0 && (
+            <div className="cluster-components">
+              {cluster.affectedComponents.map((component) => (
+                <code key={component.componentId} title={component.componentId}>{component.title}</code>
+              ))}
+            </div>
+          )}
+          <div className="card-actions">
+            {cluster.primaryAction.type === "rerun" ? (
+              <button type="button" className="primary-action" onClick={() => onRetest(cluster.queryExamples[0] ?? "")}>
+                <Play size={14} />{cluster.primaryAction.label}
+              </button>
+            ) : (
+              <button type="button" className="primary-action" onClick={() => onAnnotate(cluster.affectedComponents[0]?.componentId)}>
+                {cluster.primaryAction.label}
+              </button>
+            )}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function clusterTypeLabel(type: AgentFeedbackCluster["type"]): string {
+  if (type === "knowledge_gap") return "知识缺口";
+  if (type === "bad_hit") return "错命中";
+  if (type === "stale_knowledge") return "知识过期";
+  return "低可信命中";
 }
 
 function ConvergencePanel({ summary }: { summary: FlywheelConvergenceSummary }) {

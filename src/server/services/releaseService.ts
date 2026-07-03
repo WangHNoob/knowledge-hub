@@ -8,6 +8,7 @@ import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig,
 import { mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
+import { createLintRemediationService } from "./lintRemediationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
 import { buildReleaseAuditSummary, type ReleaseAuditSummary } from "./releaseAudit";
 import { computeTrustScore, scoreFromQuality } from "./trustScore";
@@ -298,6 +299,28 @@ export class ReleaseService {
       const published = await this.getRelease(releaseId);
       if (!published) throw new Error(`Unknown release after publish: ${releaseId}`);
       await span?.complete({ manifestHash: published.manifestHash, packageIds: published.packageIds });
+      // 同步记录 Knowledge Lint 治理队列（发布目录已写出 knowledge_lint.json）。
+      // 必须在此处顺序执行，而非通过事件总线异步：DB 适配器的事务客户端不可重入，
+      // 异步写入会与请求路径的 BEGIN/COMMIT 竞争。治理记录尽力而为，失败不回滚发布。
+      try {
+        await createLintRemediationService(this.db).recordFromReleaseDir({
+          projectId: published.projectId,
+          releaseId: published.releaseId,
+          dataDir: this.dataDir,
+        });
+      } catch (error) {
+        await this.diagnostics?.write({
+          traceId: "",
+          level: "warn",
+          category: "release",
+          message: "failed to record lint remediation queue",
+          status: "failed",
+          entityType: "release",
+          entityId: published.releaseId,
+          releaseId: published.releaseId,
+          error,
+        });
+      }
       return published;
     } catch (error) {
       await span?.fail(error);

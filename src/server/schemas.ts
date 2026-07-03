@@ -9,6 +9,10 @@ export const legacyScanSchema = z.object({
   path: z.string().min(1)
 });
 
+export const flywheelSyncSchema = z.object({
+  mode: z.enum(["incremental", "full"]).optional()
+});
+
 export const browseLocalFilesSchema = z.object({
   path: z.string().min(1).optional()
 });

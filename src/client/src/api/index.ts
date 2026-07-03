@@ -3,6 +3,7 @@ export { getToken, setToken } from "./http";
 export { login } from "./auth";
 export { createProject, listProjects, selectProject, updateProject } from "./projects";
 export { getDashboard, getFlywheelWorkbench } from "./dashboard";
+export { getFlywheelStatus, listFlywheelExceptions, syncFlywheel, listFlywheelRemediations, listFeedbackClusters } from "./flywheel";
 export {
   browseLocalFiles,
   getBundleBuildPlan,

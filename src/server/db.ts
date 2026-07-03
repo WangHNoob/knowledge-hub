@@ -266,6 +266,28 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}knowledge_lint_remediations (
+      remediation_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
+      release_id TEXT NOT NULL,
+      issue_id TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'warning',
+      action_type TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0,
+      auto_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+      status TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      diagnosis TEXT NOT NULL DEFAULT '',
+      remediation TEXT NOT NULL DEFAULT '',
+      target_component_id TEXT NOT NULL DEFAULT '',
+      target_okf_path TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at TIMESTAMPTZ,
+      UNIQUE (release_id, issue_id)
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}table_aliases (
       canonical TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default_project',
@@ -375,6 +397,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       WHERE state <> 'retired';
     CREATE INDEX IF NOT EXISTS idx_rule_dismissals_component ON ${p}rule_dismissals(component_id, active);
     CREATE INDEX IF NOT EXISTS idx_knowledge_events_type_created ON ${p}knowledge_events(event_type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_lint_remediations_project_status ON ${p}knowledge_lint_remediations(project_id, status, created_at DESC);
   `);
 
   await adapter.exec(`

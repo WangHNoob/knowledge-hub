@@ -3,6 +3,8 @@ import type { FastifyInstance } from "fastify";
 import type { DatabaseHandle } from "../types";
 import type { DiagnosticLogger } from "../services/diagnosticService";
 import type { KnowledgeService } from "../services/knowledgeService";
+import type { FlywheelService } from "../services/flywheelService";
+import type { LintRemediationService } from "../services/lintRemediationService";
 import type { SourceBundleService } from "../services/sourceBundleService";
 import type { KbBuilderPipelineService } from "../services/kbBuilderService";
 import type { ReleaseService } from "../services/releaseService";
@@ -17,6 +19,8 @@ export interface RouteContext {
   dataDir: string;
   diagnostics: DiagnosticLogger;
   service: KnowledgeService;
+  flywheelService: FlywheelService;
+  lintRemediationService: LintRemediationService;
   bundleService: SourceBundleService;
   kbBuilderService: KbBuilderPipelineService;
   releaseService: ReleaseService;

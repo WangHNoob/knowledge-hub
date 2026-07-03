@@ -8,6 +8,8 @@ import { createDiagnosticLogger, type DiagnosticLogger } from "./services/diagno
 import { createKbBuilderPipelineService } from "./services/kbBuilderService";
 import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 import { createKnowledgeService } from "./services/knowledgeService";
+import { createFlywheelService } from "./services/flywheelService";
+import { createLintRemediationService } from "./services/lintRemediationService";
 import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
@@ -22,7 +24,7 @@ import { registerAgentRoutes } from "./routes/agent";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBuilderRoutes } from "./routes/builder";
 import { registerDashboardRoutes } from "./routes/dashboard";
-import { registerDiagnosticsRoutes } from "./routes/diagnostics";
+import { registerFlywheelRoutes } from "./routes/flywheel";import { registerDiagnosticsRoutes } from "./routes/diagnostics";
 import { registerLegacyRoutes } from "./routes/legacy";
 import { registerLegislationRoutes } from "./routes/legislation";
 import { registerMcpRoutes } from "./routes/mcp";
@@ -61,18 +63,35 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     logToFile: config.logToFile,
     logToDb: config.logToDb
   });
+  const knowledgeService = createKnowledgeService(options.db);
+  const bundleService = createSourceBundleService(options.db, dataDir);
+  const kbBuilderService = createKbBuilderPipelineService(options.db, dataDir, diagnostics);
+  const releaseService = createReleaseService(options.db, dataDir, diagnostics);
+  const projectService = createProjectService(options.db);
+  const lintRemediationService = createLintRemediationService(options.db);
   const ctx: RouteContext = {
     db: options.db,
     dataDir,
     diagnostics,
-    service: createKnowledgeService(options.db),
-    bundleService: createSourceBundleService(options.db, dataDir),
-    kbBuilderService: createKbBuilderPipelineService(options.db, dataDir, diagnostics),
-    releaseService: createReleaseService(options.db, dataDir, diagnostics),
+    service: knowledgeService,
+    flywheelService: createFlywheelService({
+      db: options.db,
+      knowledgeService,
+      bundleService,
+      kbBuilderService,
+      releaseService,
+      projectService,
+      lintRemediationService,
+      diagnostics,
+    }),
+    bundleService,
+    kbBuilderService,
+    releaseService,
+    lintRemediationService,
     queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
     legislationService: createLegislationService(options.db),
     attributionAuditService: createAttributionAuditService(options.db),
-    projectService: createProjectService(options.db),
+    projectService,
     storageService: createStorageMaintenanceService(options.db, dataDir, diagnostics, {
       webImportRetentionHours: config.webImportRetentionHours,
       logRetentionDays: config.logRetentionDays
@@ -122,6 +141,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerAuthRoutes(app, ctx);
   registerProjectRoutes(app, ctx);
   registerDashboardRoutes(app, ctx);
+  registerFlywheelRoutes(app, ctx);
   registerSourceRoutes(app, ctx);
   registerBuilderRoutes(app, ctx);
   registerPackageRoutes(app, ctx);
