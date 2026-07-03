@@ -25,6 +25,7 @@ import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRu
 import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
+import { parseAutoPublishReasons } from "../utils/automation";
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
@@ -580,12 +581,6 @@ function buildReleaseAutomationByRunId(events: FlywheelEvent[], tasks: ReviewTas
     });
   }
   return result;
-}
-
-function parseAutoPublishReasons(reason: string): string[] {
-  const normalized = reason.replace(/^Auto publish is not eligible:\s*/u, "").trim();
-  if (!normalized) return [];
-  return normalized.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
