@@ -8,6 +8,7 @@ import type { LintRemediationService } from "./lintRemediationService";
 import type { ProjectService } from "./projectService";
 import type { ReleaseService } from "./releaseService";
 import type { SourceBundleService } from "./sourceBundleService";
+import type { PipelineModelConfig } from "./kbBuilder/modelConfig";
 import type {
   AgentEvent,
   AgentFeedbackCluster,
@@ -220,6 +221,7 @@ export class FlywheelService {
     const effectiveMode: "incremental" | "full" = mode === "incremental" && canIncremental ? "incremental" : "full";
     const only = effectiveMode === "incremental" ? plan.targets[0] ?? null : null;
     const releaseVersion = await this.nextReleaseVersion(projectId);
+    const modelConfig = await this.resolveBuildModelConfig(projectId);
 
     let run: KnowledgeBuildRun;
     try {
@@ -230,7 +232,8 @@ export class FlywheelService {
         requestedBy: input.requestedBy,
         traceId: input.traceId,
         stages: ["convert", "extract", "tables", "graph", "viz"],
-        model: "deterministic",
+        model: modelConfig.model,
+        modelConfig,
         force: false,
         only,
         qualityProfileId: "default",
@@ -273,7 +276,7 @@ export class FlywheelService {
       entityType: "build_run",
       entityId: run.runId,
       runId: run.runId,
-      context: { projectId, syncId, mode: effectiveMode, only, releaseVersion, changedFiles: plan.targets.length },
+      context: { projectId, syncId, mode: effectiveMode, only, releaseVersion, changedFiles: plan.targets.length, provider: modelConfig.provider, model: modelConfig.model },
     });
 
     return {
@@ -392,6 +395,59 @@ export class FlywheelService {
     );
     const seq = Number(rows[0]?.c ?? 0) + 1;
     return `${prefix}.${String(seq).padStart(3, "0")}`;
+  }
+
+  private async resolveBuildModelConfig(projectId: string): Promise<PipelineModelConfig> {
+    const latest = await this.latestCompletedBuildModelConfig(projectId);
+    if (latest) return latest;
+    const envKey = process.env.OPENAI_API_KEY;
+    if (envKey) {
+      return {
+        provider: "openai-compatible",
+        baseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
+        model: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
+        apiKey: envKey,
+      };
+    }
+    return { provider: "deterministic", model: "deterministic" };
+  }
+
+  private async latestCompletedBuildModelConfig(projectId: string): Promise<PipelineModelConfig | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT config_json
+       FROM knowledge_build_runs
+       WHERE project_id = $1
+         AND status = 'completed'
+         AND config_json ? 'modelConfig'
+       ORDER BY started_at DESC
+       LIMIT 1`,
+      [projectId],
+    );
+    if (rows.length === 0) return null;
+    const config = readJsonObject(rows[0].config_json);
+    const model = readJsonObject(config.modelConfig);
+    const provider = String(model.provider ?? "");
+    if (provider === "anthropic") {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return null;
+      return {
+        provider,
+        baseUrl: String(model.baseUrl || "https://api.anthropic.com/v1"),
+        model: String(model.model || "claude-sonnet-4-5"),
+        apiKey,
+      };
+    }
+    if (provider === "openai-compatible") {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) return null;
+      return {
+        provider,
+        baseUrl: String(model.baseUrl || "https://api.openai.com/v1"),
+        model: String(model.model || "gpt-4.1-mini"),
+        apiKey,
+      };
+    }
+    return null;
   }
 }
 
@@ -741,6 +797,19 @@ function humanizeComponent(componentId: string): string {
   if (!componentId) return "未命名知识";
   const tail = componentId.split(/[\\/]/u).pop() ?? componentId;
   return tail.replace(/\.[^.]+$/u, "").replace(/^cmp_pkg_[a-z0-9]+_/u, "") || componentId;
+}
+
+function readJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }
 
 function shanghaiDottedDate(): string {

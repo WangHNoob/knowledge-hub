@@ -114,7 +114,7 @@ async function publishCompletedBuild(options: {
       }), created: true };
     if (!revision.release) throw new Error("无法创建发布草案：当前构建不是完整发布，也没有可继承的 current release。");
     releaseId = revision.release.releaseId;
-    const published = await options.releaseService.publish(releaseId, options.requestedBy || "system", { autoMode: false });
+    const published = await options.releaseService.publish(releaseId, options.requestedBy || "system", { autoMode: Boolean(revision.release.parentReleaseId) });
     await emitKnowledgeEvent(options.db, {
       eventType: "release.auto_publish_succeeded",
       entityType: "release",

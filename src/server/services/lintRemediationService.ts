@@ -124,8 +124,8 @@ export class LintRemediationService {
     empty.pending = empty.byStatus.pending + empty.byStatus.running;
     empty.needsHuman = empty.byStatus.needs_human;
     empty.failed = empty.byStatus.failed;
-    // autoGoverned：自动链路处理过的（pending/running/completed 且 autoEligible，或已 completed 的非 monitor）。
-    empty.autoGoverned = items.filter((item) => item.autoEligible).length;
+    // autoGoverned 只统计已经完成的自动治理，pending/running 仍属于待处理队列。
+    empty.autoGoverned = items.filter((item) => item.autoEligible && item.status === "completed").length;
     return empty;
   }
 

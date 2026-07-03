@@ -61,7 +61,7 @@ describe("lint remediation queue", () => {
 
       const summary = await service.summary("default_project", "rel_gov");
       expect(summary.total).toBe(3);
-      expect(summary.autoGoverned).toBe(1);
+      expect(summary.autoGoverned).toBe(0);
       expect(summary.needsHuman).toBe(2);
       expect(summary.byStatus.pending).toBe(1);
 

@@ -385,7 +385,7 @@ export function AgentFeedback() {
             <FeedbackClusterPanel
               clusters={clusters.data ?? []}
               onRetest={(query) => retest({ toolName: "kb_search", queryText: query } as FeedbackInsight)}
-              onAnnotate={() => navigate("review")}
+              onAnnotate={(componentId) => navigate("review", componentId ? { componentId } : {})}
             />
             {workbench.data && (
               <FeedbackWorkbenchPanel
