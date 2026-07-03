@@ -4,11 +4,10 @@ import type { ReactNode } from "react";
 export type View =
   | "dashboard"
   | "sources"
-  | "builder"
+  | "buildrelease"
   | "legislation"
   | "assets"
   | "review"
-  | "release"
   | "agent"
   | "system"
   | "aliases";

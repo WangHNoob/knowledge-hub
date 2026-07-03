@@ -221,7 +221,7 @@ export function Review() {
         queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
-      navigate("builder");
+      navigate("buildrelease");
     }
   });
 
@@ -318,8 +318,8 @@ export function Review() {
           const firstDraft = wb.publishItems[0];
           const actions: Array<{ label: string; onClick: () => void }> = [];
           if (firstRetest) actions.push({ label: "复测最新反馈", onClick: () => navigate("agent", { query: firstRetest.query }) });
-          if (firstDraft) actions.push({ label: "检查待发布", onClick: () => navigate("release", { releaseId: firstDraft.releaseId }) });
-          if (!firstRetest && !firstDraft) actions.push({ label: "查看构建", onClick: () => navigate("builder") });
+          if (firstDraft) actions.push({ label: "检查待发布", onClick: () => navigate("buildrelease", { releaseId: firstDraft.releaseId }) });
+          if (!firstRetest && !firstDraft) actions.push({ label: "查看构建", onClick: () => navigate("buildrelease") });
           return (
             <WorkbenchStrip
               kicker="飞轮主线"
@@ -375,8 +375,8 @@ export function Review() {
             onTransition={(next) => act(task, next)}
             onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
             onNavigateAsset={(componentId) => navigate("assets", { packageId: task.packageId, componentId })}
-            onNavigateBuilder={() => navigate("builder", task.writeback?.runId ? { runId: task.writeback.runId } : {})}
-            onNavigateRelease={() => navigate("release", task.writeback?.releaseId ? { releaseId: task.writeback.releaseId } : {})}
+            onNavigateBuilder={() => navigate("buildrelease", task.writeback?.runId ? { runId: task.writeback.runId } : {})}
+            onNavigateRelease={() => navigate("buildrelease", task.writeback?.releaseId ? { releaseId: task.writeback.releaseId } : {})}
             onRetest={(insight) => navigate("agent", { toolName: insight.toolName, query: insight.queryText })}
           />
         ))}

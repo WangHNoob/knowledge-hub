@@ -84,7 +84,7 @@ export function Dashboard() {
           caption="构建完成后，检查 draft / revision 是否可以推给 Agent。"
         >
           {workbench.publishItems.map((release) => (
-            <ReleaseCard key={release.releaseId} release={release} onOpen={() => navigate("release", { releaseId: release.releaseId })} />
+            <ReleaseCard key={release.releaseId} release={release} onOpen={() => navigate("buildrelease", { releaseId: release.releaseId })} />
           ))}
         </WorkbenchLane>
 

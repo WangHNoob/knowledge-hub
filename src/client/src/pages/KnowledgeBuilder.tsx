@@ -279,7 +279,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
         const actions: Array<{ label: string; onClick: () => void }> = [];
         if (annotation) actions.push({ label: "处理标注", onClick: () => navigate("review", { taskId: annotation.taskId }) });
         if (!annotation && retest) actions.push({ label: "复测反馈", onClick: () => navigate("agent", { query: retest.query }) });
-        if (!annotation && !retest && release) actions.push({ label: "检查发布", onClick: () => navigate("release", { releaseId: release.releaseId }) });
+        if (!annotation && !retest && release) actions.push({ label: "检查发布", onClick: () => navigate("buildrelease", { releaseId: release.releaseId }) });
         return (
           <WorkbenchStrip
             kicker="构建后的下一步"
@@ -449,7 +449,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                   onStop={() => stopRunMutation.mutate(run.runId)}
                   onDelete={() => deleteRunMutation.mutate(run.runId)}
                   onShowPackage={onShowPackage}
-                  onShowRelease={(releaseId, eventId) => navigate("release", { releaseId, eventId })}
+                  onShowRelease={(releaseId, eventId) => navigate("buildrelease", { releaseId, eventId })}
                   onShowReview={(taskId, packageId) => navigate("review", { severity: "blocking", packageId: packageId ?? run.packageId ?? undefined, taskId })}
                   busy={stopRunMutation.isPending || deleteRunMutation.isPending}
                 />

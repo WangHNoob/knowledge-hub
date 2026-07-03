@@ -153,7 +153,7 @@ export function Release() {
         const firstDraft = wb.publishItems[0];
         const blocking = wb.riskItems.filter((item) => item.label === "阻断").length;
         const actions: Array<{ label: string; onClick: () => void }> = [];
-        if (firstDraft) actions.push({ label: "定位待发布", onClick: () => { setTab("current"); navigate("release", { releaseId: firstDraft.releaseId }); } });
+        if (firstDraft) actions.push({ label: "定位待发布", onClick: () => { setTab("current"); navigate("buildrelease", { releaseId: firstDraft.releaseId }); } });
         if (blocking > 0) actions.push({ label: "处理阻断", onClick: () => navigate("review") });
         if (actions.length === 0) return null;
         return (
@@ -286,7 +286,7 @@ export function Release() {
             events={autoPublishEvents}
             focusedEventId={params.eventId}
             onNavigateReview={() => navigate("review")}
-            onNavigateBuilder={() => navigate("builder")}
+            onNavigateBuilder={() => navigate("buildrelease")}
             onNavigateAssets={(packageId) => navigate("assets", { packageId })}
           />
           <h3>发布历史</h3>

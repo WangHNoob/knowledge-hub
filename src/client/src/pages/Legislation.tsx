@@ -196,8 +196,8 @@ export function Legislation() {
             onRetireCorrection={(correction) => retireCorrectionMutation.mutate(correction.correctionId)}
             onNavigateReview={(taskId) => navigate("review", { taskId })}
             onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
-            onNavigateBuild={(runId) => navigate("builder", { runId })}
-            onNavigateRelease={(releaseId) => navigate("release", { releaseId })}
+            onNavigateBuild={(runId) => navigate("buildrelease", { runId })}
+            onNavigateRelease={(releaseId) => navigate("buildrelease", { releaseId })}
           />
         )}
 

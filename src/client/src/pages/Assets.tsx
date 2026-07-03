@@ -246,7 +246,7 @@ export function Assets() {
                 {pkg.createdByRunId && (
                   <span className="asset-link">
                     构建来源：
-                    <IdChip label={pkg.createdByRunId} title="在知识构建中查看该构建" onClick={() => navigate("builder", { runId: pkg.createdByRunId })} />
+                    <IdChip label={pkg.createdByRunId} title="在知识构建中查看该构建" onClick={() => navigate("buildrelease", { runId: pkg.createdByRunId })} />
                   </span>
                 )}
                 {pkg.sourceVersionIds.length > 0 && (

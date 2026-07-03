@@ -3,7 +3,6 @@ import {
   Boxes,
   CheckCircle2,
   Database,
-  GitBranch,
   HardDrive,
   Languages,
   LogOut,
@@ -25,22 +24,20 @@ import { ProjectProvider, useProject } from "./projectContext";
 const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ default: module.Dashboard }));
 const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
 const loadLegislation = () => import("../pages/Legislation").then((module) => ({ default: module.Legislation }));
-const loadKnowledgeBuilder = () => import("../pages/KnowledgeBuilder").then((module) => ({ default: module.KnowledgeBuilder }));
+const loadBuildRelease = () => import("../pages/BuildRelease").then((module) => ({ default: module.BuildRelease }));
 const loadAssets = () => import("../pages/Assets").then((module) => ({ default: module.Assets }));
 const loadTableAliases = () => import("../pages/TableAliases").then((module) => ({ default: module.TableAliases }));
 const loadReview = () => import("../pages/Review").then((module) => ({ default: module.Review }));
-const loadRelease = () => import("../pages/Release").then((module) => ({ default: module.Release }));
 const loadAgentFeedback = () => import("../pages/AgentFeedback").then((module) => ({ default: module.AgentFeedback }));
 const loadSystem = () => import("../pages/System").then((module) => ({ default: module.System }));
 
 const Dashboard = lazy(loadDashboard);
 const Sources = lazy(loadSources);
 const Legislation = lazy(loadLegislation);
-const KnowledgeBuilder = lazy(loadKnowledgeBuilder);
+const BuildRelease = lazy(loadBuildRelease);
 const Assets = lazy(loadAssets);
 const TableAliases = lazy(loadTableAliases);
 const Review = lazy(loadReview);
-const Release = lazy(loadRelease);
 const AgentFeedback = lazy(loadAgentFeedback);
 const System = lazy(loadSystem);
 
@@ -48,11 +45,10 @@ const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   dashboard: loadDashboard,
   sources: loadSources,
   legislation: loadLegislation,
-  builder: loadKnowledgeBuilder,
+  buildrelease: loadBuildRelease,
   assets: loadAssets,
   aliases: loadTableAliases,
   review: loadReview,
-  release: loadRelease,
   agent: loadAgentFeedback,
   system: loadSystem
 };
@@ -61,11 +57,10 @@ const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "飞轮工作台", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
   { id: "legislation", label: "策划立法", icon: ScrollText },
-  { id: "builder", label: "知识构建", icon: PackagePlus },
+  { id: "buildrelease", label: "构建发布", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
   { id: "aliases", label: "翻译表", icon: Languages },
   { id: "review", label: "审核中心", icon: CheckCircle2 },
-  { id: "release", label: "发布", icon: GitBranch },
   { id: "agent", label: "Agent 反馈", icon: SearchCheck },
   { id: "system", label: "系统", icon: HardDrive },
 ];
@@ -172,12 +167,11 @@ export function App() {
           <Suspense fallback={<div className="state">正在加载页面...</div>}>
             {view === "dashboard" && <Dashboard />}
             {view === "sources" && <Sources />}
-            {view === "builder" && <KnowledgeBuilder onShowPackage={(packageId) => navigate("assets", { packageId })} />}
             {view === "legislation" && <Legislation />}
+            {view === "buildrelease" && <BuildRelease />}
             {view === "assets" && <Assets />}
             {view === "aliases" && <TableAliases />}
             {view === "review" && <Review />}
-            {view === "release" && <Release />}
             {view === "agent" && <AgentFeedback />}
             {view === "system" && <System />}
           </Suspense>
@@ -244,7 +238,7 @@ function GlobalSearch() {
     if (hit.kind === "package") navigate("assets", { packageId: hit.id });
     else if (hit.kind === "component") navigate("assets", { packageId: hit.packageId, componentId: hit.id });
     else if (hit.kind === "source_version") navigate("sources", { versionId: hit.id });
-    else if (hit.kind === "release") navigate("release", { releaseId: hit.id });
+    else if (hit.kind === "release") navigate("buildrelease", { releaseId: hit.id });
   };
 
   const hits = search.data?.hits ?? [];
