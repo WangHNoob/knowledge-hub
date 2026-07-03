@@ -1,16 +1,20 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { extname, join, posix, relative, resolve, sep } from "node:path";
+import { basename, extname, join, posix, relative, resolve, sep } from "node:path";
+import xlsx from "xlsx";
 
 import type {
   DatabaseHandle,
   ImportBundleResult,
   SourceBlob,
   SourceBundle,
+  SourceBuildPlan,
   SourceBundleVersion,
   SourceCategory,
+  SourceFilePreview,
   SourceFileChange,
-  SourceFileEntry
+  SourceFileEntry,
+  SourcePreviewNode
 } from "../types";
 import { emitKnowledgeEvent } from "./eventService";
 
@@ -19,6 +23,7 @@ const CATEGORIES: SourceCategory[] = ["gamedata", "gamedocs"];
 export interface ImportDirectoryOptions {
   rootPath: string;
   bundleId?: string;
+  projectId?: string;
   createdBy: string;
   note?: string;
 }
@@ -33,8 +38,11 @@ export class SourceBundleService {
     this.adapter = db.adapter;
   }
 
-  async listBundles(): Promise<SourceBundle[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM source_bundles ORDER BY bundle_id ASC");
+  async listBundles(projectId = "default_project"): Promise<SourceBundle[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE project_id = $1 ORDER BY bundle_id ASC",
+      [projectId],
+    );
     return rows.map(mapBundle);
   }
 
@@ -78,6 +86,90 @@ export class SourceBundleService {
     return { entry: mapFile(fileRows[0]), blob: mapBlob(blobRows[0]), content };
   }
 
+  async previewVersion(versionId: string): Promise<{ tree: SourcePreviewNode[]; files: SourcePreviewNode[]; changes: SourceFileChange[] }> {
+    const files = await this.listFiles(versionId);
+    const changes = await this.diff(versionId);
+    const changeByPath = new Map(changes.map((change) => [change.logicalPath, change.kind] as const));
+    const fileNodes: SourcePreviewNode[] = files.map((file) => ({
+      name: basename(file.logicalPath),
+      path: file.logicalPath,
+      kind: "file" as const,
+      category: file.category,
+      byteSize: file.byteSize,
+      contentHash: file.contentHash,
+      fileType: fileTypeFor(file.logicalPath),
+      changeKind: changeByPath.get(file.logicalPath) ?? "unchanged",
+    }));
+    return { tree: buildTree(fileNodes), files: fileNodes, changes };
+  }
+
+  async previewFile(versionId: string, logicalPath: string): Promise<SourceFilePreview | null> {
+    const file = await this.readFile(versionId, logicalPath);
+    if (!file) return null;
+    const fileType = fileTypeFor(logicalPath);
+    if (fileType === "spreadsheet") {
+      const workbook = xlsx.read(file.content, { type: "buffer" });
+      const sheet = workbook.SheetNames[0] ?? "";
+      const rows = sheet ? xlsx.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheet], { header: 1, defval: "", blankrows: false }).slice(0, 12) : [];
+      return {
+        logicalPath,
+        category: file.entry.category,
+        byteSize: file.entry.byteSize,
+        contentHash: file.entry.contentHash,
+        fileType,
+        sheet,
+        rows,
+        preview: rows.map((row) => row.map((cell) => String(cell ?? "")).join(" | ")),
+        truncated: rows.length >= 12,
+      };
+    }
+    if (fileType === "binary") {
+      return {
+        logicalPath,
+        category: file.entry.category,
+        byteSize: file.entry.byteSize,
+        contentHash: file.entry.contentHash,
+        fileType,
+        preview: ["二进制文件不提供文本预览。"],
+        truncated: false,
+      };
+    }
+    const text = file.content.toString("utf8");
+    const lines = text.split(/\r?\n/u).slice(0, 60);
+    return {
+      logicalPath,
+      category: file.entry.category,
+      byteSize: file.entry.byteSize,
+      contentHash: file.entry.contentHash,
+      fileType,
+      preview: lines,
+      truncated: text.split(/\r?\n/u).length > lines.length,
+    };
+  }
+
+  async buildPlan(versionId: string, projectId = "default_project"): Promise<SourceBuildPlan> {
+    const version = await this.getVersion(versionId);
+    if (!version) throw new Error(`Unknown source version: ${versionId}`);
+    const changes = await this.diff(versionId);
+    const changed = changes.filter((change) => change.kind === "added" || change.kind === "modified");
+    const removed = changes.filter((change) => change.kind === "removed");
+    const targets = changed.map((change) => change.logicalPath).sort();
+    const warnings: string[] = [];
+    if (removed.length > 0) warnings.push(`本次删除 ${removed.length} 个资料文件，建议全量构建确认知识资产是否需要移除。`);
+    if (targets.length > 12) warnings.push(`本次变更 ${targets.length} 个文件，增量构建收益下降，建议全量构建。`);
+    if (targets.length === 0) warnings.push("没有新增或修改的文件，不需要启动增量构建。");
+    const affectedKnowledge = await this.findAffectedKnowledge(projectId, [...targets, ...removed.map((change) => change.logicalPath)]);
+    const recommendedMode: SourceBuildPlan["recommendedMode"] = removed.length > 0 || targets.length === 0 || targets.length > 12 ? "full" : "incremental";
+    const reason = recommendedMode === "incremental"
+      ? `检测到 ${targets.length} 个新增/修改文件，可优先只重建这些资料对应的知识资产。`
+      : removed.length > 0
+        ? "存在删除文件，局部构建无法可靠移除旧知识，建议全量构建。"
+        : targets.length === 0
+          ? "没有可增量构建的资料变更。"
+          : "变更文件较多，建议全量构建以减少遗漏风险。";
+    return { recommendedMode, targets, reason, affectedKnowledge, warnings };
+  }
+
   async diff(versionId: string): Promise<SourceFileChange[]> {
     const version = await this.getVersion(versionId);
     if (!version) return [];
@@ -88,7 +180,8 @@ export class SourceBundleService {
 
   async importDirectoryAsVersion(options: ImportDirectoryOptions): Promise<ImportBundleResult> {
     const bundleId = options.bundleId ?? "default";
-    const bundle = await this.requireBundle(bundleId);
+    const projectId = options.projectId ?? "default_project";
+    const bundle = await this.requireBundle(bundleId, projectId);
     const root = resolve(options.rootPath);
     if (!existsSync(root) || !statSync(root).isDirectory()) {
       throw new Error(`资料目录不存在或不是目录：${options.rootPath}`);
@@ -195,13 +288,16 @@ export class SourceBundleService {
     return rows.length ? mapVersion(rows[0]) : null;
   }
 
-  private async requireBundle(bundleId: string): Promise<SourceBundle> {
-    const { rows } = await this.adapter.query("SELECT * FROM source_bundles WHERE bundle_id = $1", [bundleId]);
+  private async requireBundle(bundleId: string, projectId = "default_project"): Promise<SourceBundle> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE bundle_id = $1 AND project_id = $2",
+      [bundleId, projectId],
+    );
     if (rows.length === 0) throw new Error(`未知资料集：${bundleId}`);
     return mapBundle(rows[0]);
   }
 
-  async updateBundle(bundleId: string, patch: { name?: string; description?: string }): Promise<SourceBundle | null> {
+  async updateBundle(bundleId: string, patch: { name?: string; description?: string }, projectId = "default_project"): Promise<SourceBundle | null> {
     const sets: string[] = [];
     const params: unknown[] = [];
     if (patch.name !== undefined) { sets.push(`name = $${params.length + 1}`); params.push(patch.name.trim()); }
@@ -209,10 +305,66 @@ export class SourceBundleService {
     if (sets.length === 0) return null;
     params.push(bundleId);
     const { rows } = await this.adapter.query(
-      `UPDATE source_bundles SET ${sets.join(", ")} WHERE bundle_id = $${params.length} RETURNING *`,
-      params
+      `UPDATE source_bundles SET ${sets.join(", ")} WHERE bundle_id = $${params.length} AND project_id = $${params.length + 1} RETURNING *`,
+      [...params, projectId]
     );
     return rows.length ? mapBundle(rows[0]) : null;
+  }
+
+  async bundleBelongsToProject(bundleId: string, projectId: string): Promise<boolean> {
+    const { rows } = await this.adapter.query(
+      "SELECT 1 FROM source_bundles WHERE bundle_id = $1 AND project_id = $2",
+      [bundleId, projectId],
+    );
+    return rows.length > 0;
+  }
+
+  async getDefaultBundle(projectId = "default_project"): Promise<SourceBundle | null> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE project_id = $1 ORDER BY created_at ASC, bundle_id ASC LIMIT 1",
+      [projectId],
+    );
+    return rows.length ? mapBundle(rows[0]) : null;
+  }
+
+  async getBundle(bundleId: string, projectId = "default_project"): Promise<SourceBundle | null> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM source_bundles WHERE bundle_id = $1 AND project_id = $2",
+      [bundleId, projectId],
+    );
+    return rows.length ? mapBundle(rows[0]) : null;
+  }
+
+  private async findAffectedKnowledge(projectId: string, sourcePaths: string[]): Promise<SourceBuildPlan["affectedKnowledge"]> {
+    const normalizedTargets = sourcePaths.map(normalizePath).filter(Boolean);
+    if (normalizedTargets.length === 0) return [];
+    const { rows } = await this.adapter.query(
+      `SELECT c.component_id, c.package_id, c.title, c.kind, c.legacy_path, c.source_refs
+       FROM asset_components c
+       JOIN asset_packages p ON p.package_id = c.package_id
+       WHERE p.project_id = $1
+       ORDER BY c.title ASC, c.component_id ASC
+       LIMIT 1000`,
+      [projectId],
+    );
+    const affected = rows.filter((row) => {
+      const refs = jsonArray(row.source_refs).map(normalizePath);
+      const legacyPath = normalizePath(String(row.legacy_path ?? ""));
+      const title = String(row.title ?? "").toLowerCase();
+      return normalizedTargets.some((target) => {
+        const stem = basename(target, extname(target)).toLowerCase();
+        return refs.some((ref) => ref === target || ref.endsWith(`/${target}`) || target.endsWith(`/${ref}`))
+          || legacyPath.includes(stem)
+          || title.includes(stem);
+      });
+    });
+    return affected.slice(0, 20).map((row) => ({
+      componentId: String(row.component_id),
+      packageId: String(row.package_id),
+      title: String(row.title ?? ""),
+      kind: String(row.kind ?? ""),
+      legacyPath: String(row.legacy_path ?? ""),
+    }));
   }
 
   async updateVersion(versionId: string, patch: { label?: string; note?: string }): Promise<SourceBundleVersion | null> {
@@ -367,6 +519,66 @@ function diffEntries(previous: SourceFileEntry[], current: SourceFileEntry[]): S
   return changes;
 }
 
+function buildTree(files: SourcePreviewNode[]): SourcePreviewNode[] {
+  const roots: SourcePreviewNode[] = [];
+  for (const file of files) {
+    const parts = file.path.split("/").filter(Boolean);
+    let children = roots;
+    let currentPath = "";
+    for (const [index, part] of parts.entries()) {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      const isFile = index === parts.length - 1;
+      if (isFile) {
+        children.push(file);
+        continue;
+      }
+      let dir = children.find((node) => node.kind === "directory" && node.name === part);
+      if (!dir) {
+        dir = { name: part, path: currentPath, kind: "directory", children: [] };
+        children.push(dir);
+      }
+      children = dir.children ?? [];
+      dir.children = children;
+    }
+  }
+  return sortTree(roots);
+}
+
+function sortTree(nodes: SourcePreviewNode[]): SourcePreviewNode[] {
+  return nodes
+    .map((node) => node.children ? { ...node, children: sortTree(node.children) } : node)
+    .sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+}
+
+function fileTypeFor(logicalPath: string): SourcePreviewNode["fileType"] {
+  const ext = extname(logicalPath).toLowerCase();
+  if (ext === ".md" || ext === ".markdown") return "markdown";
+  if ([".xlsx", ".xls", ".csv"].includes(ext)) return "spreadsheet";
+  if (ext === ".json") return "json";
+  if ([".txt", ".tsv", ".xml", ".yaml", ".yml"].includes(ext)) return "text";
+  return "binary";
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\/+/, "").toLowerCase();
+}
+
+function jsonArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === "string" && value.length > 0) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 let timestampMonotonicCounter = 0n;
 
 function formatTimestamp(date: Date): string {
@@ -385,7 +597,13 @@ function blobAbsolutePath(dataDir: string, storageUri: string): string {
 }
 
 function mapBundle(row: Record<string, unknown>): SourceBundle {
-  return { bundleId: row.bundle_id as string, name: row.name as string, description: row.description as string, createdAt: String(row.created_at) };
+  return {
+    bundleId: row.bundle_id as string,
+    projectId: String(row.project_id ?? "default_project"),
+    name: row.name as string,
+    description: row.description as string,
+    createdAt: String(row.created_at)
+  };
 }
 
 function mapVersion(row: Record<string, unknown>): SourceBundleVersion {

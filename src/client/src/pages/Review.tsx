@@ -1,12 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
+import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { WritebackSteps } from "../components/WritebackSteps";
+import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
 import { IdChip, useNav } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
 
 const SEVERITY_OPTIONS = [
   { value: "", label: "全部级别" },
@@ -158,6 +161,7 @@ function rawRuleDetail(task: ReviewTask): string {
 
 export function Review() {
   const { navigate, params } = useNav();
+  const { currentProjectId, currentProject } = useProject();
   const queryClient = useQueryClient();
   const [severity, setSeverity] = useState("");
   const [status, setStatus] = useState("open");
@@ -168,10 +172,10 @@ export function Review() {
   const [applyModes, setApplyModes] = useState<Record<string, "hint" | "override">>({});
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["review", severity || "all", status || "all"],
-    queryFn: () => listReviewTasks(severity || undefined, status || undefined)
+    queryKey: ["review", currentProjectId, severity || "all", status || "all"],
+    queryFn: () => listReviewTasks(severity || undefined, status || undefined, currentProjectId)
   });
-  const workbench = useWorkbench();
+  const workbench = useWorkbench(currentProjectId);
 
   useEffect(() => {
     if (params.severity && params.severity !== severity) setSeverity(params.severity);
@@ -217,7 +221,7 @@ export function Review() {
         queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
-      navigate("builder");
+      navigate("buildrelease");
     }
   });
 
@@ -267,7 +271,7 @@ export function Review() {
   if (error) return <ErrorState error={error} />;
 
   return (
-    <Page title="审核中心" subtitle="把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。">
+    <Page title="审核中心" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。`}>
       <div className="detail-head review-toolbar">
         <div>
           <h2>审核任务</h2>
@@ -304,15 +308,28 @@ export function Review() {
       )}
 
       <section className="review-flow">
-        {workbench.data && (
-          <ReviewWorkbenchContext
-            workbench={workbench.data}
-            focusedTaskId={params.taskId}
-            onNavigateAgent={(query) => navigate("agent", { query })}
-            onNavigateBuilder={() => navigate("builder")}
-            onNavigateRelease={(releaseId) => navigate("release", releaseId ? { releaseId } : {})}
-          />
-        )}
+        {workbench.data && (() => {
+          const wb = workbench.data!;
+          const focusedInWorkbench = params.taskId
+            ? wb.annotationTasks.some((task) => task.taskId === params.taskId)
+              || wb.riskItems.some((item) => item.params?.taskId === params.taskId)
+            : false;
+          const firstRetest = wb.retestItems[0];
+          const firstDraft = wb.publishItems[0];
+          const actions: Array<{ label: string; onClick: () => void }> = [];
+          if (firstRetest) actions.push({ label: "复测最新反馈", onClick: () => navigate("agent", { query: firstRetest.query }) });
+          if (firstDraft) actions.push({ label: "检查待发布", onClick: () => navigate("buildrelease", { releaseId: firstDraft.releaseId }) });
+          if (!firstRetest && !firstDraft) actions.push({ label: "查看构建", onClick: () => navigate("buildrelease") });
+          return (
+            <WorkbenchStrip
+              kicker="飞轮主线"
+              headline={wb.headline}
+              summary={focusedInWorkbench ? "当前任务来自工作台优先队列，处理后应继续复测或发布验证。" : wb.summary}
+              focused={focusedInWorkbench}
+              actions={actions}
+            />
+          );
+        })()}
         <div className="metrics compact">
           <Metric label="待处理" value={taskStats.open} hint="当前筛选范围" tone={taskStats.open ? "warn" : "ok"} />
           <Metric label="阻断" value={taskStats.blocking} hint="先处理，影响发布" tone={taskStats.blocking ? "hot" : "ok"} />
@@ -330,6 +347,11 @@ export function Review() {
           </button>
         </div>
       </section>
+
+      <AutoFixedAuditSection
+        projectId={currentProjectId}
+        onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
+      />
 
       <div className="task-list">
         {tasks.map((task) => (
@@ -353,49 +375,14 @@ export function Review() {
             onTransition={(next) => act(task, next)}
             onNavigatePackage={() => navigate("assets", { packageId: task.packageId })}
             onNavigateAsset={(componentId) => navigate("assets", { packageId: task.packageId, componentId })}
-            onNavigateBuilder={() => navigate("builder", task.writeback?.runId ? { runId: task.writeback.runId } : {})}
-            onNavigateRelease={() => navigate("release", task.writeback?.releaseId ? { releaseId: task.writeback.releaseId } : {})}
+            onNavigateBuilder={() => navigate("buildrelease", task.writeback?.runId ? { runId: task.writeback.runId } : {})}
+            onNavigateRelease={() => navigate("buildrelease", task.writeback?.releaseId ? { releaseId: task.writeback.releaseId } : {})}
             onRetest={(insight) => navigate("agent", { toolName: insight.toolName, query: insight.queryText })}
           />
         ))}
         {tasks.length === 0 && <p className="subtle">没有符合条件的审核任务。</p>}
       </div>
     </Page>
-  );
-}
-
-function ReviewWorkbenchContext({
-  workbench,
-  focusedTaskId,
-  onNavigateAgent,
-  onNavigateBuilder,
-  onNavigateRelease,
-}: {
-  workbench: FlywheelWorkbench;
-  focusedTaskId?: string;
-  onNavigateAgent: (query: string) => void;
-  onNavigateBuilder: () => void;
-  onNavigateRelease: (releaseId?: string) => void;
-}) {
-  const focusedInWorkbench = focusedTaskId
-    ? workbench.annotationTasks.some((task) => task.taskId === focusedTaskId)
-      || workbench.riskItems.some((item) => item.params?.taskId === focusedTaskId)
-    : false;
-  const firstRetest = workbench.retestItems[0];
-  const firstDraft = workbench.publishItems[0];
-  return (
-    <div className={focusedInWorkbench ? "review-workbench-context focused" : "review-workbench-context"}>
-      <div>
-        <span className="command-kicker">飞轮主线</span>
-        <strong>{workbench.headline}</strong>
-        <p>{focusedInWorkbench ? "当前任务来自工作台优先队列，处理后应继续复测或发布验证。" : workbench.summary}</p>
-      </div>
-      <div className="task-primary-actions">
-        {firstRetest && <button className="secondary-action" type="button" onClick={() => onNavigateAgent(firstRetest.query)}>复测最新反馈</button>}
-        {firstDraft && <button className="secondary-action" type="button" onClick={() => onNavigateRelease(firstDraft.releaseId)}>检查待发布</button>}
-        {!firstRetest && !firstDraft && <button className="secondary-action" type="button" onClick={onNavigateBuilder}>查看构建</button>}
-      </div>
-    </div>
   );
 }
 
@@ -506,7 +493,13 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
           </small>
         )}
         <LearningStrip task={task} />
-        <WritebackStrip task={task} onNavigateBuilder={onNavigateBuilder} onNavigateRelease={onNavigateRelease} />
+        {task.writeback && (
+          <WritebackSteps
+            writeback={task.writeback}
+            onNavigateBuild={() => onNavigateBuilder()}
+            onNavigateRelease={() => onNavigateRelease()}
+          />
+        )}
         {task.status === "open" && task.taskKind === "annotation" && isAnnotationReview && (
           <AnnotationReviewPanel
             task={task}
@@ -719,59 +712,7 @@ function AnnotationReviewPanel({
   );
 }
 
-function WritebackStrip({
-  task,
-  onNavigateBuilder,
-  onNavigateRelease,
-}: {
-  task: ReviewTask;
-  onNavigateBuilder: () => void;
-  onNavigateRelease: () => void;
-}) {
-  const writeback = task.writeback;
-  if (!writeback) return null;
-  const buildTone = writeback.runStatus === "completed" ? "ok" : writeback.runStatus === "failed" ? "hot" : "warn";
-  const releaseTone = writeback.autoPublishStatus === "published"
-    ? "ok"
-    : writeback.autoPublishStatus === "skipped"
-      ? "warn"
-      : writeback.releaseStatus === "published"
-        ? "ok"
-        : undefined;
-  return (
-    <div className="writeback-strip">
-      <div className="writeback-head">
-        <strong>确定性回写链路</strong>
-        <Badge label={writeback.autoPublishStatus === "published" ? "已自动发布" : writeback.releaseId ? "已有 revision" : writeback.runId ? "已启动构建" : "已请求"} tone={releaseTone} />
-      </div>
-      <div className="writeback-steps">
-        <span className="writeback-step done">
-          <b>标注</b>
-          <strong>{formatTime(writeback.requestedAt)}</strong>
-          {writeback.sourcePath && <small>{writeback.sourcePath}</small>}
-        </span>
-        <button type="button" className={`writeback-step ${writeback.runId ? "done" : ""}`} onClick={onNavigateBuilder} disabled={!writeback.runId}>
-          <b>局部构建</b>
-          <strong>{writeback.runId || "等待启动"}</strong>
-          <small>{writeback.only || writeback.runStatus || "scoped"}</small>
-          {writeback.runStatus && <Badge label={writeback.runStatus} tone={buildTone} />}
-        </button>
-        <button type="button" className={`writeback-step ${writeback.releaseId ? "done" : ""}`} onClick={onNavigateRelease} disabled={!writeback.releaseId}>
-          <b>发布修订</b>
-          <strong>{writeback.releaseId || "等待构建完成"}</strong>
-          <small>{writeback.releaseAt ? formatTime(writeback.releaseAt) : writeback.releaseStatus || "revision draft"}</small>
-          {writeback.releaseStatus && <Badge label={writeback.releaseStatus} tone={releaseTone} />}
-        </button>
-      </div>
-      {writeback.autoPublishStatus === "skipped" && writeback.autoPublishReason && (
-        <p className="writeback-note">自动发布跳过：{writeback.autoPublishReason}</p>
-      )}
-    </div>
-  );
-}
-
-function LearningStrip({ task }: { task: ReviewTask }) {
-  const learning = task.learning;
+function LearningStrip({ task }: { task: ReviewTask }) {  const learning = task.learning;
   const hasSignal = learning.recurrenceCount > 0
     || learning.openSimilarCount > 0
     || learning.exampleCount > 0
@@ -803,5 +744,112 @@ function LearningStrip({ task }: { task: ReviewTask }) {
         </span>
       )}
     </div>
+  );
+}
+
+function AutoFixedAuditSection({
+  projectId,
+  onNavigateAsset,
+}: {
+  projectId: string;
+  onNavigateAsset: (packageId: string, componentId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["auto-fixed", projectId],
+    queryFn: () => listAutoFixedTasks(projectId),
+    enabled: Boolean(projectId),
+  });
+  const rollback = useMutation({
+    mutationFn: (taskId: string) => rollbackAutoFix(projectId, taskId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["auto-fixed"] }),
+        queryClient.invalidateQueries({ queryKey: ["review"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+    },
+  });
+  const tasks = data ?? [];
+  if (isLoading || error || tasks.length === 0) return null;
+  const displayed = expanded ? tasks : tasks.slice(0, 3);
+  return (
+    <section className="auto-fixed-audit">
+      <div className="detail-head">
+        <div>
+          <h2>自动修复审计</h2>
+          <p>由 LLM 自动生成并落盘的修复。信任分达标即已进入发布链路；如需人工回滚，展开逐条处理。</p>
+        </div>
+        <Badge label={`${tasks.length} 项`} tone="warn" />
+      </div>
+      <div className="task-list">
+        {displayed.map((task) => {
+          const analysis = task.llmAnalysis;
+          const confidencePct = analysis ? Math.round((analysis.confidence ?? 0) * 100) : 0;
+          const tone = confidencePct >= 90 ? "ok" : confidencePct >= 75 ? "warn" : "hot";
+          return (
+            <article key={task.taskId} className="task auto-fixed-task">
+              <Badge label={`置信度 ${confidencePct}%`} tone={tone} />
+              <div>
+                <div className="task-title-row">
+                  <h3>{task.title || task.ruleId || task.taskId}</h3>
+                  <Badge label={analysis?.modelName || "LLM"} />
+                  <Badge label={formatTime(task.resolvedAt ?? task.createdAt)} />
+                </div>
+                {analysis && (
+                  <div className="issue-guide">
+                    <span>
+                      <b>诊断</b>
+                      <strong>{analysis.diagnosis || "-"}</strong>
+                    </span>
+                    <span>
+                      <b>修复理由</b>
+                      <strong>{analysis.rationale || "-"}</strong>
+                    </span>
+                    <span>
+                      <b>类型</b>
+                      <strong>{analysis.fixType}</strong>
+                    </span>
+                  </div>
+                )}
+                <details className="raw-feedback">
+                  <summary>查看修复后的值</summary>
+                  <pre>{JSON.stringify(task.annotationValue ?? {}, null, 2)}</pre>
+                </details>
+                <div className="asset-link">
+                  <IdChip label={task.packageId} title="查看资产包" onClick={() => onNavigateAsset(task.packageId, task.componentId)} />
+                  {task.componentId && (
+                    <IdChip label={task.componentId} title="定位组件" onClick={() => onNavigateAsset(task.packageId, task.componentId)} />
+                  )}
+                </div>
+                <div className="task-actions">
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    disabled={rollback.isPending}
+                    onClick={() => {
+                      if (window.confirm(`确认回滚这条自动修复？将重开任务并停用自动生成的样例。`)) {
+                        rollback.mutate(task.taskId);
+                      }
+                    }}
+                  >
+                    回滚自动修复
+                  </button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {tasks.length > 3 && (
+        <button type="button" className="secondary-action" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "收起" : `展开全部 ${tasks.length} 条`}
+        </button>
+      )}
+      {rollback.error && (
+        <p className="error">{rollback.error instanceof Error ? rollback.error.message : String(rollback.error)}</p>
+      )}
+    </section>
   );
 }

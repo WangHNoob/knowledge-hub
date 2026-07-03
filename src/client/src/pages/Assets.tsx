@@ -10,6 +10,7 @@ import { formatPercent } from "../utils/format";
 import { useDebouncedValue } from "../utils/react";
 import { TRUST_DIMENSIONS, trustFromQuality, trustLabel, trustStatusLabel } from "../utils/trust";
 import { IdChip, useNav } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
 
 type TreeNode = {
   name: string;
@@ -58,6 +59,7 @@ function collectDirPaths(root: TreeNode): string[] {
 
 export function Assets() {
   const { navigate, params } = useNav();
+  const { currentProjectId } = useProject();
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<string>("");
   const [q, setQ] = useState("");
@@ -67,8 +69,8 @@ export function Assets() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const packageQuery = useDebouncedValue(useDeferredValue(q.trim()), 250);
   const packages = useQuery({
-    queryKey: ["packages", { q: packageQuery, status }],
-    queryFn: () => listPackages({ q: packageQuery, status }),
+    queryKey: ["packages", currentProjectId, { q: packageQuery, status }],
+    queryFn: () => listPackages({ q: packageQuery, status, projectId: currentProjectId }),
     placeholderData: (previous) => previous
   });
 
@@ -244,7 +246,7 @@ export function Assets() {
                 {pkg.createdByRunId && (
                   <span className="asset-link">
                     构建来源：
-                    <IdChip label={pkg.createdByRunId} title="在知识构建中查看该构建" onClick={() => navigate("builder", { runId: pkg.createdByRunId })} />
+                    <IdChip label={pkg.createdByRunId} title="在知识构建中查看该构建" onClick={() => navigate("buildrelease", { runId: pkg.createdByRunId })} />
                   </span>
                 )}
                 {pkg.sourceVersionIds.length > 0 && (

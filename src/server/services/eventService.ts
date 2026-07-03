@@ -58,10 +58,13 @@ export async function emitKnowledgeEvent(
     payload: input.payload ?? {},
     createdAt: new Date().toISOString(),
   };
+  const projectId = typeof event.payload.projectId === "string" && event.payload.projectId
+    ? event.payload.projectId
+    : "default_project";
   await db.adapter.query(
-    `INSERT INTO knowledge_events (event_id, event_type, entity_type, entity_id, payload_json, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
-    [event.eventId, event.eventType, event.entityType, event.entityId, JSON.stringify(event.payload), event.createdAt],
+    `INSERT INTO knowledge_events (event_id, project_id, event_type, entity_type, entity_id, payload_json, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [event.eventId, projectId, event.eventType, event.entityType, event.entityId, JSON.stringify(event.payload), event.createdAt],
   );
   bus.emit(event.eventType, event);
   return event;

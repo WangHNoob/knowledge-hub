@@ -2,6 +2,7 @@ import {
   mapAgentEvent,
   mapComponent,
   mapEvidenceRecord,
+  mapLlmAnalysis,
   mapMcpAudit,
   mapPackage,
   mapRelease,
@@ -61,13 +62,13 @@ export class KnowledgeService {
     return rows.length ? mapUser(rows[0]) : null;
   }
 
-  async getDashboardSummary() {
-    const sourceSummary = await this.getSourceBundleSummary();
-    const packages = await this.listPackages();
-    const components = await this.listComponents();
-    const tasks = await this.listReviewTasks({});
-    const releases = await this.listReleases();
-    const agentEvents = await this.listAgentEvents();
+  async getDashboardSummary(projectId = "default_project") {
+    const sourceSummary = await this.getSourceBundleSummary(projectId);
+    const packages = await this.listPackages({ projectId });
+    const components = await this.listComponents({ projectId });
+    const tasks = await this.listReviewTasks({ projectId });
+    const releases = await this.listReleases(projectId);
+    const agentEvents = await this.listAgentEvents(projectId);
 
     return {
       sources: sourceSummary,
@@ -99,12 +100,13 @@ export class KnowledgeService {
     };
   }
 
-  async getFlywheelWorkbench(input: { runs: KnowledgeBuildRun[] }): Promise<FlywheelWorkbench> {
+  async getFlywheelWorkbench(input: { runs: KnowledgeBuildRun[]; projectId?: string }): Promise<FlywheelWorkbench> {
+    const projectId = input.projectId ?? "default_project";
     const [tasks, annotations, events, releases] = await Promise.all([
-      this.listReviewTasks({ status: "open" }),
+      this.listReviewTasks({ status: "open", projectId }),
       this.listAnnotationExamples(),
-      this.listAgentEvents(),
-      this.listReleases(),
+      this.listAgentEvents(projectId),
+      this.listReleases(projectId),
     ]);
     return createFlywheelWorkbenchModel({
       tasks,
@@ -115,12 +117,23 @@ export class KnowledgeService {
     });
   }
 
-  async getSourceBundleSummary() {
-    const { rows: [bundlesRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundles");
-    const { rows: [versionsRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundle_versions");
+  async getSourceBundleSummary(projectId = "default_project") {
+    const { rows: [bundlesRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c FROM source_bundles WHERE project_id = $1", [projectId]);
+    const { rows: [versionsRow] } = await this.adapter.query(
+      `SELECT COUNT(*)::int AS c
+       FROM source_bundle_versions v
+       JOIN source_bundles b ON b.bundle_id = v.bundle_id
+       WHERE b.project_id = $1`,
+      [projectId],
+    );
     const { rows: [blobsRow] } = await this.adapter.query("SELECT COUNT(*)::int AS c, COALESCE(SUM(byte_size), 0)::bigint AS bytes FROM source_blobs");
     const { rows: latestRows } = await this.adapter.query(
-      "SELECT version_id, label, created_at, file_count FROM source_bundle_versions ORDER BY created_at DESC LIMIT 1"
+      `SELECT v.version_id, v.label, v.created_at, v.file_count
+       FROM source_bundle_versions v
+       JOIN source_bundles b ON b.bundle_id = v.bundle_id
+       WHERE b.project_id = $1
+       ORDER BY v.created_at DESC LIMIT 1`,
+      [projectId],
     );
     const latest = latestRows[0] ?? null;
     return {
@@ -139,9 +152,11 @@ export class KnowledgeService {
     };
   }
 
-  async listPackages(filter: { q?: string; status?: PackageStatus; kind?: string } = {}): Promise<AssetPackage[]> {
+  async listPackages(filter: { q?: string; status?: PackageStatus; kind?: string; projectId?: string } = {}): Promise<AssetPackage[]> {
     const where: string[] = [];
     const params: unknown[] = [];
+    where.push(`project_id = $${params.length + 1}`);
+    params.push(filter.projectId ?? "default_project");
     if (filter.q) {
       where.push(`(name ILIKE $${params.length + 1} OR description ILIKE $${params.length + 1})`);
       params.push(`%${filter.q}%`);
@@ -243,9 +258,13 @@ export class KnowledgeService {
     return true;
   }
 
-  async listComponents(filter: { packageId?: string; group?: AssetGroup } = {}): Promise<AssetComponent[]> {
+  async listComponents(filter: { packageId?: string; group?: AssetGroup; projectId?: string } = {}): Promise<AssetComponent[]> {
     const where: string[] = [];
     const params: unknown[] = [];
+    if (filter.projectId) {
+      where.push(`package_id IN (SELECT package_id FROM asset_packages WHERE project_id = $${params.length + 1})`);
+      params.push(filter.projectId);
+    }
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
     if (filter.group) { where.push(`group_name = $${params.length + 1}`); params.push(filter.group); }
     const sql = `SELECT * FROM asset_components${where.length ? " WHERE " + where.join(" AND ") : ""} ORDER BY group_name, title`;
@@ -262,9 +281,11 @@ export class KnowledgeService {
     return rows.length ? String(rows[0].package_id) : null;
   }
 
-  async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string; status?: ReviewStatus } = {}): Promise<ReviewTask[]> {
+  async listReviewTasks(filter: { severity?: ReviewSeverity; packageId?: string; status?: ReviewStatus; projectId?: string } = {}): Promise<ReviewTask[]> {
     const where: string[] = [];
     const params: unknown[] = [];
+    where.push(`project_id = $${params.length + 1}`);
+    params.push(filter.projectId ?? "default_project");
     if (filter.severity) { where.push(`severity = $${params.length + 1}`); params.push(filter.severity); }
     if (filter.packageId) { where.push(`package_id = $${params.length + 1}`); params.push(filter.packageId); }
     if (filter.status) { where.push(`status = $${params.length + 1}`); params.push(filter.status); }
@@ -764,6 +785,111 @@ export class KnowledgeService {
     return rows.map(mapReviewTask);
   }
 
+  /**
+   * Append LLM-generated candidate suggestions to an open review task.
+   * Existing candidates are preserved; new suggestions get id `llm_<index>`.
+   */
+  async addLlmSuggestions(
+    taskId: string,
+    suggestions: Array<{ label: string; value: unknown; rationale?: string }>
+  ): Promise<void> {
+    if (suggestions.length === 0) return;
+    const { rows } = await this.adapter.query(
+      "SELECT candidates FROM review_tasks WHERE task_id = $1",
+      [taskId]
+    );
+    if (rows.length === 0) return;
+    const existing = rows[0].candidates;
+    let arr: unknown[] = [];
+    if (Array.isArray(existing)) arr = existing.slice();
+    else if (typeof existing === "string" && existing.length > 0) {
+      try { arr = JSON.parse(existing) as unknown[]; } catch { arr = []; }
+    }
+    const startIndex = arr.length;
+    const additions = suggestions.map((s, idx) => ({
+      id: `llm_${startIndex + idx + 1}`,
+      label: s.label,
+      value: s.value,
+      rationale: s.rationale ?? "",
+      source: "llm_auto_remediation"
+    }));
+    const merged = [...arr, ...additions];
+    await this.adapter.query(
+      "UPDATE review_tasks SET candidates = $2 WHERE task_id = $1",
+      [taskId, JSON.stringify(merged)]
+    );
+  }
+
+  /** List tasks that were auto-fixed by the LLM, optionally scoped by project. */
+  async listAutoFixedTasks(filter: { projectId?: string } = {}): Promise<ReviewTask[]> {
+    const where: string[] = ["t.auto_fixed = TRUE"];
+    const params: unknown[] = [];
+    if (filter.projectId) {
+      where.push(`t.package_id IN (SELECT package_id FROM asset_packages WHERE project_id = $${params.length + 1})`);
+      params.push(filter.projectId);
+    }
+    const { rows } = await this.adapter.query(
+      `SELECT t.* FROM review_tasks t WHERE ${where.join(" AND ")} ORDER BY t.resolved_at DESC NULLS LAST, t.created_at DESC`,
+      params
+    );
+    return rows.map(mapReviewTask);
+  }
+
+  /**
+   * Roll back an auto-fixed task: reopen it, clear auto_fixed flag, deactivate
+   * the auto-generated annotation_example, and retire any source_correction
+   * that was created for it.
+   */
+  async rollbackAutoFix(taskId: string, actor: string): Promise<ReviewTask> {
+    const now = new Date().toISOString();
+    await this.adapter.query("BEGIN");
+    try {
+      const { rows: taskRows } = await this.adapter.query(
+        "SELECT * FROM review_tasks WHERE task_id = $1 FOR UPDATE",
+        [taskId]
+      );
+      if (taskRows.length === 0) throw new Error(`Unknown review task: ${taskId}`);
+      const task = mapReviewTask(taskRows[0]);
+      if (!task.autoFixed) throw new Error(`Task ${taskId} is not auto-fixed; nothing to roll back.`);
+
+      await this.adapter.query(
+        `UPDATE annotation_examples
+           SET active = FALSE
+         WHERE task_id = $1 AND auto_generated = TRUE`,
+        [taskId]
+      );
+      await this.adapter.query(
+        `UPDATE source_corrections
+           SET state = 'retired', updated_at = $2
+         WHERE task_id = $1`,
+        [taskId, now]
+      );
+      const { rows: updated } = await this.adapter.query(
+        `UPDATE review_tasks
+           SET status = 'open',
+               auto_fixed = FALSE,
+               resolved_by = '',
+               resolved_at = NULL,
+               resolution_note = $2,
+               annotation_value = '{}'::jsonb
+         WHERE task_id = $1
+         RETURNING *`,
+        [taskId, `rolled back auto-fix by ${actor} at ${now}`]
+      );
+      await this.adapter.query("COMMIT");
+      await emitKnowledgeEvent(this.db, {
+        eventType: "annotation.review_resolved",
+        entityType: "review_task",
+        entityId: taskId,
+        payload: { action: "auto_fix_rollback", resolvedBy: actor, taskId }
+      });
+      return mapReviewTask(updated[0]);
+    } catch (error) {
+      await this.adapter.query("ROLLBACK");
+      throw error;
+    }
+  }
+
   async annotateReviewTask(input: {
     taskId: string;
     selectedCandidateId?: string;
@@ -773,6 +899,8 @@ export class KnowledgeService {
     dismissRule?: boolean;
     dismissalReason?: string;
     actor: string;
+    autoFixed?: boolean;
+    llmAnalysis?: import("../types").LlmAnalysis;
   }): Promise<{ task: ReviewTask; example: AnnotationExample | null }> {
     const task = (await this.listReviewTasks({})).find((item) => item.taskId === input.taskId);
     if (!task) throw new Error(`Unknown review task: ${input.taskId}`);
@@ -807,8 +935,8 @@ export class KnowledgeService {
     try {
       await this.adapter.query(
         `INSERT INTO annotation_examples
-          (example_id, package_id, component_id, task_id, rule_id, apply_mode, page_type, context_hash, context_snapshot, correct_value, created_by, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          (example_id, package_id, component_id, task_id, rule_id, apply_mode, page_type, context_hash, context_snapshot, correct_value, created_by, created_at, auto_generated, llm_analysis)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           exampleId,
           task.packageId,
@@ -822,6 +950,8 @@ export class KnowledgeService {
           JSON.stringify(correctValue),
           input.actor,
           now,
+          Boolean(input.autoFixed),
+          input.llmAnalysis ? JSON.stringify(input.llmAnalysis) : null,
         ],
       );
       if (input.dismissRule && task.ruleId) {
@@ -868,7 +998,9 @@ export class KnowledgeService {
              resolution_note = $4,
              annotation_value = $5,
              annotated_by = $2,
-             annotated_at = $3
+             annotated_at = $3,
+             auto_fixed = $6,
+             llm_analysis = $7
          WHERE task_id = $1`,
         [
           task.taskId,
@@ -876,6 +1008,8 @@ export class KnowledgeService {
           now,
           input.note ?? "",
           JSON.stringify(correctValue),
+          Boolean(input.autoFixed),
+          input.llmAnalysis ? JSON.stringify(input.llmAnalysis) : null,
         ],
       );
       await this.adapter.query("COMMIT");
@@ -920,6 +1054,8 @@ export class KnowledgeService {
       }),
       createdBy: input.actor,
       createdAt: now,
+      autoGenerated: Boolean(input.autoFixed),
+      llmAnalysis: input.llmAnalysis ?? null,
     };
     await emitKnowledgeEvent(this.db, {
       eventType: "annotation.created",
@@ -1293,13 +1429,19 @@ export class KnowledgeService {
     };
   }
 
-  async listReleases(): Promise<ReleaseRecord[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM releases ORDER BY published_at DESC NULLS LAST");
+  async listReleases(projectId = "default_project"): Promise<ReleaseRecord[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM releases WHERE project_id = $1 ORDER BY published_at DESC NULLS LAST",
+      [projectId],
+    );
     return rows.map(mapRelease);
   }
 
-  async listAgentEvents(): Promise<AgentEvent[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM agent_events ORDER BY created_at DESC LIMIT 50");
+  async listAgentEvents(projectId = "default_project"): Promise<AgentEvent[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM agent_events WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50",
+      [projectId],
+    );
     const events = rows.map(mapAgentEvent);
     const componentIds = uniqueSorted(events.flatMap((event) => event.hitComponentIds));
     if (componentIds.length === 0) return events;
@@ -1334,8 +1476,11 @@ export class KnowledgeService {
     }));
   }
 
-  async listMcpAudit(): Promise<McpAuditRecord[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM mcp_audit ORDER BY created_at DESC LIMIT 100");
+  async listMcpAudit(projectId = "default_project"): Promise<McpAuditRecord[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM mcp_audit WHERE project_id = $1 ORDER BY created_at DESC LIMIT 100",
+      [projectId],
+    );
     const audits = rows.map(mapMcpAudit);
     const componentIds = uniqueSorted(audits.flatMap((audit) => audit.hitComponentIds));
     if (componentIds.length === 0) return audits;
@@ -1376,11 +1521,12 @@ export class KnowledgeService {
     }));
   }
 
-  async listFlywheelEvents(): Promise<FlywheelEvent[]> {
+  async listFlywheelEvents(projectId = "default_project"): Promise<FlywheelEvent[]> {
     const { rows } = await this.adapter.query(
       `SELECT *
        FROM knowledge_events
-       WHERE event_type IN (
+       WHERE project_id = $1
+         AND event_type IN (
          'agent.feedback.rebuild_proposed',
          'agent.feedback.rebuild_started',
          'annotation.writeback_requested',
@@ -1392,6 +1538,7 @@ export class KnowledgeService {
        )
        ORDER BY created_at DESC
        LIMIT 100`,
+      [projectId],
     );
     return rows.map((row) => ({
       eventId: String(row.event_id),
@@ -1403,7 +1550,7 @@ export class KnowledgeService {
     }));
   }
 
-  async getFlywheelConvergenceSummary() {
+  async getFlywheelConvergenceSummary(projectId = "default_project") {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const [
       { rows: [annotationRow] },
@@ -1420,8 +1567,9 @@ export class KnowledgeService {
            COUNT(DISTINCT rule_id)::int AS rules,
            SUM(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END)::int AS recent,
            MAX(created_at) AS latest_at
-         FROM annotation_examples`,
-        [since],
+         FROM annotation_examples
+         WHERE project_id = $2`,
+        [since, projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1429,7 +1577,9 @@ export class KnowledgeService {
            COUNT(DISTINCT component_id) FILTER (WHERE active = true)::int AS components,
            COUNT(DISTINCT rule_id) FILTER (WHERE active = true)::int AS rules,
            MAX(created_at) FILTER (WHERE active = true) AS latest_at
-         FROM rule_dismissals`,
+         FROM rule_dismissals
+         WHERE project_id = $1`,
+        [projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1437,8 +1587,9 @@ export class KnowledgeService {
            SUM(CASE WHEN status = 'miss' OR feedback_type <> 'hit' OR jsonb_array_length(COALESCE(quality_flags, '[]'::jsonb)) > 0 THEN 1 ELSE 0 END)::int AS negative,
            SUM(CASE WHEN created_at >= $1 THEN 1 ELSE 0 END)::int AS recent,
            MAX(created_at) AS latest_at
-         FROM agent_events`,
-        [since],
+         FROM agent_events
+         WHERE project_id = $2`,
+        [since, projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1447,7 +1598,9 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE task_kind = 'annotation')::int AS annotation_tasks,
            COUNT(*) FILTER (WHERE task_kind = 'annotation' AND status = 'open')::int AS open_annotation_tasks,
            COUNT(*) FILTER (WHERE status = 'open' AND severity = 'blocking')::int AS open_blocking_tasks
-         FROM review_tasks`,
+         FROM review_tasks
+         WHERE project_id = $1`,
+        [projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1456,7 +1609,9 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '' AND status = 'completed')::int AS completed,
            COUNT(*) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '' AND status = 'failed')::int AS failed,
            MAX(started_at) FILTER (WHERE COALESCE(config_json ->> 'rebuildTaskId', '') <> '') AS latest_at
-         FROM knowledge_build_runs`,
+         FROM knowledge_build_runs
+         WHERE project_id = $1`,
+        [projectId],
       ),
       this.adapter.query(
         `SELECT
@@ -1464,7 +1619,9 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE event_type = 'release.auto_publish_succeeded')::int AS auto_published,
            COUNT(*) FILTER (WHERE event_type = 'release.auto_publish_skipped')::int AS auto_skipped,
            MAX(created_at) FILTER (WHERE event_type IN ('release.revision_proposed', 'release.auto_publish_succeeded', 'release.auto_publish_skipped')) AS latest_at
-         FROM knowledge_events`,
+         FROM knowledge_events
+         WHERE project_id = $1`,
+        [projectId],
       ),
     ]);
 
@@ -1738,6 +1895,8 @@ function annotationExampleFromRow(row: Record<string, unknown>): AnnotationExamp
     }),
     createdBy: String(row.created_by ?? ""),
     createdAt: String(row.created_at ?? ""),
+    autoGenerated: row.auto_generated === true || row.auto_generated === "true" || row.auto_generated === 1,
+    llmAnalysis: mapLlmAnalysis(row.llm_analysis),
   };
 }
 

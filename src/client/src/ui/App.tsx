@@ -1,13 +1,9 @@
 import {
   Activity,
-  Archive,
   Boxes,
-  Bug,
   CheckCircle2,
   Database,
-  GitBranch,
   HardDrive,
-  Languages,
   LogOut,
   PackagePlus,
   ScrollText,
@@ -15,68 +11,53 @@ import {
   SearchCheck
 } from "lucide-react";
 import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getToken, searchAll, setToken } from "../api";
+import { createProject, getToken, listProjects, searchAll, selectProject, setToken } from "../api";
 import type { SearchHit } from "../api";
 import { LoginScreen } from "../pages/Login";
 import { useDebouncedValue } from "../utils/react";
 import { NavProvider, useNav, type NavParams, type View } from "./navigation";
+import { ProjectProvider, useProject } from "./projectContext";
 
 const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ default: module.Dashboard }));
 const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
-const loadLegislation = () => import("../pages/Legislation").then((module) => ({ default: module.Legislation }));
-const loadKnowledgeBuilder = () => import("../pages/KnowledgeBuilder").then((module) => ({ default: module.KnowledgeBuilder }));
+const loadRules = () => import("../pages/Rules").then((module) => ({ default: module.Rules }));
+const loadBuildRelease = () => import("../pages/BuildRelease").then((module) => ({ default: module.BuildRelease }));
 const loadAssets = () => import("../pages/Assets").then((module) => ({ default: module.Assets }));
-const loadTableAliases = () => import("../pages/TableAliases").then((module) => ({ default: module.TableAliases }));
 const loadReview = () => import("../pages/Review").then((module) => ({ default: module.Review }));
-const loadRelease = () => import("../pages/Release").then((module) => ({ default: module.Release }));
 const loadAgentFeedback = () => import("../pages/AgentFeedback").then((module) => ({ default: module.AgentFeedback }));
-const loadStorage = () => import("../pages/Storage").then((module) => ({ default: module.Storage }));
-const loadDiagnostics = () => import("../pages/Diagnostics").then((module) => ({ default: module.Diagnostics }));
-const loadMaintenance = () => import("../pages/Maintenance").then((module) => ({ default: module.Maintenance }));
+const loadSystem = () => import("../pages/System").then((module) => ({ default: module.System }));
 
 const Dashboard = lazy(loadDashboard);
 const Sources = lazy(loadSources);
-const Legislation = lazy(loadLegislation);
-const KnowledgeBuilder = lazy(loadKnowledgeBuilder);
+const Rules = lazy(loadRules);
+const BuildRelease = lazy(loadBuildRelease);
 const Assets = lazy(loadAssets);
-const TableAliases = lazy(loadTableAliases);
 const Review = lazy(loadReview);
-const Release = lazy(loadRelease);
 const AgentFeedback = lazy(loadAgentFeedback);
-const Storage = lazy(loadStorage);
-const Diagnostics = lazy(loadDiagnostics);
-const Maintenance = lazy(loadMaintenance);
+const System = lazy(loadSystem);
 
 const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   dashboard: loadDashboard,
   sources: loadSources,
-  legislation: loadLegislation,
-  builder: loadKnowledgeBuilder,
+  rules: loadRules,
+  buildrelease: loadBuildRelease,
   assets: loadAssets,
-  aliases: loadTableAliases,
   review: loadReview,
-  release: loadRelease,
   agent: loadAgentFeedback,
-  storage: loadStorage,
-  diagnostics: loadDiagnostics,
-  maintenance: loadMaintenance
+  system: loadSystem
 };
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "飞轮工作台", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
-  { id: "legislation", label: "策划立法", icon: ScrollText },
-  { id: "builder", label: "知识构建", icon: PackagePlus },
+  { id: "rules", label: "规则治理", icon: ScrollText },
+  { id: "buildrelease", label: "构建发布", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
-  { id: "aliases", label: "翻译表", icon: Languages },
   { id: "review", label: "审核中心", icon: CheckCircle2 },
-  { id: "release", label: "发布", icon: GitBranch },
   { id: "agent", label: "Agent 反馈", icon: SearchCheck },
-  { id: "storage", label: "存储治理", icon: HardDrive },
-  { id: "diagnostics", label: "运行诊断", icon: Bug },
-  { id: "maintenance", label: "高级维护", icon: Archive }
+  { id: "system", label: "系统", icon: HardDrive },
 ];
 
 export function App() {
@@ -84,6 +65,24 @@ export function App() {
   const [view, setView] = useState<View>("dashboard");
   const [navParams, setNavParams] = useState<NavParams>({});
   const queryClient = useQueryClient();
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: listProjects,
+    enabled: Boolean(token)
+  });
+  const switchProjectMutation = useMutation({
+    mutationFn: selectProject,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+    }
+  });
+  const createProjectMutation = useMutation({
+    mutationFn: createProject,
+    onSuccess: async (result) => {
+      await selectProject(result.project.projectId);
+      await queryClient.invalidateQueries();
+    }
+  });
 
   const navigate = useCallback((next: View, params: NavParams = {}) => {
     startTransition(() => {
@@ -100,7 +99,22 @@ export function App() {
     }} />;
   }
 
+  const currentProjectId = projects.data?.currentProjectId ?? "default_project";
+  const projectValue = {
+    projects: projects.data?.projects ?? [],
+    currentProjectId,
+    loading: projects.isLoading,
+    switching: switchProjectMutation.isPending || createProjectMutation.isPending,
+    switchProject: async (projectId: string) => {
+      await switchProjectMutation.mutateAsync(projectId);
+    },
+    createProject: async (input: { name: string; description?: string }) => {
+      await createProjectMutation.mutateAsync(input);
+    }
+  };
+
   return (
+    <ProjectProvider value={projectValue}>
     <NavProvider value={navValue}>
       <div className="shell">
         <aside className="sidebar">
@@ -111,6 +125,7 @@ export function App() {
               <span>资产飞轮管理台</span>
             </div>
           </div>
+          <ProjectSwitcher />
           <nav>
             {NAV.map((item) => {
               const Icon = item.icon;
@@ -147,16 +162,12 @@ export function App() {
           <Suspense fallback={<div className="state">正在加载页面...</div>}>
             {view === "dashboard" && <Dashboard />}
             {view === "sources" && <Sources />}
-            {view === "builder" && <KnowledgeBuilder onShowPackage={(packageId) => navigate("assets", { packageId })} />}
-            {view === "legislation" && <Legislation />}
+            {view === "rules" && <Rules />}
+            {view === "buildrelease" && <BuildRelease />}
             {view === "assets" && <Assets />}
-            {view === "aliases" && <TableAliases />}
             {view === "review" && <Review />}
-            {view === "release" && <Release />}
             {view === "agent" && <AgentFeedback />}
-            {view === "storage" && <Storage />}
-            {view === "diagnostics" && <Diagnostics />}
-            {view === "maintenance" && <Maintenance />}
+            {view === "system" && <System />}
           </Suspense>
         </main>
         <a className="deerflow" href="https://deerflow.tech" target="_blank" rel="noreferrer" title="Created By Deerflow">
@@ -164,6 +175,40 @@ export function App() {
         </a>
       </div>
     </NavProvider>
+    </ProjectProvider>
+  );
+}
+
+function ProjectSwitcher() {
+  const { projects, currentProjectId, currentProject, loading, switching, switchProject, createProject } = useProject();
+  return (
+    <div className="project-switcher">
+      <label>游戏项目</label>
+      <div className="project-select-row">
+        <select
+          value={currentProjectId}
+          disabled={loading || switching}
+          onChange={(event) => { void switchProject(event.target.value); }}
+        >
+          {projects.map((project) => (
+            <option key={project.projectId} value={project.projectId}>{project.name}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          disabled={switching}
+          title="新建项目"
+          onClick={() => {
+            const name = window.prompt("新游戏项目名称");
+            if (!name?.trim()) return;
+            void createProject({ name: name.trim() });
+          }}
+        >
+          +
+        </button>
+      </div>
+      <small>{currentProject?.projectId ?? "default_project"}</small>
+    </div>
   );
 }
 
@@ -187,7 +232,7 @@ function GlobalSearch() {
     if (hit.kind === "package") navigate("assets", { packageId: hit.id });
     else if (hit.kind === "component") navigate("assets", { packageId: hit.packageId, componentId: hit.id });
     else if (hit.kind === "source_version") navigate("sources", { versionId: hit.id });
-    else if (hit.kind === "release") navigate("release", { releaseId: hit.id });
+    else if (hit.kind === "release") navigate("buildrelease", { releaseId: hit.id });
   };
 
   const hits = search.data?.hits ?? [];

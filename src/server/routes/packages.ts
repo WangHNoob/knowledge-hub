@@ -13,7 +13,17 @@ export function registerPackageRoutes(app: FastifyInstance, ctx: RouteContext) {
     async (request, reply) => {
       const parsed = packageListQuerySchema.safeParse(request.query);
       if (!parsed.success) return reply.code(400).send({ error: "Invalid package query." });
-      return { packages: await ctx.service.listPackages(parsed.data) };
+      return { packages: await ctx.service.listPackages({ ...parsed.data, projectId: "default_project" }) };
+    }
+  );
+
+  app.get<{ Params: { projectId: string }; Querystring: z.infer<typeof packageListQuerySchema> }>(
+    "/api/projects/:projectId/packages",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const parsed = packageListQuerySchema.safeParse(request.query);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid package query." });
+      return { packages: await ctx.service.listPackages({ ...parsed.data, projectId: request.params.projectId }) };
     }
   );
 

@@ -6,6 +6,7 @@ import {
   buildAndPublishKnowledge,
   buildKnowledgePackage,
   deleteBuildRun,
+  listSourceBundles,
   listBuildRuns,
   listBundleVersions,
   listFlywheelEvents,
@@ -14,15 +15,17 @@ import {
   testModelConnectivity,
   type BuildModelConfig,
   type FlywheelEvent,
-  type FlywheelWorkbench,
   type KnowledgeBuildRun,
   type ReviewTask
 } from "../api";
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
 import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRunCard";
+import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
+import { parseAutoPublishReasons } from "../utils/automation";
 
 const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
@@ -31,8 +34,8 @@ type BuilderTab = "build" | "advanced" | "runs";
 
 export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId: string) => void }) {
   const { navigate } = useNav();
+  const { currentProjectId, currentProject } = useProject();
   const queryClient = useQueryClient();
-  const bundleId = "default";
   const prefs = useMemo(loadModelPrefs, []);
   const [tab, setTab] = useState<BuilderTab>("build");
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
@@ -51,24 +54,30 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
   const [completion, setCompletion] = useState<{ runId: string; packageId: string | null; status: "completed" | "failed"; error: string } | null>(null);
   const lastSeenStatus = useRef<Record<string, string>>({});
 
+  const bundles = useQuery({
+    queryKey: ["source-bundles", currentProjectId],
+    queryFn: () => listSourceBundles(currentProjectId)
+  });
+  const bundleId = bundles.data?.[0]?.bundleId ?? "";
   const versions = useQuery({
-    queryKey: ["bundle-versions", bundleId],
-    queryFn: () => listBundleVersions(bundleId)
+    queryKey: ["bundle-versions", currentProjectId, bundleId],
+    queryFn: () => listBundleVersions(bundleId, currentProjectId),
+    enabled: Boolean(bundleId)
   });
   const runs = useQuery({
-    queryKey: ["build-runs"],
-    queryFn: listBuildRuns,
+    queryKey: ["build-runs", currentProjectId],
+    queryFn: () => listBuildRuns(currentProjectId),
     refetchInterval: 2000
   });
   const flywheelEvents = useQuery({
-    queryKey: ["agent", "flywheel-events"],
-    queryFn: listFlywheelEvents,
+    queryKey: ["agent", "flywheel-events", currentProjectId],
+    queryFn: () => listFlywheelEvents(currentProjectId),
     refetchInterval: 3000
   });
-  const workbench = useWorkbench();
+  const workbench = useWorkbench(currentProjectId);
   const blockingTasks = useQuery({
-    queryKey: ["review", "blocking"],
-    queryFn: () => listReviewTasks("blocking", "open"),
+    queryKey: ["review", "blocking", currentProjectId],
+    queryFn: () => listReviewTasks("blocking", "open", currentProjectId),
     refetchInterval: 5000
   });
 
@@ -113,7 +122,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     mutationFn: async () => {
       if (!selectedVersion) throw new Error("请选择资料版本。");
       if (stages.length === 0) throw new Error("至少选择一个 pipeline 阶段。");
-      return buildKnowledgePackage(bundleId, selectedVersion, buildPayload({ provider, baseUrl, model, apiKey, stages, force, only, generateAliases }));
+      return buildKnowledgePackage(bundleId, selectedVersion, buildPayload({ provider, baseUrl, model, apiKey, stages, force, only, generateAliases }), currentProjectId);
     },
     onSuccess: async (result) => {
       setError("");
@@ -121,12 +130,12 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       setCompletion(null);
       setTab("runs");
       lastSeenStatus.current[result.run.runId] = result.run.status;
-      queryClient.setQueryData<KnowledgeBuildRun[]>(["build-runs"], (current = []) => [
+      queryClient.setQueryData<KnowledgeBuildRun[]>(["build-runs", currentProjectId], (current = []) => [
         result.run,
         ...current.filter((run) => run.runId !== result.run.runId)
       ]);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["build-runs", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["review", "blocking"] }),
         queryClient.invalidateQueries({ queryKey: ["packages"] }),
@@ -141,7 +150,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     mutationFn: async () => {
       if (!selectedVersion) throw new Error("请选择资料版本。");
       if (stages.length === 0) throw new Error("至少选择一个 pipeline 阶段。");
-      return buildAndPublishKnowledge(bundleId, selectedVersion, buildPayload({ provider, baseUrl, model, apiKey, stages, force, only, generateAliases }));
+      return buildAndPublishKnowledge(bundleId, selectedVersion, buildPayload({ provider, baseUrl, model, apiKey, stages, force, only, generateAliases }), currentProjectId);
     },
     onSuccess: async (result) => {
       setError("");
@@ -149,12 +158,12 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       setCompletion(null);
       setTab("runs");
       lastSeenStatus.current[result.run.runId] = result.run.status;
-      queryClient.setQueryData<KnowledgeBuildRun[]>(["build-runs"], (current = []) => [
+      queryClient.setQueryData<KnowledgeBuildRun[]>(["build-runs", currentProjectId], (current = []) => [
         result.run,
         ...current.filter((run) => run.runId !== result.run.runId)
       ]);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["build-runs", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["releases"] }),
         queryClient.invalidateQueries({ queryKey: ["packages"] }),
@@ -177,7 +186,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
   const stopRunMutation = useMutation({
     mutationFn: stopBuildRun,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["build-runs"] });
+      await queryClient.invalidateQueries({ queryKey: ["build-runs", currentProjectId] });
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "停止运行失败。");
@@ -186,7 +195,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
   const deleteRunMutation = useMutation({
     mutationFn: deleteBuildRun,
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["build-runs"] });
+      await queryClient.invalidateQueries({ queryKey: ["build-runs", currentProjectId] });
     },
     onError: (err) => {
       setError(err instanceof Error ? err.message : "删除运行记录失败。");
@@ -200,7 +209,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
     [blockingTasks.data, flywheelEvents.data]
   );
   const busyStarting = buildMutation.isPending || buildAndPublishMutation.isPending;
-  const canStart = Boolean(selectedVersion) && !busyStarting && stages.length > 0 && (
+  const canStart = Boolean(bundleId && selectedVersion) && !busyStarting && stages.length > 0 && (
     provider === "deterministic" || Boolean(baseUrl.trim() && model.trim() && apiKey.trim())
   );
   const canTestModel = provider !== "deterministic" && Boolean(baseUrl.trim() && model.trim() && apiKey.trim()) && !modelTestMutation.isPending;
@@ -225,7 +234,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
   return (
     <Page
       title="知识构建"
-      subtitle="选一份资料版本，点一下，就生成一份知识资产包。"
+      subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。选一份资料版本，点一下，就生成一份知识资产包。`}
     >
       {completion && (
         <div className={`completion-banner ${completion.status}`}>
@@ -262,14 +271,24 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
       )}
 
       <Tabs items={tabs} active={tab} onChange={setTab} />
-      {workbench.data && (
-        <BuilderWorkbenchContext
-          workbench={workbench.data}
-          onOpenReview={(taskId) => navigate("review", taskId ? { taskId } : {})}
-          onOpenAgent={(query) => navigate("agent", { query })}
-          onOpenRelease={(releaseId) => navigate("release", releaseId ? { releaseId } : {})}
-        />
-      )}
+      {workbench.data && (() => {
+        const wb = workbench.data;
+        const annotation = wb.annotationTasks[0];
+        const retest = wb.retestItems[0];
+        const release = wb.publishItems[0];
+        const actions: Array<{ label: string; onClick: () => void }> = [];
+        if (annotation) actions.push({ label: "处理标注", onClick: () => navigate("review", { taskId: annotation.taskId }) });
+        if (!annotation && retest) actions.push({ label: "复测反馈", onClick: () => navigate("agent", { query: retest.query }) });
+        if (!annotation && !retest && release) actions.push({ label: "检查发布", onClick: () => navigate("buildrelease", { releaseId: release.releaseId }) });
+        return (
+          <WorkbenchStrip
+            kicker="构建后的下一步"
+            headline={wb.headline}
+            summary={wb.summary}
+            actions={actions}
+          />
+        );
+      })()}
 
       <div className="tab-panel" key={tab}>
         {tab === "build" && (
@@ -430,7 +449,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                   onStop={() => stopRunMutation.mutate(run.runId)}
                   onDelete={() => deleteRunMutation.mutate(run.runId)}
                   onShowPackage={onShowPackage}
-                  onShowRelease={(releaseId, eventId) => navigate("release", { releaseId, eventId })}
+                  onShowRelease={(releaseId, eventId) => navigate("buildrelease", { releaseId, eventId })}
                   onShowReview={(taskId, packageId) => navigate("review", { severity: "blocking", packageId: packageId ?? run.packageId ?? undefined, taskId })}
                   busy={stopRunMutation.isPending || deleteRunMutation.isPending}
                 />
@@ -444,37 +463,6 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
         )}
       </div>
     </Page>
-  );
-}
-
-function BuilderWorkbenchContext({
-  workbench,
-  onOpenReview,
-  onOpenAgent,
-  onOpenRelease,
-}: {
-  workbench: FlywheelWorkbench;
-  onOpenReview: (taskId?: string) => void;
-  onOpenAgent: (query: string) => void;
-  onOpenRelease: (releaseId?: string) => void;
-}) {
-  const annotation = workbench.annotationTasks[0];
-  const retest = workbench.retestItems[0];
-  const release = workbench.publishItems[0];
-  if (!annotation && !retest && !release && workbench.runningRuns.length === 0) return null;
-  return (
-    <section className="builder-workbench-context">
-      <div>
-        <span className="command-kicker">构建后的下一步</span>
-        <strong>{workbench.headline}</strong>
-        <p>{workbench.summary}</p>
-      </div>
-      <div className="task-primary-actions">
-        {annotation && <button className="secondary-action" type="button" onClick={() => onOpenReview(annotation.taskId)}>处理标注</button>}
-        {!annotation && retest && <button className="secondary-action" type="button" onClick={() => onOpenAgent(retest.query)}>复测反馈</button>}
-        {!annotation && !retest && release && <button className="secondary-action" type="button" onClick={() => onOpenRelease(release.releaseId)}>检查发布</button>}
-      </div>
-    </section>
   );
 }
 
@@ -572,12 +560,6 @@ function buildReleaseAutomationByRunId(events: FlywheelEvent[], tasks: ReviewTas
     });
   }
   return result;
-}
-
-function parseAutoPublishReasons(reason: string): string[] {
-  const normalized = reason.replace(/^Auto publish is not eligible:\s*/u, "").trim();
-  if (!normalized) return [];
-  return normalized.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

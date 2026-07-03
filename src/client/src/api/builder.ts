@@ -10,10 +10,11 @@ import type {
 export async function buildKnowledgePackage(
   bundleId: string,
   versionId: string,
-  payload: BuildRequest
+  payload: BuildRequest,
+  projectId?: string
 ): Promise<BuildResponse> {
   return postJson<BuildResponse>(
-    `/api/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}/build`,
+    `${buildPrefix(bundleId, versionId, projectId)}/build`,
     payload
   );
 }
@@ -21,16 +22,17 @@ export async function buildKnowledgePackage(
 export async function buildAndPublishKnowledge(
   bundleId: string,
   versionId: string,
-  payload: BuildRequest
+  payload: BuildRequest,
+  projectId?: string
 ): Promise<BuildResponse> {
   return postJson<BuildResponse>(
-    `/api/source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}/build-and-publish`,
+    `${buildPrefix(bundleId, versionId, projectId)}/build-and-publish`,
     payload
   );
 }
 
-export async function listBuildRuns(): Promise<KnowledgeBuildRun[]> {
-  return (await getJson<{ runs: KnowledgeBuildRun[] }>("/api/build-runs")).runs;
+export async function listBuildRuns(projectId?: string): Promise<KnowledgeBuildRun[]> {
+  return (await getJson<{ runs: KnowledgeBuildRun[] }>(projectId ? `/api/projects/${encodeURIComponent(projectId)}/build-runs` : "/api/build-runs")).runs;
 }
 
 export async function stopBuildRun(runId: string): Promise<KnowledgeBuildRun> {
@@ -43,4 +45,9 @@ export async function deleteBuildRun(runId: string): Promise<boolean> {
 
 export async function testModelConnectivity(modelConfig: BuildModelConfig): Promise<ModelConnectivityResult> {
   return postJson<ModelConnectivityResult>("/api/model-connectivity/test", { modelConfig });
+}
+
+function buildPrefix(bundleId: string, versionId: string, projectId?: string): string {
+  const tail = `source-bundles/${encodeURIComponent(bundleId)}/versions/${encodeURIComponent(versionId)}`;
+  return projectId ? `/api/projects/${encodeURIComponent(projectId)}/${tail}` : `/api/${tail}`;
 }

@@ -76,6 +76,7 @@ export interface CreateReleaseDraftInput {
   version: string;
   packageIds: string[];
   requestedBy: string;
+  projectId?: string;
   parentReleaseId?: string | null;
   note?: string;
 }
@@ -108,6 +109,7 @@ export class ReleaseService {
       context: { version: input.version, packageIds: input.packageIds }
     });
     const packageIds = uniqueSorted(input.packageIds);
+    const projectId = input.projectId ?? "default_project";
     try {
       if (packageIds.length === 0) throw new Error("Release must include at least one package.");
 
@@ -117,21 +119,26 @@ export class ReleaseService {
         const missing = packageIds.filter((id) => !found.has(id));
         throw new Error(`Unknown package(s): ${missing.join(", ")}`);
       }
+      const foreignPackages = packages.filter((pkg) => pkg.projectId !== projectId);
+      if (foreignPackages.length > 0) {
+        throw new Error(`Package(s) not in project ${projectId}: ${foreignPackages.map((pkg) => pkg.packageId).join(", ")}`);
+      }
 
       const releaseId = `rel_${compactDate(new Date())}_${nanoid(6)}`;
       const qualityGate = summarizePackages(packages);
       const createdAt = new Date().toISOString();
-      const parentReleaseId = input.parentReleaseId !== undefined ? input.parentReleaseId : (await this.getCurrent())?.releaseId ?? null;
+      const parentReleaseId = input.parentReleaseId !== undefined ? input.parentReleaseId : (await this.getCurrent(projectId))?.releaseId ?? null;
       if (parentReleaseId && !(await this.getRelease(parentReleaseId))) {
         throw new Error(`Unknown parent release: ${parentReleaseId}`);
       }
 
       await this.adapter.query(
         `INSERT INTO releases
-          (release_id, parent_release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          (release_id, project_id, parent_release_id, version, status, package_ids, manifest_hash, manifest_json, created_by, created_at, published_by, published_at, quality_gate)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           releaseId,
+          projectId,
           parentReleaseId,
           input.version,
           "draft",
@@ -264,7 +271,7 @@ export class ReleaseService {
           ],
         );
         await this.updateComponentQualities(trustedComponents);
-        await this.pointChannelToRelease(releaseId, publishedBy);
+        await this.pointChannelToRelease(release.projectId, releaseId, publishedBy);
         await this.adapter.query("COMMIT");
       } catch (error) {
         await this.adapter.query("ROLLBACK");
@@ -294,7 +301,7 @@ export class ReleaseService {
       const release = await this.getRelease(releaseId);
       if (!release) throw new Error(`Unknown release: ${releaseId}`);
       if (release.status !== "published") throw new Error("Can only rollback to a published release.");
-      await this.pointChannelToRelease(releaseId, requestedBy);
+      await this.pointChannelToRelease(release.projectId, releaseId, requestedBy);
       await span?.complete({ version: release.version });
       return release;
     } catch (error) {
@@ -316,7 +323,7 @@ export class ReleaseService {
       if (!RELEASE_ID_PATTERN.test(releaseId)) throw new Error("Invalid release id.");
       const release = await this.getRelease(releaseId);
       if (!release) throw new Error(`Unknown release: ${releaseId}`);
-      const current = await this.getCurrent();
+      const current = await this.getCurrent(release.projectId);
       if (current?.releaseId === releaseId) throw new Error("Cannot delete the current Agent release. Roll back to another release first.");
 
       await this.adapter.query("BEGIN");
@@ -338,13 +345,13 @@ export class ReleaseService {
     }
   }
 
-  async getCurrent(): Promise<ReleaseRecord | null> {
+  async getCurrent(projectId = "default_project"): Promise<ReleaseRecord | null> {
     const { rows } = await this.adapter.query(
       `SELECT r.*
        FROM release_channels c
        JOIN releases r ON r.release_id = c.current_release_id
-       WHERE c.channel_id = $1`,
-      ["default"],
+       WHERE c.channel_id = $1 AND c.project_id = $2`,
+      [channelIdFor(projectId), projectId],
     );
     return rows.length ? mapRelease(rows[0]) : null;
   }
@@ -382,15 +389,16 @@ export class ReleaseService {
     return rows.length ? mapRelease(rows[0]) : null;
   }
 
-  private async pointChannelToRelease(releaseId: string, requestedBy: string): Promise<void> {
+  private async pointChannelToRelease(projectId: string, releaseId: string, requestedBy: string): Promise<void> {
     await this.adapter.query(
-      `INSERT INTO release_channels (channel_id, current_release_id, updated_by, updated_at)
-       VALUES ($1,$2,$3,$4)
+      `INSERT INTO release_channels (channel_id, project_id, current_release_id, updated_by, updated_at)
+       VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (channel_id)
        DO UPDATE SET current_release_id = EXCLUDED.current_release_id,
+                     project_id = EXCLUDED.project_id,
                      updated_by = EXCLUDED.updated_by,
                      updated_at = EXCLUDED.updated_at`,
-      ["default", releaseId, requestedBy, new Date().toISOString()],
+      [channelIdFor(projectId), projectId, releaseId, requestedBy, new Date().toISOString()],
     );
   }
 
@@ -432,7 +440,7 @@ export class ReleaseService {
         await this.adapter.query("COMMIT");
         return { release: null, created: false, reason: "unknown_package" };
       }
-      const current = await this.getCurrent();
+      const current = await this.getCurrent(pkg.projectId);
       if (!current) {
         await this.adapter.query("COMMIT");
         return { release: null, created: false, reason: "no_current_release" };
@@ -446,6 +454,7 @@ export class ReleaseService {
       const release = await this.createDraft({
         version: `${current.version}.rev.${compactDate(new Date())}`,
         packageIds: [input.packageId],
+        projectId: pkg.projectId,
         parentReleaseId: current.releaseId,
         requestedBy: input.requestedBy || "system",
         note: `自动草案：scoped build ${input.runId}${input.only ? ` (${input.only})` : ""}`,
@@ -474,13 +483,50 @@ export class ReleaseService {
     if (componentIds.length === 0) return [];
     const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
     const { rows } = await this.adapter.query(
-      `SELECT task_id, package_id, component_id, title
+      `SELECT task_id, package_id, component_id, title, auto_fixed, llm_analysis, rule_id
        FROM review_tasks
        WHERE component_id IN (${placeholders}) AND severity = 'blocking' AND status = 'open'
        ORDER BY created_at, task_id`,
       componentIds,
     );
     return rows;
+  }
+
+  /**
+   * When auto-remediation was previously applied to a component+ruleId, a
+   * subsequent rebuild may re-emit a blocking task for the same rule. Trust
+   * the earlier auto-fix and treat those inherited blockings as non-blocking,
+   * so long as the previous LLM analysis was above the configured confidence
+   * threshold. Non-auto-fixed blockings remain hard blockers.
+   */
+  private async filterAutoFixedInheritedBlocking(
+    tasks: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]> {
+    if (tasks.length === 0) return tasks;
+    if (!autoRemediationRelaxEnabled()) return tasks;
+    const pairs = uniqueSorted(
+      tasks
+        .filter((t) => t.rule_id && t.component_id)
+        .map((t) => `${t.component_id}::${t.rule_id}`),
+    );
+    if (pairs.length === 0) return tasks;
+    const { rows } = await this.adapter.query(
+      `SELECT component_id, rule_id, llm_analysis
+         FROM review_tasks
+        WHERE auto_fixed = TRUE
+          AND rule_id <> ''
+          AND (component_id || '::' || rule_id) = ANY($1::text[])`,
+      [pairs],
+    );
+    const trusted = new Set<string>();
+    for (const row of rows) {
+      const analysis = parseLlmAnalysisRow(row.llm_analysis);
+      const confidence = analysis?.confidence ?? 0;
+      if (confidence >= autoRemediationThreshold()) {
+        trusted.add(`${row.component_id}::${row.rule_id}`);
+      }
+    }
+    return tasks.filter((t) => !trusted.has(`${t.component_id}::${t.rule_id}`));
   }
 
   private async buildAutoPublishCheck(
@@ -497,7 +543,8 @@ export class ReleaseService {
     if (revision.diff.componentIds.removed.length > 0) reasons.push("removed_components_present");
     if (changedComponentIds.length === 0) reasons.push("no_component_changes");
 
-    const blockingTasks = await this.findOpenBlockingTasksForComponents(changedComponentIds);
+    const blockingTasksRaw = await this.findOpenBlockingTasksForComponents(changedComponentIds);
+    const blockingTasks = await this.filterAutoFixedInheritedBlocking(blockingTasksRaw);
     if (blockingTasks.length > 0) reasons.push("changed_components_have_blocking_tasks");
 
     const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
@@ -1003,6 +1050,10 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort();
 }
 
+function channelIdFor(projectId: string): string {
+  return `project:${projectId}:default`;
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
@@ -1025,4 +1076,28 @@ function stableStringify(value: unknown): string {
     return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function autoRemediationRelaxEnabled(): boolean {
+  const raw = (process.env.KH_AUTO_REMEDIATION_ENABLED ?? "").trim().toLowerCase();
+  if (raw === "") return true;
+  return ["1", "true", "yes", "on"].includes(raw);
+}
+
+function autoRemediationThreshold(): number {
+  const raw = process.env.KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD;
+  const value = raw ? Number(raw) : 0.85;
+  return Number.isFinite(value) && value > 0 && value <= 1 ? value : 0.85;
+}
+
+function parseLlmAnalysisRow(value: unknown): { confidence: number } | null {
+  if (value == null) return null;
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    if (value.trim() === "") return null;
+    try { parsed = JSON.parse(value); } catch { return null; }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  return { confidence: Number(obj.confidence ?? 0) };
 }

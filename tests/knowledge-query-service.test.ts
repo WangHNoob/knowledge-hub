@@ -352,6 +352,22 @@ describe("KnowledgeQueryService", () => {
       const { rows: tasks } = await fixture.db.adapter.query("SELECT * FROM review_tasks ORDER BY created_at");
       expect(tasks.some((task) => task.severity === "blocking" && String(task.title).includes("错误本候选"))).toBe(true);
       expect(tasks.some((task) => task.severity === "warning" && String(task.title).includes("低可信命中"))).toBe(true);
+
+      const { rows: knowledgeEvents } = await fixture.db.adapter.query(
+        "SELECT project_id, payload_json FROM knowledge_events WHERE event_type = 'agent.feedback.received' ORDER BY created_at"
+      );
+      expect(knowledgeEvents.length).toBeGreaterThan(0);
+      const payloads = knowledgeEvents.map((event) =>
+        typeof event.payload_json === "string" ? JSON.parse(event.payload_json) : event.payload_json
+      );
+      expect(payloads).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          projectId: "default_project",
+          componentId: fixture.pageComponentId,
+          taskId: expect.stringMatching(/^task_mcp_/)
+        })
+      ]));
+      expect(knowledgeEvents.every((event) => event.project_id === "default_project")).toBe(true);
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });

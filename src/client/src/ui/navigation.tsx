@@ -4,16 +4,12 @@ import type { ReactNode } from "react";
 export type View =
   | "dashboard"
   | "sources"
-  | "builder"
-  | "legislation"
+  | "buildrelease"
+  | "rules"
   | "assets"
   | "review"
-  | "release"
   | "agent"
-  | "diagnostics"
-  | "maintenance"
-  | "storage"
-  | "aliases";
+  | "system";
 
 export interface NavParams {
   packageId?: string;

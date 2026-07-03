@@ -10,6 +10,7 @@ import { insightFromEvent, type FeedbackInsight } from "../utils/feedback";
 import { formatPercent, formatTime } from "../utils/format";
 import { TRUST_DIMENSIONS, trustLabel, trustStatusLabel, trustTone } from "../utils/trust";
 import { IdChip, useNav } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
 
 // 每个工具的参数表单描述：与 src/server/mcpTools.ts 的 zod inputSchema 对齐，
 // 只暴露规范参数名（忽略 q/topK/tableName 等别名）。这样模拟查询时由表单按工具
@@ -139,6 +140,7 @@ type AgentTab = "connect" | "simulate" | "audit" | "feedback" | "attribution";
 
 export function AgentFeedback() {
   const { navigate, params } = useNav();
+  const { currentProjectId, currentProject } = useProject();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<AgentTab>("simulate");
   const [toolName, setToolName] = useState("kb_search");
@@ -154,23 +156,23 @@ export function AgentFeedback() {
     setWhereRows([]);
     setEnvelope(null);
   };
-  const events = useQuery({ queryKey: ["agent-events"], queryFn: listAgentEvents });
-  const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
-  const convergence = useQuery({ queryKey: ["agent-flywheel-convergence"], queryFn: getFlywheelConvergenceSummary, refetchInterval: 5000 });
-  const workbench = useWorkbench();
-  const connect = useQuery({ queryKey: ["mcp-connect"], queryFn: getMcpConnectInfo });
-  const audit = useQuery({ queryKey: ["mcp-audit"], queryFn: listMcpAudit });
+  const events = useQuery({ queryKey: ["agent-events", currentProjectId], queryFn: () => listAgentEvents(currentProjectId) });
+  const flywheelEvents = useQuery({ queryKey: ["agent-flywheel-events", currentProjectId], queryFn: () => listFlywheelEvents(currentProjectId), refetchInterval: 5000 });
+  const convergence = useQuery({ queryKey: ["agent-flywheel-convergence", currentProjectId], queryFn: () => getFlywheelConvergenceSummary(currentProjectId), refetchInterval: 5000 });
+  const workbench = useWorkbench(currentProjectId);
+  const connect = useQuery({ queryKey: ["mcp-connect", currentProjectId], queryFn: getMcpConnectInfo });
+  const audit = useQuery({ queryKey: ["mcp-audit", currentProjectId], queryFn: () => listMcpAudit(currentProjectId) });
   const outputAudits = useQuery({ queryKey: ["output-audits"], queryFn: listOutputAudits });
   const simulate = useMutation({
-    mutationFn: async () => simulateMcpQuery(toolName, buildPayload(spec, form, whereRows)),
+    mutationFn: async () => simulateMcpQuery(toolName, buildPayload(spec, form, whereRows), currentProjectId),
     onSuccess: async (result) => {
       setEnvelope(result);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["agent-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["agent-events", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["agent-flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["agent-flywheel-convergence"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["mcp-audit"] }),
+        queryClient.invalidateQueries({ queryKey: ["mcp-audit", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["review"] })
       ]);
     }
@@ -204,7 +206,7 @@ export function AgentFeedback() {
   const latestFlag = eventRows.find((event) => event.qualityFlags.length > 0)?.qualityFlags[0] ?? "";
   const connectInfo = connect.data;
   return (
-    <Page title="MCP 控制台" subtitle="Agent 通过 Knowledge MCP 只读 current release；审计和反馈会回流为维护任务。">
+    <Page title="MCP 控制台" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。Agent 通过 Knowledge MCP 只读该项目 current release；审计和反馈会回流为维护任务。`}>
       <Tabs
         active={tab}
         onChange={setTab}

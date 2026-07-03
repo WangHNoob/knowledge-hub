@@ -4,7 +4,9 @@ import type {
   AssetGroup,
   AssetPackage,
   EvidenceRecord,
+  LlmAnalysis,
   McpAuditRecord,
+  ProjectRecord,
   ReleaseRecord,
   ReviewTask,
   UserRecord
@@ -24,13 +26,27 @@ export function mapUser(row: Record<string, unknown>): UserRecord {
     username: row.username as string,
     passwordHash: row.password_hash as string,
     role: row.role as UserRecord["role"],
-    displayName: row.display_name as string
+    displayName: row.display_name as string,
+    currentProjectId: String(row.current_project_id ?? "default_project")
+  };
+}
+
+export function mapProject(row: Record<string, unknown>): ProjectRecord {
+  return {
+    projectId: row.project_id as string,
+    name: row.name as string,
+    description: String(row.description ?? ""),
+    status: String(row.status ?? "active") === "archived" ? "archived" : "active",
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at ?? row.created_at)
   };
 }
 
 export function mapPackage(row: Record<string, unknown>): AssetPackage {
   return {
     packageId: row.package_id as string,
+    projectId: String(row.project_id ?? "default_project"),
     name: row.name as string,
     kind: row.kind as string,
     status: row.status as AssetPackage["status"],
@@ -88,7 +104,36 @@ export function mapReviewTask(row: Record<string, unknown>): ReviewTask {
       buildExamplesInjected: 0,
       lastAnnotation: null
     },
-    writeback: null
+    writeback: null,
+    autoFixed: row.auto_fixed === true || row.auto_fixed === "true" || row.auto_fixed === 1,
+    llmAnalysis: mapLlmAnalysis(row.llm_analysis)
+  };
+}
+
+export function mapLlmAnalysis(value: unknown): LlmAnalysis | null {
+  if (value == null) return null;
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    if (value.trim() === "") return null;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  const fixTypeRaw = String(obj.fixType ?? obj.fix_type ?? "no_fix");
+  const fixType: LlmAnalysis["fixType"] =
+    fixTypeRaw === "annotation_override" || fixTypeRaw === "needs_human" ? fixTypeRaw : "no_fix";
+  return {
+    diagnosis: String(obj.diagnosis ?? ""),
+    confidence: Number(obj.confidence ?? 0),
+    rationale: String(obj.rationale ?? ""),
+    fixType,
+    modelProvider: String(obj.modelProvider ?? obj.model_provider ?? ""),
+    modelName: String(obj.modelName ?? obj.model_name ?? ""),
+    generatedAt: String(obj.generatedAt ?? obj.generated_at ?? "")
   };
 }
 
@@ -133,6 +178,7 @@ export function mapEvidenceRecord(row: Record<string, unknown>): EvidenceRecord 
 export function mapRelease(row: Record<string, unknown>): ReleaseRecord {
   return {
     releaseId: row.release_id as string,
+    projectId: String(row.project_id ?? "default_project"),
     parentReleaseId: row.parent_release_id ? String(row.parent_release_id) : null,
     version: row.version as string,
     status: row.status as ReleaseRecord["status"],

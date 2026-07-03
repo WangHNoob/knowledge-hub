@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { activateLegislationProfile, confirmSourceCorrection, createAnnotationExampleReviewTask, createLegislationProfile, getLegislationProfile, getTrustPolicy, listAnnotationExamples, listSourceCorrections, retireSourceCorrection, setAnnotationExampleActive } from "../api";
 import type { AnnotationExample, KnowledgeRuleConfig, RelationTypeSpec, SourceCorrection, TrustPolicy } from "../api/types";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
+import { WritebackSteps } from "../components/WritebackSteps";
 import { formatPercent, formatTime } from "../utils/format";
 import { useNav } from "../ui/navigation";
 import {
@@ -195,8 +196,8 @@ export function Legislation() {
             onRetireCorrection={(correction) => retireCorrectionMutation.mutate(correction.correctionId)}
             onNavigateReview={(taskId) => navigate("review", { taskId })}
             onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
-            onNavigateBuild={(runId) => navigate("builder", { runId })}
-            onNavigateRelease={(releaseId) => navigate("release", { releaseId })}
+            onNavigateBuild={(runId) => navigate("buildrelease", { runId })}
+            onNavigateRelease={(releaseId) => navigate("buildrelease", { releaseId })}
           />
         )}
 
@@ -472,11 +473,13 @@ function AnnotationExampleSection({
                     </span>
                   </div>
                   <small>{example.lifecycle.summary}</small>
-                  <AnnotationWritebackTimeline
-                    example={example}
-                    onNavigateBuild={onNavigateBuild}
-                    onNavigateRelease={onNavigateRelease}
-                  />
+                  {example.lifecycle.writeback && (
+                    <WritebackSteps
+                      writeback={example.lifecycle.writeback}
+                      onNavigateBuild={onNavigateBuild}
+                      onNavigateRelease={onNavigateRelease}
+                    />
+                  )}
                   <div className="annotation-effect-actions">
                     {example.lifecycle.reviewTaskId && (
                       <button className="secondary-action" type="button" onClick={() => onNavigateReview(example.lifecycle.reviewTaskId)}>
@@ -504,51 +507,6 @@ function AnnotationExampleSection({
         </div>
       </section>
     </section>
-  );
-}
-
-function AnnotationWritebackTimeline({
-  example,
-  onNavigateBuild,
-  onNavigateRelease,
-}: {
-  example: AnnotationExample;
-  onNavigateBuild: (runId: string) => void;
-  onNavigateRelease: (releaseId: string) => void;
-}) {
-  const writeback = example.lifecycle.writeback;
-  if (!writeback) return null;
-  const buildTone = writeback.runStatus === "completed" ? "ok" : writeback.runStatus === "failed" ? "hot" : "warn";
-  const releaseTone = writeback.autoPublishStatus === "published"
-    ? "ok"
-    : writeback.autoPublishStatus === "skipped"
-      ? "warn"
-      : writeback.releaseStatus === "published"
-        ? "ok"
-        : undefined;
-  return (
-    <div className="annotation-writeback-timeline">
-      <span className="writeback-step done">
-        <b>回写请求</b>
-        <strong>{formatTime(writeback.requestedAt)}</strong>
-        {writeback.sourcePath && <small>{writeback.sourcePath}</small>}
-      </span>
-      <button type="button" className={`writeback-step ${writeback.runId ? "done" : ""}`} disabled={!writeback.runId} onClick={() => onNavigateBuild(writeback.runId)}>
-        <b>局部构建</b>
-        <strong>{writeback.runId || "等待启动"}</strong>
-        <small>{writeback.buildCompletedAt ? formatTime(writeback.buildCompletedAt) : writeback.only || "scoped"}</small>
-        {writeback.runStatus && <Badge label={writeback.runStatus} tone={buildTone} />}
-      </button>
-      <button type="button" className={`writeback-step ${writeback.releaseId ? "done" : ""}`} disabled={!writeback.releaseId} onClick={() => onNavigateRelease(writeback.releaseId)}>
-        <b>发布修订</b>
-        <strong>{writeback.releaseId || "等待发布"}</strong>
-        <small>{writeback.releaseAt ? formatTime(writeback.releaseAt) : writeback.releaseStatus || "revision"}</small>
-        {writeback.releaseStatus && <Badge label={writeback.releaseStatus} tone={releaseTone} />}
-      </button>
-      {writeback.autoPublishStatus === "skipped" && writeback.autoPublishReason && (
-        <small className="writeback-note">自动发布跳过：{writeback.autoPublishReason}</small>
-      )}
-    </div>
   );
 }
 

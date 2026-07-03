@@ -5,6 +5,7 @@ export interface PackageFilter {
   q?: string;
   status?: string;
   kind?: string;
+  projectId?: string;
 }
 
 export async function listPackages(filter: PackageFilter = {}): Promise<AssetPackage[]> {
@@ -13,7 +14,8 @@ export async function listPackages(filter: PackageFilter = {}): Promise<AssetPac
   if (filter.status) params.set("status", filter.status);
   if (filter.kind) params.set("kind", filter.kind);
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  return (await getJson<{ packages: AssetPackage[] }>(`/api/packages${suffix}`)).packages;
+  const path = filter.projectId ? `/api/projects/${encodeURIComponent(filter.projectId)}/packages` : "/api/packages";
+  return (await getJson<{ packages: AssetPackage[] }>(`${path}${suffix}`)).packages;
 }
 
 export async function getPackage(packageId: string): Promise<PackageDetail> {

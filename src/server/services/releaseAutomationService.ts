@@ -14,6 +14,7 @@ export function registerReleaseAutomation(options: {
       const packageId = stringValue(event.payload.packageId);
       const runId = stringValue(event.payload.runId) || event.entityId;
       const requestedBy = stringValue(event.payload.requestedBy) || "system";
+      const projectId = stringValue(event.payload.projectId) || "default_project";
       const only = stringValue(event.payload.only);
       const publishOnComplete = Boolean(event.payload.publishOnComplete);
       const releaseVersion = stringValue(event.payload.releaseVersion);
@@ -26,6 +27,7 @@ export function registerReleaseAutomation(options: {
           packageId,
           runId,
           requestedBy,
+          projectId,
           only,
           releaseVersion,
           sourceEventId: event.eventId,
@@ -89,6 +91,7 @@ async function publishCompletedBuild(options: {
   packageId: string;
   runId: string;
   requestedBy: string;
+  projectId: string;
   only: string;
   releaseVersion: string;
   sourceEventId: string;
@@ -105,6 +108,7 @@ async function publishCompletedBuild(options: {
       : { release: await options.releaseService.createDraft({
         version: options.releaseVersion || `auto-${options.runId}`,
         packageIds: [options.packageId],
+        projectId: options.projectId,
         requestedBy: options.requestedBy || "system",
         note: `一键构建并发布：${options.runId}`,
       }), created: true };

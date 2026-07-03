@@ -14,13 +14,15 @@ import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
 import type { NavParams, View } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
 import { componentLabel } from "../utils/componentLabel";
 import { formatCounts, formatPercent, formatTime } from "../utils/format";
 
 export function Dashboard() {
   const { navigate } = useNav();
-  const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: getDashboard });
-  const workbenchQuery = useWorkbench();
+  const { currentProjectId, currentProject } = useProject();
+  const dashboard = useQuery({ queryKey: ["dashboard", currentProjectId], queryFn: () => getDashboard(currentProjectId) });
+  const workbenchQuery = useWorkbench(currentProjectId);
 
   const isLoading = dashboard.isLoading || workbenchQuery.isLoading;
   const error = dashboard.error ?? workbenchQuery.error;
@@ -31,7 +33,7 @@ export function Dashboard() {
   if (error || !data || !workbench) return <ErrorState error={error} />;
 
   return (
-    <Page title="飞轮工作台" subtitle="把 Agent 反馈、标注、重建、发布收敛成可直接处理的任务队列。">
+    <Page title="飞轮工作台" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。把 Agent 反馈、标注、重建、发布收敛成可直接处理的任务队列。`}>
       <section className={`flywheel-command ${workbench.state}`}>
         <div>
           <span className="command-kicker">当前主线</span>
@@ -82,7 +84,7 @@ export function Dashboard() {
           caption="构建完成后，检查 draft / revision 是否可以推给 Agent。"
         >
           {workbench.publishItems.map((release) => (
-            <ReleaseCard key={release.releaseId} release={release} onOpen={() => navigate("release", { releaseId: release.releaseId })} />
+            <ReleaseCard key={release.releaseId} release={release} onOpen={() => navigate("buildrelease", { releaseId: release.releaseId })} />
           ))}
         </WorkbenchLane>
 

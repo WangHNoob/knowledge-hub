@@ -136,6 +136,10 @@ export class KbBuilderPipelineService {
     const sourceService = createSourceBundleService(this.db, this.dataDir);
     const version = await sourceService.getVersion(options.versionId);
     if (!version || version.bundleId !== options.bundleId) throw new Error(`Unknown source version: ${options.versionId}`);
+    const projectId = options.projectId ?? "default_project";
+    if (!(await sourceService.bundleBelongsToProject(options.bundleId, projectId))) {
+      throw new Error(`Source bundle ${options.bundleId} does not belong to project ${projectId}.`);
+    }
     const profile = await this.getQualityProfile(options.qualityProfileId);
     const ruleProfile = await createLegislationService(this.db).getActiveProfile();
     const modelConfig = normalizeModelConfig(options.modelConfig, options.model);
@@ -147,6 +151,7 @@ export class KbBuilderPipelineService {
 
     await this.insertRun({
       runId,
+      projectId,
       sourceVersionId: options.versionId,
       packageId: null,
       adapter: "native",
@@ -164,6 +169,7 @@ export class KbBuilderPipelineService {
       writebackTraces: [],
       config: {
         force: options.force,
+        projectId,
         only: options.only,
         requestedBy: options.requestedBy,
         traceId: options.traceId,
@@ -181,7 +187,7 @@ export class KbBuilderPipelineService {
       },
     });
 
-    return { runId, options, profile, stages, workspaceRoot, sourceService, modelConfig, ruleProfile, sourceChanges };
+    return { runId, options: { ...options, projectId }, profile, stages, workspaceRoot, sourceService, modelConfig, ruleProfile, sourceChanges };
   }
 
   private async executeRun(context: BuildRunContext): Promise<{ run: KnowledgeBuildRun; package: AssetPackage; qualitySummary: Record<string, unknown> }> {
@@ -285,7 +291,7 @@ export class KbBuilderPipelineService {
           : artifacts;
         const inserted = options.mergeIntoPackageId
           ? await this.upsertScopedPackageArtifacts(packageId, runId, options.versionId, sourceRefs, persistedArtifacts, quality, ruleProfile, flywheelSummary)
-          : await this.insertPackageAndArtifacts(packageId, runId, options.versionId, sourceRefs, artifacts, quality, ruleProfile, flywheelSummary);
+          : await this.insertPackageAndArtifacts(packageId, options.projectId ?? "default_project", runId, options.versionId, sourceRefs, artifacts, quality, ruleProfile, flywheelSummary);
         flywheelSummary.newAnnotationTasks = config.generateBuildReviewTasks
           ? await this.insertReviewTasks(packageId, persistedArtifacts, quality.findings, workspace.dataDir, modelConfig)
           : 0;
@@ -300,6 +306,7 @@ export class KbBuilderPipelineService {
         entityId: runId,
         payload: {
           runId,
+          projectId: options.projectId ?? "default_project",
           packageId,
           sourceVersionId: options.versionId,
           requestedBy: options.requestedBy,
@@ -360,8 +367,11 @@ export class KbBuilderPipelineService {
     );
   }
 
-  async listRuns(): Promise<KnowledgeBuildRun[]> {
-    const { rows } = await this.adapter.query("SELECT * FROM knowledge_build_runs ORDER BY started_at DESC");
+  async listRuns(projectId = "default_project"): Promise<KnowledgeBuildRun[]> {
+    const { rows } = await this.adapter.query(
+      "SELECT * FROM knowledge_build_runs WHERE project_id = $1 ORDER BY started_at DESC",
+      [projectId],
+    );
     return this.enrichRunsWithWritebackTraces(rows.map(mapRun));
   }
 
@@ -448,6 +458,8 @@ export class KbBuilderPipelineService {
       resolutionNote: String(row.resolution_note ?? ""),
       learning: { recurrenceCount: 0, openSimilarCount: 0, exampleCount: 0, buildExamplesInjected: 0, lastAnnotation: null },
       writeback: null,
+      autoFixed: row.auto_fixed === true || row.auto_fixed === "true" || row.auto_fixed === 1,
+      llmAnalysis: null,
     }));
   }
 
@@ -478,6 +490,7 @@ export class KbBuilderPipelineService {
          t.task_id,
          t.rule_id,
          t.status,
+         t.auto_fixed,
          c.component_id,
          c.source_refs,
          c.legacy_path,
@@ -490,6 +503,9 @@ export class KbBuilderPipelineService {
     );
     if (rows.length === 0) throw new Error(`Unknown review task: ${taskId}`);
     const row = rows[0];
+    if (row.auto_fixed === true) {
+      throw new Error(`Task ${taskId} was already auto-fixed; scoped rebuild is triggered by annotation writeback.`);
+    }
     if (!["agent_feedback.rebuild_candidate", "annotation_example.review"].includes(String(row.rule_id))) {
       throw new Error("Only agent feedback rebuild candidate or annotation review tasks can start scoped rebuilds.");
     }
@@ -618,10 +634,10 @@ export class KbBuilderPipelineService {
   private async insertRun(run: KnowledgeBuildRun): Promise<void> {
     await this.adapter.query(
       `INSERT INTO knowledge_build_runs
-        (run_id, source_version_id, package_id, adapter, stages, model, wiki_specs_hash, quality_profile_id, status, current_stage, completed_stages, started_at, finished_at, error, output_uri, config_json)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        (run_id, project_id, source_version_id, package_id, adapter, stages, model, wiki_specs_hash, quality_profile_id, status, current_stage, completed_stages, started_at, finished_at, error, output_uri, config_json)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
       [
-        run.runId, run.sourceVersionId, run.packageId, run.adapter, JSON.stringify(run.stages), run.model,
+        run.runId, run.projectId, run.sourceVersionId, run.packageId, run.adapter, JSON.stringify(run.stages), run.model,
         run.wikiSpecsHash, run.qualityProfileId, run.status, run.currentStage, JSON.stringify(run.completedStages),
         run.startedAt, run.finishedAt, run.error, run.outputUri, JSON.stringify(run.config),
       ],
@@ -716,6 +732,7 @@ export class KbBuilderPipelineService {
 
   private async insertPackageAndArtifacts(
     packageId: string,
+    projectId: string,
     runId: string,
     versionId: string,
     sourceRefs: string[],
@@ -740,10 +757,11 @@ export class KbBuilderPipelineService {
     try {
       await this.adapter.query(
         `INSERT INTO asset_packages
-          (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          (package_id, project_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           packageId,
+          projectId,
           `知识库构建：${versionId}`,
           "kb_builder_pipeline",
           "draft",
@@ -1273,6 +1291,7 @@ function componentIdFor(packageId: string, legacyPath: string): string {
 function mapRun(row: Record<string, unknown>): KnowledgeBuildRun {
   return {
     runId: row.run_id as string,
+    projectId: String(row.project_id ?? "default_project"),
     sourceVersionId: row.source_version_id as string,
     packageId: row.package_id as string | null,
     adapter: "native",

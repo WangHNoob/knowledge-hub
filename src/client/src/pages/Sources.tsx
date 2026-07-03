@@ -1,10 +1,15 @@
-import { File, History, Server, Upload, UploadCloud } from "lucide-react";
+import { File, GitBranch, History, Server, Upload, UploadCloud } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
 import {
   browseLocalFiles,
+  buildAndPublishKnowledge,
+  buildKnowledgePackage,
+  getBundleBuildPlan,
   getBundleVersion,
+  getSourceFilePreview,
+  getSourceVersionPreview,
   importSourceBundle,
   listBundleVersions,
   listSourceBundles,
@@ -12,18 +17,21 @@ import {
   updateSourceBundle,
   uploadSourceBundle,
   type SourceBundleVersion,
-  type SourceFileChange
+  type SourceBuildPlan,
+  type SourceFileChange,
+  type SourcePreviewNode
 } from "../api";
 import { Badge, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
 import { LocalFileBrowser } from "../components/LocalFileBrowser";
 import { formatBytes, formatTime, kindLabel } from "../utils/format";
+import { useProject } from "../ui/projectContext";
 
-type SourceTab = "upload" | "server" | "history";
+type SourceTab = "upload" | "server" | "preview" | "history";
 
 export function Sources() {
   const queryClient = useQueryClient();
-  const bundleId = "default";
+  const { currentProjectId, currentProject } = useProject();
   const [tab, setTab] = useState<SourceTab>("upload");
   const [rootPath, setRootPath] = useState("");
   const [note, setNote] = useState("");
@@ -33,23 +41,28 @@ export function Sources() {
   const [message, setMessage] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const directoryInputRef = useRef<HTMLInputElement | null>(null);
 
   const versions = useQuery({
-    queryKey: ["bundle-versions", bundleId],
-    queryFn: () => listBundleVersions(bundleId)
+    queryKey: ["bundle-versions", currentProjectId],
+    queryFn: async () => {
+      const bundle = await loadDefaultBundle(currentProjectId);
+      return bundle ? listBundleVersions(bundle.bundleId, currentProjectId) : [];
+    }
   });
   const bundles = useQuery({
-    queryKey: ["source-bundles"],
-    queryFn: listSourceBundles
+    queryKey: ["source-bundles", currentProjectId],
+    queryFn: () => listSourceBundles(currentProjectId)
   });
-  const bundle = (bundles.data ?? []).find((item) => item.bundleId === bundleId) ?? null;
+  const bundle = (bundles.data ?? [])[0] ?? null;
+  const bundleId = bundle?.bundleId ?? "";
   const bundleMutation = useMutation({
-    mutationFn: (patch: { name?: string; description?: string }) => updateSourceBundle(bundleId, patch),
+    mutationFn: (patch: { name?: string; description?: string }) => updateSourceBundle(bundleId, patch, currentProjectId),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["source-bundles"] }),
+        queryClient.invalidateQueries({ queryKey: ["source-bundles", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
     }
@@ -59,17 +72,32 @@ export function Sources() {
       updateBundleVersion(bundleId, versionId, patch),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["bundle-versions", bundleId] }),
+        queryClient.invalidateQueries({ queryKey: ["bundle-versions", currentProjectId] }),
         selectedVersion
-          ? queryClient.invalidateQueries({ queryKey: ["bundle-version", bundleId, selectedVersion] })
+          ? queryClient.invalidateQueries({ queryKey: ["bundle-version", currentProjectId, selectedVersion] })
           : Promise.resolve()
       ]);
     }
   });
   const detail = useQuery({
-    queryKey: ["bundle-version", bundleId, selectedVersion],
-    queryFn: () => getBundleVersion(bundleId, selectedVersion!),
-    enabled: Boolean(selectedVersion)
+    queryKey: ["bundle-version", currentProjectId, bundleId, selectedVersion],
+    queryFn: () => getBundleVersion(bundleId, selectedVersion!, currentProjectId),
+    enabled: Boolean(bundleId && selectedVersion)
+  });
+  const preview = useQuery({
+    queryKey: ["bundle-preview", currentProjectId, bundleId, selectedVersion],
+    queryFn: () => getSourceVersionPreview(bundleId, selectedVersion!, currentProjectId),
+    enabled: Boolean(bundleId && selectedVersion)
+  });
+  const buildPlan = useQuery({
+    queryKey: ["bundle-build-plan", currentProjectId, bundleId, selectedVersion],
+    queryFn: () => getBundleBuildPlan(bundleId, selectedVersion!, currentProjectId),
+    enabled: Boolean(bundleId && selectedVersion)
+  });
+  const filePreview = useQuery({
+    queryKey: ["source-file-preview", currentProjectId, bundleId, selectedVersion, selectedPath],
+    queryFn: () => getSourceFilePreview(bundleId, selectedVersion!, selectedPath, currentProjectId),
+    enabled: Boolean(bundleId && selectedVersion && selectedPath)
   });
   const browser = useQuery({
     queryKey: ["local-files", browsePath],
@@ -78,23 +106,27 @@ export function Sources() {
   });
   const importUploadedFiles = async () => {
     if (selectedFiles.length === 0) throw new Error("请选择文件或目录。");
-    return uploadSourceBundle(bundleId, selectedFiles, note.trim() || undefined);
+    return uploadSourceBundle(bundleId, selectedFiles, note.trim() || undefined, currentProjectId);
   };
   const handleImportResult = async (result: Awaited<ReturnType<typeof importSourceBundle>>) => {
     setMessage(
       `已生成版本 ${result.version.label}：新增 ${result.version.addedCount}，修改 ${result.version.modifiedCount}，删除 ${result.version.removedCount}，未变 ${result.version.unchangedCount}（新增 blob ${result.newBlobCount}）。`
     );
     setSelectedVersion(result.version.versionId);
+    setSelectedPath(result.changes.find((change) => change.kind !== "removed")?.logicalPath ?? "");
     setNote("");
     setSelectedFiles([]);
-    setTab("history");
-    await queryClient.invalidateQueries({ queryKey: ["bundle-versions", bundleId] });
+    setTab("preview");
+    await queryClient.invalidateQueries({ queryKey: ["bundle-versions", currentProjectId] });
+    await queryClient.invalidateQueries({ queryKey: ["bundle-preview", currentProjectId, bundleId, result.version.versionId] });
+    await queryClient.invalidateQueries({ queryKey: ["bundle-build-plan", currentProjectId, bundleId, result.version.versionId] });
     await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
   };
   const versionCount = (versions.data ?? []).length;
   const tabs: ReadonlyArray<TabItem<SourceTab>> = [
     { id: "upload", label: "上传导入", icon: UploadCloud },
     { id: "server", label: "服务器导入", icon: Server },
+    { id: "preview", label: "资料预览", icon: GitBranch },
     { id: "history", label: "历史版本", icon: History, count: versionCount }
   ];
 
@@ -103,7 +135,9 @@ export function Sources() {
       title="资料库"
       subtitle="批量导入 gamedata/ 与 gamedocs/，按内容哈希去重并按时间生成版本。"
     >
+      <p className="context-line">当前项目：{currentProject?.name ?? currentProjectId}</p>
       <Tabs items={tabs} active={tab} onChange={setTab} />
+      {!bundle && <div className="tab-panel"><p>当前项目还没有资料库。新建项目会自动创建默认资料库；如果这里为空，请刷新项目列表或联系管理员。</p></div>}
       {bundle && (
         <div className="tab-panel" style={{ marginBottom: 20 }}>
           <div className="detail-head">
@@ -189,7 +223,7 @@ export function Sources() {
                   placeholder="备注（可选）"
                 />
                 <button
-                  disabled={selectedFiles.length === 0 || busy}
+                  disabled={!bundleId || selectedFiles.length === 0 || busy}
                   onClick={async () => {
                     setBusy(true);
                     setMessage("");
@@ -233,13 +267,13 @@ export function Sources() {
                   浏览
                 </button>
                 <button
-                  disabled={!rootPath.trim() || busy}
+                  disabled={!bundleId || !rootPath.trim() || busy}
                   onClick={async () => {
                     setBusy(true);
                     setMessage("");
                     setError("");
                     try {
-                      const result = await importSourceBundle(bundleId, rootPath.trim(), note.trim() || undefined);
+                      const result = await importSourceBundle(bundleId, rootPath.trim(), note.trim() || undefined, currentProjectId);
                       await handleImportResult(result);
                     } catch (err) {
                       setError(err instanceof Error ? err.message : "导入失败。");
@@ -262,6 +296,95 @@ export function Sources() {
               )}
             </div>
           </section>
+        )}
+
+        {tab === "preview" && (
+          <div className="source-preview-layout">
+            <section className="source-preview-sidebar">
+              <h3>资料变更</h3>
+              {preview.data ? (
+                <>
+                  <div className="evidence-panel compact">
+                    <Metric label="新增" value={preview.data.version.addedCount} hint="本次导入" />
+                    <Metric label="修改" value={preview.data.version.modifiedCount} hint="内容变化" />
+                    <Metric label="删除" value={preview.data.version.removedCount} hint="需要确认" />
+                  </div>
+                  <BuildPlanPanel
+                    plan={buildPlan.data}
+                    busy={busy}
+                    onIncremental={async () => {
+                      if (!buildPlan.data?.targets[0] || !selectedVersion) return;
+                      setBusy(true);
+                      setError("");
+                      try {
+                        await buildAndPublishKnowledge(bundleId, selectedVersion, defaultBuildPayload(buildPlan.data.targets[0]), currentProjectId);
+                        setMessage(`已启动增量构建并发布：${buildPlan.data.targets[0]}`);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "启动增量构建并发布失败。");
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    onFull={async () => {
+                      if (!selectedVersion) return;
+                      setBusy(true);
+                      setError("");
+                      try {
+                        await buildAndPublishKnowledge(bundleId, selectedVersion, defaultBuildPayload(null), currentProjectId);
+                        setMessage("已启动全量构建并发布。");
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "启动全量构建并发布失败。");
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                    onBuildOnly={async () => {
+                      if (!buildPlan.data?.targets[0] || !selectedVersion) return;
+                      setBusy(true);
+                      setError("");
+                      try {
+                        await buildKnowledgePackage(bundleId, selectedVersion, defaultBuildPayload(buildPlan.data.targets[0]), currentProjectId);
+                        setMessage(`已启动增量构建：${buildPlan.data.targets[0]}`);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "启动增量构建失败。");
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  />
+                  <div className="source-tree">
+                    {preview.data.tree.map((node) => (
+                      <SourceTreeNode key={node.path} node={node} selectedPath={selectedPath} onSelect={setSelectedPath} />
+                    ))}
+                  </div>
+                </>
+              ) : selectedVersion ? (
+                <Loading title="读取资料预览" />
+              ) : (
+                <p>导入或选择一个历史版本后查看资料预览。</p>
+              )}
+            </section>
+            <section className="source-preview-content">
+              {selectedPath ? (
+                filePreview.data ? (
+                  <>
+                    <div className="detail-head">
+                      <div>
+                        <h2>{filePreview.data.logicalPath}</h2>
+                        <p>{filePreview.data.fileType} · {formatBytes(filePreview.data.byteSize)} · {filePreview.data.contentHash.slice(7, 19)}</p>
+                      </div>
+                      {filePreview.data.sheet && <Badge label={`Sheet ${filePreview.data.sheet}`} />}
+                    </div>
+                    <pre className="source-preview-text">{filePreview.data.preview.join("\n")}</pre>
+                  </>
+                ) : (
+                  <Loading title="读取文件预览" />
+                )
+              ) : (
+                <p>从左侧选择一个新增或修改的资料文件。</p>
+              )}
+            </section>
+          </div>
         )}
 
         {tab === "history" && (
@@ -341,6 +464,76 @@ export function Sources() {
         )}
       </div>
     </Page>
+  );
+}
+
+async function loadDefaultBundle(projectId: string) {
+  const bundles = await listSourceBundles(projectId);
+  return bundles[0] ?? null;
+}
+
+function defaultBuildPayload(only: string | null) {
+  return {
+    stages: ["convert", "extract", "tables", "graph", "viz"],
+    model: "deterministic",
+    modelConfig: { provider: "deterministic" as const, model: "deterministic" as const },
+    force: false,
+    only,
+    qualityProfileId: "default",
+    generateAliases: false,
+  };
+}
+
+function BuildPlanPanel({
+  plan,
+  busy,
+  onIncremental,
+  onFull,
+  onBuildOnly,
+}: {
+  plan?: SourceBuildPlan;
+  busy: boolean;
+  onIncremental(): Promise<void>;
+  onFull(): Promise<void>;
+  onBuildOnly(): Promise<void>;
+}) {
+  if (!plan) return <Loading title="生成构建建议" />;
+  const canIncremental = plan.recommendedMode === "incremental" && plan.targets.length > 0;
+  return (
+    <div className="build-plan-panel">
+      <strong>{plan.recommendedMode === "incremental" ? "建议增量构建" : "建议全量构建"}</strong>
+      <p>{plan.reason}</p>
+      {plan.warnings.map((warning) => <small key={warning}>{warning}</small>)}
+      {plan.affectedKnowledge.length > 0 && (
+        <div className="affected-list">
+          {plan.affectedKnowledge.slice(0, 4).map((item) => (
+            <span key={item.componentId}>{item.title || item.legacyPath}</span>
+          ))}
+        </div>
+      )}
+      <div className="detail-actions">
+        <button disabled={!canIncremental || busy} onClick={() => { void onBuildOnly(); }}>只构建这些变更</button>
+        <button className="primary-action" disabled={!canIncremental || busy} onClick={() => { void onIncremental(); }}>增量构建并发布</button>
+        <button disabled={busy} onClick={() => { void onFull(); }}>改为全量构建并发布</button>
+      </div>
+    </div>
+  );
+}
+
+function SourceTreeNode({ node, selectedPath, onSelect }: { node: SourcePreviewNode; selectedPath: string; onSelect(path: string): void }) {
+  if (node.kind === "directory") {
+    return (
+      <div className="source-tree-dir">
+        <strong>{node.name}</strong>
+        <div>{node.children?.map((child) => <SourceTreeNode key={child.path} node={child} selectedPath={selectedPath} onSelect={onSelect} />)}</div>
+      </div>
+    );
+  }
+  return (
+    <button className={selectedPath === node.path ? "source-tree-file selected" : "source-tree-file"} onClick={() => onSelect(node.path)}>
+      <span>{node.name}</span>
+      <small>{node.changeKind === "unchanged" ? node.fileType : `${kindLabel(node.changeKind ?? "modified")} · ${node.fileType}`}</small>
+    </button>
   );
 }
 

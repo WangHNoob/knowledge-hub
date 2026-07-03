@@ -13,6 +13,19 @@ export const browseLocalFilesSchema = z.object({
   path: z.string().min(1).optional()
 });
 
+export const createProjectSchema = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(1000).optional()
+});
+
+export const updateProjectSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(1000).optional(),
+  status: z.enum(["active", "archived"]).optional()
+}).refine((value) => value.name !== undefined || value.description !== undefined || value.status !== undefined, {
+  message: "至少提供 name、description 或 status。"
+});
+
 export const importBundleSchema = z.object({
   rootPath: z.string().min(1),
   bundleId: z.string().min(1).optional(),

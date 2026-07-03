@@ -14,32 +14,35 @@ import {
   rollbackRelease,
   updateRelease,
   type FlywheelEvent,
-  type FlywheelWorkbench,
   type KnowledgeLintSummary,
   type ReleaseAuditSummary,
   type ReleaseRecord
 } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
+import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { errorMessage, formatTime, qualityScore, releaseVersion } from "../utils/format";
 import { componentLabel } from "../utils/componentLabel";
 import { IdChip, useNav } from "../ui/navigation";
+import { useProject } from "../ui/projectContext";
+import { autoPublishReasonAction, autoPublishReasonLabel, parseAutoPublishReasons } from "../utils/automation";
 
 type ReleaseTab = "compose" | "current";
 
 export function Release() {
   const { navigate, params } = useNav();
+  const { currentProjectId, currentProject } = useProject();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<ReleaseTab>("compose");
   const [selectedPackageIds, setSelectedPackageIds] = useState<string[]>([]);
   const [version, setVersion] = useState(() => releaseVersion());
-  const packages = useQuery({ queryKey: ["packages"], queryFn: () => listPackages() });
-  const tasks = useQuery({ queryKey: ["review", "blocking"], queryFn: () => listReviewTasks("blocking") });
-  const releases = useQuery({ queryKey: ["releases"], queryFn: listReleases });
-  const current = useQuery({ queryKey: ["releases", "current"], queryFn: getCurrentRelease });
-  const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events"], queryFn: listFlywheelEvents, refetchInterval: 5000 });
-  const workbench = useWorkbench();
+  const packages = useQuery({ queryKey: ["packages", currentProjectId], queryFn: () => listPackages({ projectId: currentProjectId }) });
+  const tasks = useQuery({ queryKey: ["review", "blocking", currentProjectId], queryFn: () => listReviewTasks("blocking", undefined, currentProjectId) });
+  const releases = useQuery({ queryKey: ["releases", currentProjectId], queryFn: () => listReleases(currentProjectId) });
+  const current = useQuery({ queryKey: ["releases", "current", currentProjectId], queryFn: () => getCurrentRelease(currentProjectId) });
+  const flywheelEvents = useQuery({ queryKey: ["agent", "flywheel-events", currentProjectId], queryFn: () => listFlywheelEvents(currentProjectId), refetchInterval: 5000 });
+  const workbench = useWorkbench(currentProjectId);
   const [draft, setDraft] = useState<ReleaseRecord | null>(null);
 
   useEffect(() => {
@@ -76,10 +79,10 @@ export function Release() {
     [flywheelEvents.data, releases.data]
   );
   const createMutation = useMutation({
-    mutationFn: () => createRelease(version.trim(), selectedPackageIds, current.data?.releaseId ?? null),
+    mutationFn: () => createRelease(version.trim(), selectedPackageIds, current.data?.releaseId ?? null, currentProjectId),
     onSuccess: async (release) => {
       setDraft(release);
-      await queryClient.invalidateQueries({ queryKey: ["releases"] });
+      await queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] });
     }
   });
   const publishMutation = useMutation({
@@ -88,8 +91,8 @@ export function Release() {
       setDraft(null);
       setVersion(releaseVersion());
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
@@ -99,8 +102,8 @@ export function Release() {
     mutationFn: rollbackRelease,
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["agent", "flywheel-events"] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] })
       ]);
@@ -111,8 +114,8 @@ export function Release() {
       updateRelease(releaseId, patch),
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] })
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] })
       ]);
     }
   });
@@ -121,8 +124,8 @@ export function Release() {
     onSuccess: async (_release, releaseId) => {
       if (draft?.releaseId === releaseId) setDraft(null);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["releases"] }),
-        queryClient.invalidateQueries({ queryKey: ["releases", "current"] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", currentProjectId] }),
+        queryClient.invalidateQueries({ queryKey: ["releases", "current", currentProjectId] }),
         queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
         queryClient.invalidateQueries({ queryKey: ["storage"] })
       ]);
@@ -133,7 +136,7 @@ export function Release() {
   if (packages.error || releases.error || current.error || tasks.error || flywheelEvents.error) return <ErrorState error={packages.error ?? releases.error ?? current.error ?? tasks.error ?? flywheelEvents.error} />;
 
   return (
-    <Page title="发布" subtitle="发布版本是 Agent 正式消费的不可变知识视图。">
+    <Page title="发布" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。发布版本是 Agent 正式消费的不可变知识视图。`}>
       <Tabs
         active={tab}
         onChange={setTab}
@@ -142,17 +145,27 @@ export function Release() {
           { id: "current", label: "当前与历史", count: releases.data?.length }
         ]}
       />
-      {workbench.data && (
-        <ReleaseWorkbenchContext
-          workbench={workbench.data}
-          focusedReleaseId={params.releaseId}
-          onShowRelease={(releaseId) => {
-            setTab("current");
-            navigate("release", releaseId ? { releaseId } : {});
-          }}
-          onOpenReview={() => navigate("review")}
-        />
-      )}
+      {workbench.data && (() => {
+        const wb = workbench.data!;
+        const focused = params.releaseId
+          ? wb.publishItems.some((release) => release.releaseId === params.releaseId)
+          : false;
+        const firstDraft = wb.publishItems[0];
+        const blocking = wb.riskItems.filter((item) => item.label === "阻断").length;
+        const actions: Array<{ label: string; onClick: () => void }> = [];
+        if (firstDraft) actions.push({ label: "定位待发布", onClick: () => { setTab("current"); navigate("buildrelease", { releaseId: firstDraft.releaseId }); } });
+        if (blocking > 0) actions.push({ label: "处理阻断", onClick: () => navigate("review") });
+        if (actions.length === 0) return null;
+        return (
+          <WorkbenchStrip
+            kicker="飞轮发布位"
+            headline={firstDraft ? `${wb.publishItems.length} 个版本待发布` : "发布前仍有阻断项"}
+            summary={firstDraft ? "这些 draft / revision 已经进入工作台，检查无阻断后应尽快推给 Agent 消费。" : "先回审核中心处理 blocking，再创建或发布版本。"}
+            focused={focused}
+            actions={actions}
+          />
+        );
+      })()}
       <div className={`release-workbench ${tab}`} key={tab}>
         {tab === "compose" && (
           <>
@@ -273,7 +286,7 @@ export function Release() {
             events={autoPublishEvents}
             focusedEventId={params.eventId}
             onNavigateReview={() => navigate("review")}
-            onNavigateBuilder={() => navigate("builder")}
+            onNavigateBuilder={() => navigate("buildrelease")}
             onNavigateAssets={(packageId) => navigate("assets", { packageId })}
           />
           <h3>发布历史</h3>
@@ -335,38 +348,6 @@ export function Release() {
         )}
       </div>
     </Page>
-  );
-}
-
-function ReleaseWorkbenchContext({
-  workbench,
-  focusedReleaseId,
-  onShowRelease,
-  onOpenReview,
-}: {
-  workbench: FlywheelWorkbench;
-  focusedReleaseId?: string;
-  onShowRelease: (releaseId?: string) => void;
-  onOpenReview: () => void;
-}) {
-  const focused = focusedReleaseId
-    ? workbench.publishItems.some((release) => release.releaseId === focusedReleaseId)
-    : false;
-  const firstDraft = workbench.publishItems[0];
-  const blocking = workbench.riskItems.filter((item) => item.label === "阻断").length;
-  if (!firstDraft && blocking === 0) return null;
-  return (
-    <section className={focused ? "release-workbench-context focused" : "release-workbench-context"}>
-      <div>
-        <span className="command-kicker">飞轮发布位</span>
-        <strong>{firstDraft ? `${workbench.publishItems.length} 个版本待发布` : "发布前仍有阻断项"}</strong>
-        <p>{firstDraft ? "这些 draft / revision 已经进入工作台，检查无阻断后应尽快推给 Agent 消费。" : "先回审核中心处理 blocking，再创建或发布版本。"}</p>
-      </div>
-      <div className="task-primary-actions">
-        {firstDraft && <button className="secondary-action" type="button" onClick={() => onShowRelease(firstDraft.releaseId)}>定位待发布</button>}
-        {blocking > 0 && <button className="secondary-action" type="button" onClick={onOpenReview}>处理阻断</button>}
-      </div>
-    </section>
   );
 }
 
@@ -871,57 +852,6 @@ function buildAutoPublishEvents(events: FlywheelEvent[], releases: ReleaseRecord
         createdAt: event.createdAt,
       };
     });
-}
-
-function parseAutoPublishReasons(reason: string): string[] {
-  const normalized = reason
-    .replace(/^Auto publish is not eligible:\s*/u, "")
-    .trim();
-  if (!normalized) return ["unknown"];
-  return normalized
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function autoPublishReasonLabel(reason: string): string {
-  switch (reason) {
-    case "changed_components_have_blocking_tasks":
-      return "变更组件还有阻断审核";
-    case "trust_score_declined_or_missing":
-      return "可信度下降或缺失";
-    case "removed_components_present":
-      return "本次包含组件删除";
-    case "missing_parent_release":
-      return "缺少发布基线";
-    case "no_component_changes":
-      return "没有组件变更";
-    case "has_pending_review_corrections":
-      return "存在待复核源覆盖";
-    case "unknown":
-      return "未记录具体原因";
-    default:
-      return reason;
-  }
-}
-
-function autoPublishReasonAction(reason: string): string {
-  switch (reason) {
-    case "changed_components_have_blocking_tasks":
-      return "先到审核中心完成阻断任务，再重新发布或等待下一次自动发布。";
-    case "trust_score_declined_or_missing":
-      return "检查变更资产的可信度明细，补证据或完成人工标注后再发布。";
-    case "removed_components_present":
-      return "删除知识会影响 Agent 消费，需要管理员手动确认发布。";
-    case "missing_parent_release":
-      return "先发布一个基线版本，后续 revision 才能自动比较差异。";
-    case "no_component_changes":
-      return "没有需要发布的变化，通常不需要处理。";
-    case "has_pending_review_corrections":
-      return "当前版本带着上一发布确认值继续发布；去策划立法的源覆盖层确认或退役对应修正。";
-    default:
-      return "查看关联构建 run、资产包和审核任务后决定是否手动发布。";
-  }
 }
 
 function stringField(value: unknown): string {

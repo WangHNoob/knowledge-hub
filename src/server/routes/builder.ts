@@ -46,6 +46,61 @@ export function registerBuilderRoutes(app: FastifyInstance, ctx: RouteContext) {
       try {
         const run = await ctx.kbBuilderService.startBuild({
           ...parsed.data,
+          projectId: "default_project",
+          bundleId: request.params.bundleId,
+          versionId: request.params.versionId,
+          requestedBy: request.user.username,
+          traceId: request.traceId,
+          publishOnComplete: true,
+          releaseVersion: parsed.data.releaseVersion,
+        });
+        return reply.code(202).send({ run });
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "启动构建并发布失败。" });
+      }
+    }
+  );
+
+  app.post<{ Params: { projectId: string; bundleId: string; versionId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions/:versionId/build",
+    { preHandler: app.authenticate },
+    async (request, reply) => {
+      const parsed = buildRequestSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid build payload." });
+      const version = await ctx.bundleService.getVersion(request.params.versionId);
+      if (!version || version.bundleId !== request.params.bundleId || !(await ctx.bundleService.bundleBelongsToProject(request.params.bundleId, request.params.projectId))) {
+        return reply.code(404).send({ error: "未找到该资料版本。" });
+      }
+      try {
+        const run = await ctx.kbBuilderService.startBuild({
+          ...parsed.data,
+          projectId: request.params.projectId,
+          bundleId: request.params.bundleId,
+          versionId: request.params.versionId,
+          requestedBy: request.user.username,
+          traceId: request.traceId
+        });
+        return reply.code(202).send({ run });
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "构建失败。" });
+      }
+    }
+  );
+
+  app.post<{ Params: { projectId: string; bundleId: string; versionId: string } }>(
+    "/api/projects/:projectId/source-bundles/:bundleId/versions/:versionId/build-and-publish",
+    { preHandler: [app.authenticate, requireRole("admin")] },
+    async (request, reply) => {
+      const parsed = buildAndPublishRequestSchema.safeParse(request.body);
+      if (!parsed.success) return reply.code(400).send({ error: "Invalid build-and-publish payload." });
+      const version = await ctx.bundleService.getVersion(request.params.versionId);
+      if (!version || version.bundleId !== request.params.bundleId || !(await ctx.bundleService.bundleBelongsToProject(request.params.bundleId, request.params.projectId))) {
+        return reply.code(404).send({ error: "未找到该资料版本。" });
+      }
+      try {
+        const run = await ctx.kbBuilderService.startBuild({
+          ...parsed.data,
+          projectId: request.params.projectId,
           bundleId: request.params.bundleId,
           versionId: request.params.versionId,
           requestedBy: request.user.username,
@@ -61,7 +116,11 @@ export function registerBuilderRoutes(app: FastifyInstance, ctx: RouteContext) {
   );
 
   app.get("/api/build-runs", { preHandler: app.authenticate }, async () => ({
-    runs: await ctx.kbBuilderService.listRuns()
+    runs: await ctx.kbBuilderService.listRuns("default_project")
+  }));
+
+  app.get<{ Params: { projectId: string } }>("/api/projects/:projectId/build-runs", { preHandler: app.authenticate }, async (request) => ({
+    runs: await ctx.kbBuilderService.listRuns(request.params.projectId)
   }));
 
   app.get<{ Params: { runId: string } }>(
