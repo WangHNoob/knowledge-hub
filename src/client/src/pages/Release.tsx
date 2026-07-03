@@ -578,6 +578,12 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
                   <strong>{Math.round(okf.lintSummary.score * 100)}%</strong>
                 </>
               )}
+              {okf?.lintGovernance && (
+                <>
+                  <span>治理来源</span>
+                  <strong>{okf.lintGovernance.source === "llm" ? "LLM" : "规则兜底"}</strong>
+                </>
+              )}
               <span>Warning</span>
               <strong>{okfStats.summary.warning}</strong>
               {okf?.lintSummary && (
@@ -592,6 +598,12 @@ function ReleaseAuditSummaryView({ release }: { release: ReleaseRecord }) {
               <strong>{okfStats.linkSummary.resolved}</strong>
               <span>断链</span>
               <strong>{okfStats.linkSummary.unresolved}</strong>
+              {okf?.lintGovernance && (
+                <>
+                  <span>自动候选</span>
+                  <strong>{okf.lintGovernance.autoEligible}</strong>
+                </>
+              )}
             </div>
           ) : (
             <p className="subtle">暂无 OKF 扫描结果。</p>
@@ -693,6 +705,7 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
     lintUri: String(okf.lintUri ?? ""),
     lintMarkdownUri: String(okf.lintMarkdownUri ?? ""),
     lintSummary: lintSummary(okf.lintSummary),
+    lintGovernance: lintGovernance(okf.lintGovernance),
     summary: {
       blocking: Number(summary.blocking ?? 0),
       warning: Number(summary.warning ?? 0),
@@ -706,6 +719,21 @@ function okfManifest(release: ReleaseRecord): OkfManifest | null {
       required: Number(citationSummary.required ?? 0),
       present: Number(citationSummary.present ?? 0),
     },
+  };
+}
+
+function lintGovernance(value: unknown): OkfManifest["lintGovernance"] {
+  const governance = objectValue(value);
+  if (Object.keys(governance).length === 0) return null;
+  const source = governance.source === "llm" ? "llm" : "rule_fallback";
+  return {
+    source,
+    analyzed: Number(governance.analyzed ?? 0),
+    autoEligible: Number(governance.autoEligible ?? 0),
+    manualReview: Number(governance.manualReview ?? 0),
+    rebuild: Number(governance.rebuild ?? 0),
+    monitor: Number(governance.monitor ?? 0),
+    warnings: Array.isArray(governance.warnings) ? governance.warnings.map(String) : [],
   };
 }
 
@@ -915,6 +943,15 @@ interface OkfManifest {
   lintUri: string;
   lintMarkdownUri: string;
   lintSummary: KnowledgeLintSummary | null;
+  lintGovernance: {
+    source: "llm" | "rule_fallback";
+    analyzed: number;
+    autoEligible: number;
+    manualReview: number;
+    rebuild: number;
+    monitor: number;
+    warnings: string[];
+  } | null;
   summary: { blocking: number; warning: number; info: number };
   linkSummary: { resolved: number; unresolved: number };
   citationSummary: { required: number; present: number };
