@@ -270,7 +270,7 @@ POST /api/projects/:projectId/review/auto-fixed/:taskId/rollback
 
 ## 六、风险控制与回滚
 
-1. **总开关默认关闭**：`KH_AUTO_REMEDIATION_ENABLED=false`
+1. **总开关默认启用**：`KH_AUTO_REMEDIATION_ENABLED=true`；未配置可用 LLM 时自动跳过并写警告日志
 2. **置信度门槛**：默认 0.85，可通过环境变量提高
 3. **信任分兜底**：即使自动修复，信任分不达标也不会发布
 4. **回滚能力**：一键回滚，reopen task + 停用 annotation_example

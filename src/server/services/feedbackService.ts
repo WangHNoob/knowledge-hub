@@ -166,7 +166,16 @@ export class FeedbackService {
       eventType: "agent.feedback.received",
       entityType: "component",
       entityId: targetComponent.componentId,
-      payload: { projectId: release.projectId, releaseId: release.releaseId, feedbackType: effectiveFeedbackType, query, taskId, qualityFlags, rebuildProposalTaskId },
+      payload: {
+        projectId: release.projectId,
+        releaseId: release.releaseId,
+        feedbackType: effectiveFeedbackType,
+        query,
+        taskId,
+        componentId: targetComponent.componentId,
+        qualityFlags,
+        rebuildProposalTaskId,
+      },
     });
     return {
       recorded: true,

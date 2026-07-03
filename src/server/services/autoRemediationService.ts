@@ -61,6 +61,7 @@ async function handleFeedbackEvent(
   const feedbackType = String(payload.feedbackType ?? "");
   const taskId = String(payload.taskId ?? "");
   const componentId = String(payload.componentId ?? "");
+  const projectId = String(payload.projectId ?? "default_project");
 
   if (!taskId || !componentId) return;
   if (feedbackType === "hit") return;
@@ -81,13 +82,14 @@ async function handleFeedbackEvent(
     entityId: taskId,
     context: {
       componentId,
+      projectId,
       feedbackType,
       model: redactModelConfig(modelConfig)
     }
   });
 
   try {
-    const tasks = await deps.knowledgeService.listReviewTasks({});
+    const tasks = await deps.knowledgeService.listReviewTasks({ projectId });
     const task = tasks.find((t) => t.taskId === taskId);
     if (!task) {
       await span.complete({ skipped: "task_not_found" });
@@ -98,7 +100,7 @@ async function handleFeedbackEvent(
       return;
     }
 
-    const components = await deps.knowledgeService.listComponents({});
+    const components = await deps.knowledgeService.listComponents({ projectId });
     const component = components.find((c) => c.componentId === componentId);
     if (!component) {
       await span.complete({ skipped: "component_not_found" });
@@ -194,6 +196,7 @@ async function handleFeedbackEvent(
         entityId: taskId,
         payload: {
           source: "auto_remediation",
+          projectId,
           componentId,
           confidence: parsed.confidence,
           fixType: parsed.fixType,
