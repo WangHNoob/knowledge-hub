@@ -5,12 +5,11 @@ export type View =
   | "dashboard"
   | "sources"
   | "buildrelease"
-  | "legislation"
+  | "rules"
   | "assets"
   | "review"
   | "agent"
-  | "system"
-  | "aliases";
+  | "system";
 
 export interface NavParams {
   packageId?: string;

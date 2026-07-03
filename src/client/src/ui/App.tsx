@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Database,
   HardDrive,
-  Languages,
   LogOut,
   PackagePlus,
   ScrollText,
@@ -23,20 +22,18 @@ import { ProjectProvider, useProject } from "./projectContext";
 
 const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ default: module.Dashboard }));
 const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
-const loadLegislation = () => import("../pages/Legislation").then((module) => ({ default: module.Legislation }));
+const loadRules = () => import("../pages/Rules").then((module) => ({ default: module.Rules }));
 const loadBuildRelease = () => import("../pages/BuildRelease").then((module) => ({ default: module.BuildRelease }));
 const loadAssets = () => import("../pages/Assets").then((module) => ({ default: module.Assets }));
-const loadTableAliases = () => import("../pages/TableAliases").then((module) => ({ default: module.TableAliases }));
 const loadReview = () => import("../pages/Review").then((module) => ({ default: module.Review }));
 const loadAgentFeedback = () => import("../pages/AgentFeedback").then((module) => ({ default: module.AgentFeedback }));
 const loadSystem = () => import("../pages/System").then((module) => ({ default: module.System }));
 
 const Dashboard = lazy(loadDashboard);
 const Sources = lazy(loadSources);
-const Legislation = lazy(loadLegislation);
+const Rules = lazy(loadRules);
 const BuildRelease = lazy(loadBuildRelease);
 const Assets = lazy(loadAssets);
-const TableAliases = lazy(loadTableAliases);
 const Review = lazy(loadReview);
 const AgentFeedback = lazy(loadAgentFeedback);
 const System = lazy(loadSystem);
@@ -44,10 +41,9 @@ const System = lazy(loadSystem);
 const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   dashboard: loadDashboard,
   sources: loadSources,
-  legislation: loadLegislation,
+  rules: loadRules,
   buildrelease: loadBuildRelease,
   assets: loadAssets,
-  aliases: loadTableAliases,
   review: loadReview,
   agent: loadAgentFeedback,
   system: loadSystem
@@ -56,10 +52,9 @@ const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "飞轮工作台", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
-  { id: "legislation", label: "策划立法", icon: ScrollText },
+  { id: "rules", label: "规则治理", icon: ScrollText },
   { id: "buildrelease", label: "构建发布", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
-  { id: "aliases", label: "翻译表", icon: Languages },
   { id: "review", label: "审核中心", icon: CheckCircle2 },
   { id: "agent", label: "Agent 反馈", icon: SearchCheck },
   { id: "system", label: "系统", icon: HardDrive },
@@ -167,10 +162,9 @@ export function App() {
           <Suspense fallback={<div className="state">正在加载页面...</div>}>
             {view === "dashboard" && <Dashboard />}
             {view === "sources" && <Sources />}
-            {view === "legislation" && <Legislation />}
+            {view === "rules" && <Rules />}
             {view === "buildrelease" && <BuildRelease />}
             {view === "assets" && <Assets />}
-            {view === "aliases" && <TableAliases />}
             {view === "review" && <Review />}
             {view === "agent" && <AgentFeedback />}
             {view === "system" && <System />}
