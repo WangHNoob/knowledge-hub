@@ -851,6 +851,7 @@ export class KnowledgeService {
       );
       if (taskRows.length === 0) throw new Error(`Unknown review task: ${taskId}`);
       const task = mapReviewTask(taskRows[0]);
+      const projectId = String(taskRows[0].project_id ?? "default_project");
       if (!task.autoFixed) throw new Error(`Task ${taskId} is not auto-fixed; nothing to roll back.`);
 
       await this.adapter.query(
@@ -859,10 +860,11 @@ export class KnowledgeService {
          WHERE task_id = $1 AND auto_generated = TRUE`,
         [taskId]
       );
-      await this.adapter.query(
+      const { rows: retiredCorrections } = await this.adapter.query(
         `UPDATE source_corrections
            SET state = 'retired', updated_at = $2
-         WHERE task_id = $1`,
+         WHERE task_id = $1
+         RETURNING correction_id`,
         [taskId, now]
       );
       const { rows: updated } = await this.adapter.query(
@@ -882,8 +884,32 @@ export class KnowledgeService {
         eventType: "annotation.review_resolved",
         entityType: "review_task",
         entityId: taskId,
-        payload: { action: "auto_fix_rollback", resolvedBy: actor, taskId }
+        payload: {
+          projectId,
+          action: "auto_fix_rollback",
+          resolvedBy: actor,
+          taskId,
+          componentId: task.componentId,
+          packageId: task.packageId,
+          retiredCorrectionIds: retiredCorrections.map((row) => String(row.correction_id ?? "")).filter(Boolean)
+        }
       });
+      for (const row of retiredCorrections) {
+        await emitKnowledgeEvent(this.db, {
+          eventType: "source_correction.retired",
+          entityType: "source_correction",
+          entityId: String(row.correction_id ?? ""),
+          payload: {
+            projectId,
+            correctionId: String(row.correction_id ?? ""),
+            taskId,
+            componentId: task.componentId,
+            packageId: task.packageId,
+            actor,
+            reason: "auto_fix_rollback"
+          }
+        });
+      }
       return mapReviewTask(updated[0]);
     } catch (error) {
       await this.adapter.query("ROLLBACK");

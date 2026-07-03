@@ -40,6 +40,33 @@ describe("AutoRemediationService", () => {
       expect(examples).toHaveLength(1);
       expect(examples[0].auto_generated).toBe(true);
       expect(examples[0].correct_value.markdown).toContain("Stamina controls");
+
+      const service = createKnowledgeService(db);
+      const rollback = await service.rollbackAutoFix(fixture.taskId, "admin");
+      expect(rollback.status).toBe("open");
+      expect(rollback.autoFixed).toBe(false);
+
+      const { rows: corrections } = await db.adapter.query("SELECT state FROM source_corrections WHERE task_id = $1", [fixture.taskId]);
+      expect(corrections).toHaveLength(1);
+      expect(corrections[0].state).toBe("retired");
+
+      const { rows: events } = await db.adapter.query(
+        "SELECT event_type, payload_json FROM knowledge_events WHERE entity_id = $1 OR payload_json ->> 'taskId' = $2 ORDER BY created_at",
+        [fixture.taskId, fixture.taskId]
+      );
+      const rollbackEvent = events.find((event) => event.event_type === "annotation.review_resolved");
+      const correctionEvent = events.find((event) => event.event_type === "source_correction.retired");
+      expect(rollbackEvent?.payload_json).toMatchObject({
+        projectId: "default_project",
+        action: "auto_fix_rollback",
+        componentId: fixture.componentId,
+        packageId: fixture.packageId
+      });
+      expect(correctionEvent?.payload_json).toMatchObject({
+        projectId: "default_project",
+        taskId: fixture.taskId,
+        reason: "auto_fix_rollback"
+      });
     } finally {
       unsubscribe();
       restoreEnv("OPENAI_API_KEY", previousKey);
