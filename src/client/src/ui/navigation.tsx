@@ -10,9 +10,7 @@ export type View =
   | "review"
   | "release"
   | "agent"
-  | "diagnostics"
-  | "maintenance"
-  | "storage"
+  | "system"
   | "aliases";
 
 export interface NavParams {

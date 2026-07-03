@@ -1,8 +1,6 @@
 import {
   Activity,
-  Archive,
   Boxes,
-  Bug,
   CheckCircle2,
   Database,
   GitBranch,
@@ -33,9 +31,7 @@ const loadTableAliases = () => import("../pages/TableAliases").then((module) => 
 const loadReview = () => import("../pages/Review").then((module) => ({ default: module.Review }));
 const loadRelease = () => import("../pages/Release").then((module) => ({ default: module.Release }));
 const loadAgentFeedback = () => import("../pages/AgentFeedback").then((module) => ({ default: module.AgentFeedback }));
-const loadStorage = () => import("../pages/Storage").then((module) => ({ default: module.Storage }));
-const loadDiagnostics = () => import("../pages/Diagnostics").then((module) => ({ default: module.Diagnostics }));
-const loadMaintenance = () => import("../pages/Maintenance").then((module) => ({ default: module.Maintenance }));
+const loadSystem = () => import("../pages/System").then((module) => ({ default: module.System }));
 
 const Dashboard = lazy(loadDashboard);
 const Sources = lazy(loadSources);
@@ -46,9 +42,7 @@ const TableAliases = lazy(loadTableAliases);
 const Review = lazy(loadReview);
 const Release = lazy(loadRelease);
 const AgentFeedback = lazy(loadAgentFeedback);
-const Storage = lazy(loadStorage);
-const Diagnostics = lazy(loadDiagnostics);
-const Maintenance = lazy(loadMaintenance);
+const System = lazy(loadSystem);
 
 const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   dashboard: loadDashboard,
@@ -60,9 +54,7 @@ const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   review: loadReview,
   release: loadRelease,
   agent: loadAgentFeedback,
-  storage: loadStorage,
-  diagnostics: loadDiagnostics,
-  maintenance: loadMaintenance
+  system: loadSystem
 };
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
@@ -75,9 +67,7 @@ const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "review", label: "审核中心", icon: CheckCircle2 },
   { id: "release", label: "发布", icon: GitBranch },
   { id: "agent", label: "Agent 反馈", icon: SearchCheck },
-  { id: "storage", label: "存储治理", icon: HardDrive },
-  { id: "diagnostics", label: "运行诊断", icon: Bug },
-  { id: "maintenance", label: "高级维护", icon: Archive }
+  { id: "system", label: "系统", icon: HardDrive },
 ];
 
 export function App() {
@@ -189,9 +179,7 @@ export function App() {
             {view === "review" && <Review />}
             {view === "release" && <Release />}
             {view === "agent" && <AgentFeedback />}
-            {view === "storage" && <Storage />}
-            {view === "diagnostics" && <Diagnostics />}
-            {view === "maintenance" && <Maintenance />}
+            {view === "system" && <System />}
           </Suspense>
         </main>
         <a className="deerflow" href="https://deerflow.tech" target="_blank" rel="noreferrer" title="Created By Deerflow">
