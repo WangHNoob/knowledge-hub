@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
+import { WritebackSteps } from "../components/WritebackSteps";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
@@ -513,7 +514,13 @@ const ReviewTaskCard = memo(function ReviewTaskCard({
           </small>
         )}
         <LearningStrip task={task} />
-        <WritebackStrip task={task} onNavigateBuilder={onNavigateBuilder} onNavigateRelease={onNavigateRelease} />
+        {task.writeback && (
+          <WritebackSteps
+            writeback={task.writeback}
+            onNavigateBuild={() => onNavigateBuilder()}
+            onNavigateRelease={() => onNavigateRelease()}
+          />
+        )}
         {task.status === "open" && task.taskKind === "annotation" && isAnnotationReview && (
           <AnnotationReviewPanel
             task={task}
@@ -722,57 +729,6 @@ function AnnotationReviewPanel({
       <button className="primary-action" type="button" disabled={isPending || !chosen} onClick={onAnnotate}>
         {chosen ? `提交决策：${chosen.label}` : "选择复盘决策"}
       </button>
-    </div>
-  );
-}
-
-function WritebackStrip({
-  task,
-  onNavigateBuilder,
-  onNavigateRelease,
-}: {
-  task: ReviewTask;
-  onNavigateBuilder: () => void;
-  onNavigateRelease: () => void;
-}) {
-  const writeback = task.writeback;
-  if (!writeback) return null;
-  const buildTone = writeback.runStatus === "completed" ? "ok" : writeback.runStatus === "failed" ? "hot" : "warn";
-  const releaseTone = writeback.autoPublishStatus === "published"
-    ? "ok"
-    : writeback.autoPublishStatus === "skipped"
-      ? "warn"
-      : writeback.releaseStatus === "published"
-        ? "ok"
-        : undefined;
-  return (
-    <div className="writeback-strip">
-      <div className="writeback-head">
-        <strong>确定性回写链路</strong>
-        <Badge label={writeback.autoPublishStatus === "published" ? "已自动发布" : writeback.releaseId ? "已有 revision" : writeback.runId ? "已启动构建" : "已请求"} tone={releaseTone} />
-      </div>
-      <div className="writeback-steps">
-        <span className="writeback-step done">
-          <b>标注</b>
-          <strong>{formatTime(writeback.requestedAt)}</strong>
-          {writeback.sourcePath && <small>{writeback.sourcePath}</small>}
-        </span>
-        <button type="button" className={`writeback-step ${writeback.runId ? "done" : ""}`} onClick={onNavigateBuilder} disabled={!writeback.runId}>
-          <b>局部构建</b>
-          <strong>{writeback.runId || "等待启动"}</strong>
-          <small>{writeback.only || writeback.runStatus || "scoped"}</small>
-          {writeback.runStatus && <Badge label={writeback.runStatus} tone={buildTone} />}
-        </button>
-        <button type="button" className={`writeback-step ${writeback.releaseId ? "done" : ""}`} onClick={onNavigateRelease} disabled={!writeback.releaseId}>
-          <b>发布修订</b>
-          <strong>{writeback.releaseId || "等待构建完成"}</strong>
-          <small>{writeback.releaseAt ? formatTime(writeback.releaseAt) : writeback.releaseStatus || "revision draft"}</small>
-          {writeback.releaseStatus && <Badge label={writeback.releaseStatus} tone={releaseTone} />}
-        </button>
-      </div>
-      {writeback.autoPublishStatus === "skipped" && writeback.autoPublishReason && (
-        <p className="writeback-note">自动发布跳过：{writeback.autoPublishReason}</p>
-      )}
     </div>
   );
 }
