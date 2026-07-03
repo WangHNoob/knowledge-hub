@@ -6,6 +6,7 @@ import type { DatabaseHandle } from "../types";
 
 export type KnowledgeEventType =
   | "build.completed"
+  | "build.failed"
   | "build.quality_fail"
   | "annotation.created"
   | "annotation.review_resolved"
@@ -22,7 +23,11 @@ export type KnowledgeEventType =
   | "release.revision_proposed"
   | "release.auto_publish_succeeded"
   | "release.auto_publish_skipped"
-  | "release.published";
+  | "release.published"
+  | "knowledge_lint.remediations_recorded"
+  | "knowledge_lint.remediation_started"
+  | "knowledge_lint.remediation_completed"
+  | "knowledge_lint.remediation_failed";
 
 export interface KnowledgeEvent {
   eventId: string;

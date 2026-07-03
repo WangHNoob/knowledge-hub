@@ -38,7 +38,7 @@ function lintReport(): KnowledgeLintReport {
     },
     governance: { source: "llm", analyzed: 3, autoEligible: 1, manualReview: 1, rebuild: 1, monitor: 0, warnings: [] },
     issues: [
-      { id: "links_fmt_1", domain: "links", severity: "warning", title: "断链格式", message: "m", suggestedAction: "s", governance: gov({ actionType: "auto_remediation", autoEligible: true }) },
+      { id: "links_fmt_1", domain: "links", severity: "warning", title: "断链格式", message: "m", suggestedAction: "s", componentId: "cmp_lint_target", okfPath: "wiki/concepts/hero.md", governance: gov({ actionType: "auto_remediation", autoEligible: true }) },
       { id: "graph_rebuild_1", domain: "graph", severity: "warning", title: "图谱需要重建", message: "m", suggestedAction: "s", governance: gov({ actionType: "rebuild", autoEligible: false }) },
       { id: "mcp_manual_1", domain: "mcp_feedback", severity: "warning", title: "高频 miss", message: "m", suggestedAction: "s", componentId: "cmp_pkg_x_hero", governance: gov({ actionType: "manual_review", autoEligible: false }) },
     ],
@@ -64,6 +64,28 @@ describe("lint remediation queue", () => {
       expect(summary.autoGoverned).toBe(0);
       expect(summary.needsHuman).toBe(2);
       expect(summary.byStatus.pending).toBe(1);
+
+      const rebuildRequests: Array<{ componentId: string; requestedBy: string; sourcePath?: string }> = [];
+      const executed = await service.executePending({
+        projectId: "default_project",
+        releaseId: "rel_gov",
+        requestedBy: "system",
+        kbBuilderService: {
+          startScopedRebuildForComponent: async (input) => {
+            rebuildRequests.push(input);
+            return { runId: "run_lint_1" } as Awaited<ReturnType<ReturnType<typeof createKbBuilderPipelineService>["startScopedRebuildForComponent"]>>;
+          },
+        },
+      });
+      expect(executed).toHaveLength(1);
+      expect(executed[0].status).toBe("running");
+      expect(executed[0].runId).toBe("run_lint_1");
+      expect(rebuildRequests).toEqual([{ componentId: "cmp_lint_target", requestedBy: "system", sourcePath: "wiki/concepts/hero.md" }]);
+
+      await service.markCompletedByRunId("run_lint_1");
+      const completedSummary = await service.summary("default_project", "rel_gov");
+      expect(completedSummary.autoGoverned).toBe(1);
+      expect(completedSummary.pending).toBe(0);
 
       // 再次记录同一报告应幂等（不重复插入）。
       const again = await service.recordFromReport({ projectId: "default_project", releaseId: "rel_gov", report: lintReport() });

@@ -9,7 +9,7 @@ import { createKbBuilderPipelineService } from "./services/kbBuilderService";
 import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 import { createKnowledgeService } from "./services/knowledgeService";
 import { createFlywheelService } from "./services/flywheelService";
-import { createLintRemediationService } from "./services/lintRemediationService";
+import { createLintRemediationService, registerLintRemediationAutomation } from "./services/lintRemediationService";
 import { createGovernanceProfileService } from "./services/governanceProfileService";
 import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
@@ -122,6 +122,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     kbBuilderService: ctx.kbBuilderService,
     diagnostics,
   });
+  const unsubscribeLintRemediationAutomation = registerLintRemediationAutomation({
+    db: options.db,
+    lintRemediationService: ctx.lintRemediationService,
+    kbBuilderService: ctx.kbBuilderService,
+    requestedBy: "system",
+  });
   const unsubscribeAutoRemediation = config.autoRemediationEnabled
     ? registerAutoRemediation({
         db: options.db,
@@ -171,6 +177,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     unsubscribeReleaseAutomation();
     unsubscribeFeedbackAutomation();
     unsubscribeAnnotationWritebackAutomation();
+    unsubscribeLintRemediationAutomation();
     unsubscribeAutoRemediation();
     await options.db.close();
   });

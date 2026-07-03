@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { nanoid } from "nanoid";
 
+import { emitKnowledgeEvent, onKnowledgeEvent } from "./eventService";
+import type { KbBuilderPipelineService } from "./kbBuilderService";
 import type { KnowledgeLintReport } from "./okf/lintService";
 import type {
   DatabaseHandle,
@@ -15,14 +17,43 @@ export function createLintRemediationService(db: DatabaseHandle): LintRemediatio
   return new LintRemediationService(db);
 }
 
+export function registerLintRemediationAutomation(options: {
+  db: DatabaseHandle;
+  lintRemediationService: LintRemediationService;
+  kbBuilderService: Pick<KbBuilderPipelineService, "startScopedRebuildForComponent">;
+  requestedBy?: string;
+}): () => void {
+  const offRecorded = onKnowledgeEvent("knowledge_lint.remediations_recorded", (event) => {
+    void options.lintRemediationService.executePending({
+      projectId: String(event.payload.projectId ?? "default_project"),
+      releaseId: String(event.payload.releaseId ?? ""),
+      requestedBy: options.requestedBy ?? "system",
+      kbBuilderService: options.kbBuilderService,
+    });
+  });
+  const offBuildCompleted = onKnowledgeEvent("build.completed", (event) => {
+    void options.lintRemediationService.markCompletedByRunId(String(event.payload.runId ?? event.entityId ?? ""));
+  });
+  const offBuildFailed = onKnowledgeEvent("build.failed", (event) => {
+    void options.lintRemediationService.markFailedByRunId(
+      String(event.payload.runId ?? event.entityId ?? ""),
+      String(event.payload.error ?? "构建失败"),
+    );
+  });
+  return () => {
+    offRecorded();
+    offBuildCompleted();
+    offBuildFailed();
+  };
+}
+
 /**
  * 阶段4 治理队列服务。把一次发布的 Knowledge Lint 报告落成可追踪的治理任务：
  * - governance.autoEligible=true → status "pending"，进入自动治理链路。
  * - actionType monitor → status "completed"（仅观察，无需动作）。
  * - 其余（rebuild / manual_review）→ status "needs_human"，被例外中心收纳。
  *
- * 本服务只做队列记录与状态流转；真正的重建/回写仍由既有确定性链路执行，
- * 不直接修改不可变 OKF 发布包。
+ * 本服务记录队列并调度既有 scoped rebuild；不会直接修改不可变 OKF 发布包。
  */
 export class LintRemediationService {
   private readonly adapter;
@@ -43,13 +74,13 @@ export class LintRemediationService {
       const { rows } = await this.adapter.query(
         `INSERT INTO knowledge_lint_remediations
            (remediation_id, project_id, release_id, issue_id, domain, severity, action_type, confidence,
-            auto_eligible, status, title, diagnosis, remediation, target_component_id, target_okf_path, created_at, finished_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            auto_eligible, status, title, diagnosis, remediation, target_component_id, target_okf_path, run_id, created_at, finished_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
          ON CONFLICT (release_id, issue_id) DO UPDATE SET
             action_type = EXCLUDED.action_type,
             confidence = EXCLUDED.confidence,
             auto_eligible = EXCLUDED.auto_eligible,
-            status = CASE WHEN knowledge_lint_remediations.status IN ('completed','failed') THEN knowledge_lint_remediations.status ELSE EXCLUDED.status END,
+            status = CASE WHEN knowledge_lint_remediations.status IN ('completed','failed','running') THEN knowledge_lint_remediations.status ELSE EXCLUDED.status END,
             diagnosis = EXCLUDED.diagnosis,
             remediation = EXCLUDED.remediation
          RETURNING *`,
@@ -69,6 +100,7 @@ export class LintRemediationService {
           governance.remediation,
           issue.componentId ?? "",
           issue.okfPath ?? "",
+          "",
           now,
           finishedAt,
         ],
@@ -86,7 +118,123 @@ export class LintRemediationService {
   async recordFromReleaseDir(input: { projectId: string; releaseId: string; dataDir: string }): Promise<KnowledgeLintRemediation[]> {
     const report = loadLintReport(input.dataDir, input.releaseId);
     if (!report) return [];
-    return this.recordFromReport({ projectId: input.projectId, releaseId: input.releaseId, report });
+    const recorded = await this.recordFromReport({ projectId: input.projectId, releaseId: input.releaseId, report });
+    if (recorded.length > 0) {
+      await emitKnowledgeEvent(this.db, {
+        eventType: "knowledge_lint.remediations_recorded",
+        entityType: "release",
+        entityId: input.releaseId,
+        payload: {
+          projectId: input.projectId,
+          releaseId: input.releaseId,
+          total: recorded.length,
+          pending: recorded.filter((item) => item.status === "pending").length,
+          needsHuman: recorded.filter((item) => item.status === "needs_human").length,
+        },
+      });
+    }
+    return recorded;
+  }
+
+  async executePending(input: {
+    projectId: string;
+    releaseId?: string;
+    requestedBy: string;
+    kbBuilderService: Pick<KbBuilderPipelineService, "startScopedRebuildForComponent">;
+    limit?: number;
+  }): Promise<KnowledgeLintRemediation[]> {
+    const pending = (await this.listRemediations({ projectId: input.projectId, releaseId: input.releaseId, status: "pending" }))
+      .slice(0, input.limit ?? 10);
+    const out: KnowledgeLintRemediation[] = [];
+    for (const item of pending) {
+      if (!item.targetComponentId) {
+        out.push(await this.markNeedsHuman(item.remediationId, "自动治理缺少目标组件，无法安全触发 scoped rebuild。"));
+        continue;
+      }
+      try {
+        await this.markRunning(item.remediationId, "");
+        const run = await input.kbBuilderService.startScopedRebuildForComponent({
+          componentId: item.targetComponentId,
+          requestedBy: input.requestedBy,
+          sourcePath: item.targetOkfPath,
+        });
+        const running = await this.markRunning(item.remediationId, run.runId);
+        await emitKnowledgeEvent(this.db, {
+          eventType: "knowledge_lint.remediation_started",
+          entityType: "lint_remediation",
+          entityId: item.remediationId,
+          payload: {
+            projectId: item.projectId,
+            releaseId: item.releaseId,
+            remediationId: item.remediationId,
+            issueId: item.issueId,
+            componentId: item.targetComponentId,
+            runId: run.runId,
+          },
+        });
+        out.push(running);
+      } catch (error) {
+        out.push(await this.markFailed(item.remediationId, error instanceof Error ? error.message : String(error)));
+      }
+    }
+    return out;
+  }
+
+  async markCompletedByRunId(runId: string): Promise<KnowledgeLintRemediation[]> {
+    if (!runId) return [];
+    const now = new Date().toISOString();
+    const { rows } = await this.adapter.query(
+      `UPDATE knowledge_lint_remediations
+       SET status = 'completed', finished_at = $2, error = ''
+       WHERE run_id = $1 AND status = 'running'
+       RETURNING *`,
+      [runId, now],
+    );
+    const completed = rows.map(mapRemediation);
+    for (const item of completed) {
+      await emitKnowledgeEvent(this.db, {
+        eventType: "knowledge_lint.remediation_completed",
+        entityType: "lint_remediation",
+        entityId: item.remediationId,
+        payload: {
+          projectId: item.projectId,
+          releaseId: item.releaseId,
+          remediationId: item.remediationId,
+          issueId: item.issueId,
+          runId,
+        },
+      });
+    }
+    return completed;
+  }
+
+  async markFailedByRunId(runId: string, error: string): Promise<KnowledgeLintRemediation[]> {
+    if (!runId) return [];
+    const now = new Date().toISOString();
+    const { rows } = await this.adapter.query(
+      `UPDATE knowledge_lint_remediations
+       SET status = 'failed', error = $2, finished_at = $3
+       WHERE run_id = $1 AND status = 'running'
+       RETURNING *`,
+      [runId, error, now],
+    );
+    const failed = rows.map(mapRemediation);
+    for (const item of failed) {
+      await emitKnowledgeEvent(this.db, {
+        eventType: "knowledge_lint.remediation_failed",
+        entityType: "lint_remediation",
+        entityId: item.remediationId,
+        payload: {
+          projectId: item.projectId,
+          releaseId: item.releaseId,
+          remediationId: item.remediationId,
+          issueId: item.issueId,
+          runId,
+          error,
+        },
+      });
+    }
+    return failed;
   }
 
   async listRemediations(filter: { projectId?: string; releaseId?: string; status?: LintRemediationStatus } = {}): Promise<KnowledgeLintRemediation[]> {
@@ -136,6 +284,49 @@ export class LintRemediationService {
     );
     return rows.length ? String(rows[0].release_id) : null;
   }
+
+  private async markRunning(remediationId: string, runId: string): Promise<KnowledgeLintRemediation> {
+    const { rows } = await this.adapter.query(
+      `UPDATE knowledge_lint_remediations
+       SET status = 'running',
+           run_id = COALESCE(NULLIF($2, ''), run_id),
+           error = ''
+       WHERE remediation_id = $1
+       RETURNING *`,
+      [remediationId, runId],
+    );
+    return mapRemediation(rows[0]);
+  }
+
+  private async markFailed(remediationId: string, error: string): Promise<KnowledgeLintRemediation> {
+    const now = new Date().toISOString();
+    const { rows } = await this.adapter.query(
+      `UPDATE knowledge_lint_remediations
+       SET status = 'failed', error = $2, finished_at = $3
+       WHERE remediation_id = $1
+       RETURNING *`,
+      [remediationId, error, now],
+    );
+    const item = mapRemediation(rows[0]);
+    await emitKnowledgeEvent(this.db, {
+      eventType: "knowledge_lint.remediation_failed",
+      entityType: "lint_remediation",
+      entityId: item.remediationId,
+      payload: { projectId: item.projectId, releaseId: item.releaseId, remediationId: item.remediationId, error },
+    });
+    return item;
+  }
+
+  private async markNeedsHuman(remediationId: string, reason: string): Promise<KnowledgeLintRemediation> {
+    const { rows } = await this.adapter.query(
+      `UPDATE knowledge_lint_remediations
+       SET status = 'needs_human', error = $2
+       WHERE remediation_id = $1
+       RETURNING *`,
+      [remediationId, reason],
+    );
+    return mapRemediation(rows[0]);
+  }
 }
 
 function loadLintReport(dataDir: string, releaseId: string): KnowledgeLintReport | null {
@@ -171,6 +362,7 @@ function mapRemediation(row: Record<string, unknown>): KnowledgeLintRemediation 
     remediation: String(row.remediation ?? ""),
     targetComponentId: String(row.target_component_id ?? ""),
     targetOkfPath: String(row.target_okf_path ?? ""),
+    runId: String(row.run_id ?? ""),
     error: String(row.error ?? ""),
     createdAt: String(row.created_at),
     finishedAt: row.finished_at ? String(row.finished_at) : null,

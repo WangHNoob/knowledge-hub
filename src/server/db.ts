@@ -282,6 +282,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       remediation TEXT NOT NULL DEFAULT '',
       target_component_id TEXT NOT NULL DEFAULT '',
       target_okf_path TEXT NOT NULL DEFAULT '',
+      run_id TEXT NOT NULL DEFAULT '',
       error TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       finished_at TIMESTAMPTZ,
@@ -422,6 +423,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}release_channels ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
     ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
     ALTER TABLE ${p}mcp_audit ADD COLUMN IF NOT EXISTS project_id TEXT NOT NULL DEFAULT 'default_project';
+    ALTER TABLE ${p}knowledge_lint_remediations ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_hash TEXT NOT NULL DEFAULT '';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS manifest_json JSONB NOT NULL DEFAULT '{}';
     ALTER TABLE ${p}releases ADD COLUMN IF NOT EXISTS parent_release_id TEXT;

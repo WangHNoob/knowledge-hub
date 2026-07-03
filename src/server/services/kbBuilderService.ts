@@ -322,6 +322,16 @@ export class KbBuilderPipelineService {
     } catch (error) {
       await this.failRun(runId, error);
       await runSpan?.fail(error);
+      await emitKnowledgeEvent(this.db, {
+        eventType: "build.failed",
+        entityType: "build_run",
+        entityId: runId,
+        payload: {
+          runId,
+          projectId: options.projectId ?? "default_project",
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
       throw error;
     }
   }

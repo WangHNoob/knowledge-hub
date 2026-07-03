@@ -541,6 +541,7 @@ export interface KnowledgeLintRemediation {
   remediation: string;
   targetComponentId: string;
   targetOkfPath: string;
+  runId: string;
   error: string;
   createdAt: string;
   finishedAt: string | null;
