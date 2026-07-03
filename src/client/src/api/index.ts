@@ -29,7 +29,7 @@ export type { PackageFilter } from "./packages";
 export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
 export { searchAll } from "./search";
 export { listTableAliases, saveTableAliases, importTableAliases, pruneTableAliases } from "./tableAliases";
-export { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks } from "./review";
+export { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks } from "./review";
 export { getQualityProfile, getTrustPolicy, updateQualityProfile } from "./quality";
 export {
   activateLegislationProfile,

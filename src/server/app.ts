@@ -12,6 +12,7 @@ import { createLegislationService } from "./services/legislationService";
 import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
 import { registerAnnotationWritebackAutomation } from "./services/annotationWritebackAutomationService";
+import { registerAutoRemediation } from "./services/autoRemediationService";
 import { registerFeedbackAutomation } from "./services/feedbackAutomationService";
 import { registerReleaseAutomation } from "./services/releaseAutomationService";
 import { createSourceBundleService } from "./services/sourceBundleService";
@@ -93,6 +94,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     kbBuilderService: ctx.kbBuilderService,
     diagnostics,
   });
+  const unsubscribeAutoRemediation = config.autoRemediationEnabled
+    ? registerAutoRemediation({
+        db: options.db,
+        knowledgeService: ctx.service,
+        diagnostics,
+      })
+    : () => {};
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -133,6 +141,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     unsubscribeReleaseAutomation();
     unsubscribeFeedbackAutomation();
     unsubscribeAnnotationWritebackAutomation();
+    unsubscribeAutoRemediation();
     await options.db.close();
   });
   return app;

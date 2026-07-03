@@ -33,3 +33,18 @@ export async function annotateReviewTask(input: {
 export async function startReviewTaskRebuild(taskId: string): Promise<BuildResponse> {
   return postJson<BuildResponse>(`/api/review/tasks/${encodeURIComponent(taskId)}/rebuild`, {});
 }
+
+export async function listAutoFixedTasks(projectId: string): Promise<ReviewTask[]> {
+  return (
+    await getJson<{ tasks: ReviewTask[] }>(`/api/projects/${encodeURIComponent(projectId)}/review/auto-fixed`)
+  ).tasks;
+}
+
+export async function rollbackAutoFix(projectId: string, taskId: string): Promise<ReviewTask> {
+  return (
+    await postJson<{ task: ReviewTask }>(
+      `/api/projects/${encodeURIComponent(projectId)}/review/auto-fixed/${encodeURIComponent(taskId)}/rollback`,
+      {}
+    )
+  ).task;
+}

@@ -458,6 +458,8 @@ export class KbBuilderPipelineService {
       resolutionNote: String(row.resolution_note ?? ""),
       learning: { recurrenceCount: 0, openSimilarCount: 0, exampleCount: 0, buildExamplesInjected: 0, lastAnnotation: null },
       writeback: null,
+      autoFixed: row.auto_fixed === true || row.auto_fixed === "true" || row.auto_fixed === 1,
+      llmAnalysis: null,
     }));
   }
 
@@ -488,6 +490,7 @@ export class KbBuilderPipelineService {
          t.task_id,
          t.rule_id,
          t.status,
+         t.auto_fixed,
          c.component_id,
          c.source_refs,
          c.legacy_path,
@@ -500,6 +503,9 @@ export class KbBuilderPipelineService {
     );
     if (rows.length === 0) throw new Error(`Unknown review task: ${taskId}`);
     const row = rows[0];
+    if (row.auto_fixed === true) {
+      throw new Error(`Task ${taskId} was already auto-fixed; scoped rebuild is triggered by annotation writeback.`);
+    }
     if (!["agent_feedback.rebuild_candidate", "annotation_example.review"].includes(String(row.rule_id))) {
       throw new Error("Only agent feedback rebuild candidate or annotation review tasks can start scoped rebuilds.");
     }

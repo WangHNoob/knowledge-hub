@@ -2,6 +2,7 @@ import {
   mapAgentEvent,
   mapComponent,
   mapEvidenceRecord,
+  mapLlmAnalysis,
   mapMcpAudit,
   mapPackage,
   mapRelease,
@@ -784,6 +785,111 @@ export class KnowledgeService {
     return rows.map(mapReviewTask);
   }
 
+  /**
+   * Append LLM-generated candidate suggestions to an open review task.
+   * Existing candidates are preserved; new suggestions get id `llm_<index>`.
+   */
+  async addLlmSuggestions(
+    taskId: string,
+    suggestions: Array<{ label: string; value: unknown; rationale?: string }>
+  ): Promise<void> {
+    if (suggestions.length === 0) return;
+    const { rows } = await this.adapter.query(
+      "SELECT candidates FROM review_tasks WHERE task_id = $1",
+      [taskId]
+    );
+    if (rows.length === 0) return;
+    const existing = rows[0].candidates;
+    let arr: unknown[] = [];
+    if (Array.isArray(existing)) arr = existing.slice();
+    else if (typeof existing === "string" && existing.length > 0) {
+      try { arr = JSON.parse(existing) as unknown[]; } catch { arr = []; }
+    }
+    const startIndex = arr.length;
+    const additions = suggestions.map((s, idx) => ({
+      id: `llm_${startIndex + idx + 1}`,
+      label: s.label,
+      value: s.value,
+      rationale: s.rationale ?? "",
+      source: "llm_auto_remediation"
+    }));
+    const merged = [...arr, ...additions];
+    await this.adapter.query(
+      "UPDATE review_tasks SET candidates = $2 WHERE task_id = $1",
+      [taskId, JSON.stringify(merged)]
+    );
+  }
+
+  /** List tasks that were auto-fixed by the LLM, optionally scoped by project. */
+  async listAutoFixedTasks(filter: { projectId?: string } = {}): Promise<ReviewTask[]> {
+    const where: string[] = ["t.auto_fixed = TRUE"];
+    const params: unknown[] = [];
+    if (filter.projectId) {
+      where.push(`t.package_id IN (SELECT package_id FROM asset_packages WHERE project_id = $${params.length + 1})`);
+      params.push(filter.projectId);
+    }
+    const { rows } = await this.adapter.query(
+      `SELECT t.* FROM review_tasks t WHERE ${where.join(" AND ")} ORDER BY t.resolved_at DESC NULLS LAST, t.created_at DESC`,
+      params
+    );
+    return rows.map(mapReviewTask);
+  }
+
+  /**
+   * Roll back an auto-fixed task: reopen it, clear auto_fixed flag, deactivate
+   * the auto-generated annotation_example, and retire any source_correction
+   * that was created for it.
+   */
+  async rollbackAutoFix(taskId: string, actor: string): Promise<ReviewTask> {
+    const now = new Date().toISOString();
+    await this.adapter.query("BEGIN");
+    try {
+      const { rows: taskRows } = await this.adapter.query(
+        "SELECT * FROM review_tasks WHERE task_id = $1 FOR UPDATE",
+        [taskId]
+      );
+      if (taskRows.length === 0) throw new Error(`Unknown review task: ${taskId}`);
+      const task = mapReviewTask(taskRows[0]);
+      if (!task.autoFixed) throw new Error(`Task ${taskId} is not auto-fixed; nothing to roll back.`);
+
+      await this.adapter.query(
+        `UPDATE annotation_examples
+           SET active = FALSE
+         WHERE task_id = $1 AND auto_generated = TRUE`,
+        [taskId]
+      );
+      await this.adapter.query(
+        `UPDATE source_corrections
+           SET state = 'retired', updated_at = $2
+         WHERE task_id = $1`,
+        [taskId, now]
+      );
+      const { rows: updated } = await this.adapter.query(
+        `UPDATE review_tasks
+           SET status = 'open',
+               auto_fixed = FALSE,
+               resolved_by = '',
+               resolved_at = NULL,
+               resolution_note = $2,
+               annotation_value = '{}'::jsonb
+         WHERE task_id = $1
+         RETURNING *`,
+        [taskId, `rolled back auto-fix by ${actor} at ${now}`]
+      );
+      await this.adapter.query("COMMIT");
+      await emitKnowledgeEvent(this.db, {
+        eventType: "annotation.review_resolved",
+        entityType: "review_task",
+        entityId: taskId,
+        payload: { action: "auto_fix_rollback", resolvedBy: actor, taskId }
+      });
+      return mapReviewTask(updated[0]);
+    } catch (error) {
+      await this.adapter.query("ROLLBACK");
+      throw error;
+    }
+  }
+
   async annotateReviewTask(input: {
     taskId: string;
     selectedCandidateId?: string;
@@ -793,6 +899,8 @@ export class KnowledgeService {
     dismissRule?: boolean;
     dismissalReason?: string;
     actor: string;
+    autoFixed?: boolean;
+    llmAnalysis?: import("../types").LlmAnalysis;
   }): Promise<{ task: ReviewTask; example: AnnotationExample | null }> {
     const task = (await this.listReviewTasks({})).find((item) => item.taskId === input.taskId);
     if (!task) throw new Error(`Unknown review task: ${input.taskId}`);
@@ -827,8 +935,8 @@ export class KnowledgeService {
     try {
       await this.adapter.query(
         `INSERT INTO annotation_examples
-          (example_id, package_id, component_id, task_id, rule_id, apply_mode, page_type, context_hash, context_snapshot, correct_value, created_by, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          (example_id, package_id, component_id, task_id, rule_id, apply_mode, page_type, context_hash, context_snapshot, correct_value, created_by, created_at, auto_generated, llm_analysis)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           exampleId,
           task.packageId,
@@ -842,6 +950,8 @@ export class KnowledgeService {
           JSON.stringify(correctValue),
           input.actor,
           now,
+          Boolean(input.autoFixed),
+          input.llmAnalysis ? JSON.stringify(input.llmAnalysis) : null,
         ],
       );
       if (input.dismissRule && task.ruleId) {
@@ -888,7 +998,9 @@ export class KnowledgeService {
              resolution_note = $4,
              annotation_value = $5,
              annotated_by = $2,
-             annotated_at = $3
+             annotated_at = $3,
+             auto_fixed = $6,
+             llm_analysis = $7
          WHERE task_id = $1`,
         [
           task.taskId,
@@ -896,6 +1008,8 @@ export class KnowledgeService {
           now,
           input.note ?? "",
           JSON.stringify(correctValue),
+          Boolean(input.autoFixed),
+          input.llmAnalysis ? JSON.stringify(input.llmAnalysis) : null,
         ],
       );
       await this.adapter.query("COMMIT");
@@ -940,6 +1054,8 @@ export class KnowledgeService {
       }),
       createdBy: input.actor,
       createdAt: now,
+      autoGenerated: Boolean(input.autoFixed),
+      llmAnalysis: input.llmAnalysis ?? null,
     };
     await emitKnowledgeEvent(this.db, {
       eventType: "annotation.created",
@@ -1779,6 +1895,8 @@ function annotationExampleFromRow(row: Record<string, unknown>): AnnotationExamp
     }),
     createdBy: String(row.created_by ?? ""),
     createdAt: String(row.created_at ?? ""),
+    autoGenerated: row.auto_generated === true || row.auto_generated === "true" || row.auto_generated === 1,
+    llmAnalysis: mapLlmAnalysis(row.llm_analysis),
   };
 }
 

@@ -264,6 +264,18 @@ export interface ReviewTask {
   resolutionNote: string;
   learning: ReviewLearningSummary;
   writeback: ReviewWritebackSummary | null;
+  autoFixed: boolean;
+  llmAnalysis: LlmAnalysis | null;
+}
+
+export interface LlmAnalysis {
+  diagnosis: string;
+  confidence: number;
+  rationale: string;
+  fixType: "annotation_override" | "needs_human" | "no_fix";
+  modelProvider: string;
+  modelName: string;
+  generatedAt: string;
 }
 
 export interface ReviewLearningSummary {

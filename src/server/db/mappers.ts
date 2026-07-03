@@ -4,6 +4,7 @@ import type {
   AssetGroup,
   AssetPackage,
   EvidenceRecord,
+  LlmAnalysis,
   McpAuditRecord,
   ProjectRecord,
   ReleaseRecord,
@@ -103,7 +104,36 @@ export function mapReviewTask(row: Record<string, unknown>): ReviewTask {
       buildExamplesInjected: 0,
       lastAnnotation: null
     },
-    writeback: null
+    writeback: null,
+    autoFixed: row.auto_fixed === true || row.auto_fixed === "true" || row.auto_fixed === 1,
+    llmAnalysis: mapLlmAnalysis(row.llm_analysis)
+  };
+}
+
+export function mapLlmAnalysis(value: unknown): LlmAnalysis | null {
+  if (value == null) return null;
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    if (value.trim() === "") return null;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  const fixTypeRaw = String(obj.fixType ?? obj.fix_type ?? "no_fix");
+  const fixType: LlmAnalysis["fixType"] =
+    fixTypeRaw === "annotation_override" || fixTypeRaw === "needs_human" ? fixTypeRaw : "no_fix";
+  return {
+    diagnosis: String(obj.diagnosis ?? ""),
+    confidence: Number(obj.confidence ?? 0),
+    rationale: String(obj.rationale ?? ""),
+    fixType,
+    modelProvider: String(obj.modelProvider ?? obj.model_provider ?? ""),
+    modelName: String(obj.modelName ?? obj.model_name ?? ""),
+    generatedAt: String(obj.generatedAt ?? obj.generated_at ?? "")
   };
 }
 

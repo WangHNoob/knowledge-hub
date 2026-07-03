@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { annotateReviewTask, listReviewTasks, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
+import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type FlywheelWorkbench, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page } from "../components/Atoms";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { formatTime } from "../utils/format";
@@ -332,6 +332,11 @@ export function Review() {
           </button>
         </div>
       </section>
+
+      <AutoFixedAuditSection
+        projectId={currentProjectId}
+        onNavigateAsset={(packageId, componentId) => navigate("assets", { packageId, componentId })}
+      />
 
       <div className="task-list">
         {tasks.map((task) => (
@@ -772,8 +777,7 @@ function WritebackStrip({
   );
 }
 
-function LearningStrip({ task }: { task: ReviewTask }) {
-  const learning = task.learning;
+function LearningStrip({ task }: { task: ReviewTask }) {  const learning = task.learning;
   const hasSignal = learning.recurrenceCount > 0
     || learning.openSimilarCount > 0
     || learning.exampleCount > 0
@@ -805,5 +809,112 @@ function LearningStrip({ task }: { task: ReviewTask }) {
         </span>
       )}
     </div>
+  );
+}
+
+function AutoFixedAuditSection({
+  projectId,
+  onNavigateAsset,
+}: {
+  projectId: string;
+  onNavigateAsset: (packageId: string, componentId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState(false);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["auto-fixed", projectId],
+    queryFn: () => listAutoFixedTasks(projectId),
+    enabled: Boolean(projectId),
+  });
+  const rollback = useMutation({
+    mutationFn: (taskId: string) => rollbackAutoFix(projectId, taskId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["auto-fixed"] }),
+        queryClient.invalidateQueries({ queryKey: ["review"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+    },
+  });
+  const tasks = data ?? [];
+  if (isLoading || error || tasks.length === 0) return null;
+  const displayed = expanded ? tasks : tasks.slice(0, 3);
+  return (
+    <section className="auto-fixed-audit">
+      <div className="detail-head">
+        <div>
+          <h2>自动修复审计</h2>
+          <p>由 LLM 自动生成并落盘的修复。信任分达标即已进入发布链路；如需人工回滚，展开逐条处理。</p>
+        </div>
+        <Badge label={`${tasks.length} 项`} tone="warn" />
+      </div>
+      <div className="task-list">
+        {displayed.map((task) => {
+          const analysis = task.llmAnalysis;
+          const confidencePct = analysis ? Math.round((analysis.confidence ?? 0) * 100) : 0;
+          const tone = confidencePct >= 90 ? "ok" : confidencePct >= 75 ? "warn" : "hot";
+          return (
+            <article key={task.taskId} className="task auto-fixed-task">
+              <Badge label={`置信度 ${confidencePct}%`} tone={tone} />
+              <div>
+                <div className="task-title-row">
+                  <h3>{task.title || task.ruleId || task.taskId}</h3>
+                  <Badge label={analysis?.modelName || "LLM"} />
+                  <Badge label={formatTime(task.resolvedAt ?? task.createdAt)} />
+                </div>
+                {analysis && (
+                  <div className="issue-guide">
+                    <span>
+                      <b>诊断</b>
+                      <strong>{analysis.diagnosis || "-"}</strong>
+                    </span>
+                    <span>
+                      <b>修复理由</b>
+                      <strong>{analysis.rationale || "-"}</strong>
+                    </span>
+                    <span>
+                      <b>类型</b>
+                      <strong>{analysis.fixType}</strong>
+                    </span>
+                  </div>
+                )}
+                <details className="raw-feedback">
+                  <summary>查看修复后的值</summary>
+                  <pre>{JSON.stringify(task.annotationValue ?? {}, null, 2)}</pre>
+                </details>
+                <div className="asset-link">
+                  <IdChip label={task.packageId} title="查看资产包" onClick={() => onNavigateAsset(task.packageId, task.componentId)} />
+                  {task.componentId && (
+                    <IdChip label={task.componentId} title="定位组件" onClick={() => onNavigateAsset(task.packageId, task.componentId)} />
+                  )}
+                </div>
+                <div className="task-actions">
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    disabled={rollback.isPending}
+                    onClick={() => {
+                      if (window.confirm(`确认回滚这条自动修复？将重开任务并停用自动生成的样例。`)) {
+                        rollback.mutate(task.taskId);
+                      }
+                    }}
+                  >
+                    回滚自动修复
+                  </button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {tasks.length > 3 && (
+        <button type="button" className="secondary-action" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "收起" : `展开全部 ${tasks.length} 条`}
+        </button>
+      )}
+      {rollback.error && (
+        <p className="error">{rollback.error instanceof Error ? rollback.error.message : String(rollback.error)}</p>
+      )}
+    </section>
   );
 }

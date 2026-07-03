@@ -483,13 +483,50 @@ export class ReleaseService {
     if (componentIds.length === 0) return [];
     const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
     const { rows } = await this.adapter.query(
-      `SELECT task_id, package_id, component_id, title
+      `SELECT task_id, package_id, component_id, title, auto_fixed, llm_analysis, rule_id
        FROM review_tasks
        WHERE component_id IN (${placeholders}) AND severity = 'blocking' AND status = 'open'
        ORDER BY created_at, task_id`,
       componentIds,
     );
     return rows;
+  }
+
+  /**
+   * When auto-remediation was previously applied to a component+ruleId, a
+   * subsequent rebuild may re-emit a blocking task for the same rule. Trust
+   * the earlier auto-fix and treat those inherited blockings as non-blocking,
+   * so long as the previous LLM analysis was above the configured confidence
+   * threshold. Non-auto-fixed blockings remain hard blockers.
+   */
+  private async filterAutoFixedInheritedBlocking(
+    tasks: Record<string, unknown>[],
+  ): Promise<Record<string, unknown>[]> {
+    if (tasks.length === 0) return tasks;
+    if (!autoRemediationRelaxEnabled()) return tasks;
+    const pairs = uniqueSorted(
+      tasks
+        .filter((t) => t.rule_id && t.component_id)
+        .map((t) => `${t.component_id}::${t.rule_id}`),
+    );
+    if (pairs.length === 0) return tasks;
+    const { rows } = await this.adapter.query(
+      `SELECT component_id, rule_id, llm_analysis
+         FROM review_tasks
+        WHERE auto_fixed = TRUE
+          AND rule_id <> ''
+          AND (component_id || '::' || rule_id) = ANY($1::text[])`,
+      [pairs],
+    );
+    const trusted = new Set<string>();
+    for (const row of rows) {
+      const analysis = parseLlmAnalysisRow(row.llm_analysis);
+      const confidence = analysis?.confidence ?? 0;
+      if (confidence >= autoRemediationThreshold()) {
+        trusted.add(`${row.component_id}::${row.rule_id}`);
+      }
+    }
+    return tasks.filter((t) => !trusted.has(`${t.component_id}::${t.rule_id}`));
   }
 
   private async buildAutoPublishCheck(
@@ -506,7 +543,8 @@ export class ReleaseService {
     if (revision.diff.componentIds.removed.length > 0) reasons.push("removed_components_present");
     if (changedComponentIds.length === 0) reasons.push("no_component_changes");
 
-    const blockingTasks = await this.findOpenBlockingTasksForComponents(changedComponentIds);
+    const blockingTasksRaw = await this.findOpenBlockingTasksForComponents(changedComponentIds);
+    const blockingTasks = await this.filterAutoFixedInheritedBlocking(blockingTasksRaw);
     if (blockingTasks.length > 0) reasons.push("changed_components_have_blocking_tasks");
 
     const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
@@ -1038,4 +1076,28 @@ function stableStringify(value: unknown): string {
     return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function autoRemediationRelaxEnabled(): boolean {
+  const raw = (process.env.KH_AUTO_REMEDIATION_ENABLED ?? "").trim().toLowerCase();
+  if (raw === "") return true;
+  return ["1", "true", "yes", "on"].includes(raw);
+}
+
+function autoRemediationThreshold(): number {
+  const raw = process.env.KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD;
+  const value = raw ? Number(raw) : 0.85;
+  return Number.isFinite(value) && value > 0 && value <= 1 ? value : 0.85;
+}
+
+function parseLlmAnalysisRow(value: unknown): { confidence: number } | null {
+  if (value == null) return null;
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    if (value.trim() === "") return null;
+    try { parsed = JSON.parse(value); } catch { return null; }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  return { confidence: Number(obj.confidence ?? 0) };
 }

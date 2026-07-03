@@ -45,7 +45,13 @@ export const config = {
   uploadMaxFields: positiveInt("KH_UPLOAD_MAX_FIELDS", 200),
   uploadMaxParts: positiveInt("KH_UPLOAD_MAX_PARTS", 20200),
   autoPublishRevisions: flag("KH_AUTO_PUBLISH_REVISIONS", false),
-  generateBuildReviewTasks: flag("KH_GENERATE_BUILD_REVIEW_TASKS", false)
+  generateBuildReviewTasks: flag("KH_GENERATE_BUILD_REVIEW_TASKS", false),
+  autoRemediationEnabled: flag("KH_AUTO_REMEDIATION_ENABLED", true),
+  autoRemediationConfidenceThreshold: Number(optional("KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD", "0.85")),
+  autoRemediationLlmProvider: optional("KH_AUTO_REMEDIATION_LLM_PROVIDER", ""),
+  autoRemediationLlmBaseUrl: optional("KH_AUTO_REMEDIATION_LLM_BASE_URL", ""),
+  autoRemediationLlmModel: optional("KH_AUTO_REMEDIATION_LLM_MODEL", ""),
+  autoRemediationLlmApiKey: optional("KH_AUTO_REMEDIATION_LLM_API_KEY", "")
 };
 
 export const testConfig = {

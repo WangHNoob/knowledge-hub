@@ -80,4 +80,25 @@ export function registerReviewRoutes(app: FastifyInstance, ctx: RouteContext) {
       }
     }
   );
+
+  app.get<{ Params: { projectId: string } }>(
+    "/api/projects/:projectId/review/auto-fixed",
+    { preHandler: app.authenticate },
+    async (request) => {
+      return { tasks: await ctx.service.listAutoFixedTasks({ projectId: request.params.projectId }) };
+    }
+  );
+
+  app.post<{ Params: { projectId: string; taskId: string } }>(
+    "/api/projects/:projectId/review/auto-fixed/:taskId/rollback",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      try {
+        const task = await ctx.service.rollbackAutoFix(request.params.taskId, request.user.username);
+        return { task };
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : "回滚自动修复失败。" });
+      }
+    }
+  );
 }
