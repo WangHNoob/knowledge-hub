@@ -69,6 +69,8 @@ export function autoPublishReasonLabel(reason: string): string {
       return "没有组件变更";
     case "has_pending_review_corrections":
       return "存在待复核源覆盖";
+    case "knowledge_lint_remediation_unresolved":
+      return "Knowledge Lint 治理未完成";
     default:
       return reason;
   }
@@ -101,6 +103,8 @@ export function autoPublishReasonAction(reason: string): string {
       return "没有需要发布的变化，通常不需要处理。";
     case "has_pending_review_corrections":
       return "当前版本带着上一发布确认值继续发布；去策划立法的源覆盖层确认或退役对应修正。";
+    case "knowledge_lint_remediation_unresolved":
+      return "等待自动治理完成，或在审核中心处理失败/需要人工判断的 Lint 治理项。";
     default:
       return "查看关联构建 run、资产包和审核任务后决定是否手动发布。";
   }

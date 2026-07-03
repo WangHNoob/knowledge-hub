@@ -106,12 +106,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       logRetentionDays: config.logRetentionDays
     })
   };
-  const unsubscribeReleaseAutomation = registerReleaseAutomation({
-    db: options.db,
-    releaseService: ctx.releaseService,
-    diagnostics,
-    autoPublishRevisions: config.autoPublishRevisions,
-  });
   const unsubscribeFeedbackAutomation = registerFeedbackAutomation({
     db: options.db,
     kbBuilderService: ctx.kbBuilderService,
@@ -127,6 +121,12 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     lintRemediationService: ctx.lintRemediationService,
     kbBuilderService: ctx.kbBuilderService,
     requestedBy: "system",
+  });
+  const unsubscribeReleaseAutomation = registerReleaseAutomation({
+    db: options.db,
+    releaseService: ctx.releaseService,
+    diagnostics,
+    autoPublishRevisions: config.autoPublishRevisions,
   });
   const unsubscribeAutoRemediation = config.autoRemediationEnabled
     ? registerAutoRemediation({

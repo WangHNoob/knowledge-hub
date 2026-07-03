@@ -236,7 +236,10 @@ function ReleaseAutomationStatus({
 }
 
 function needsReviewAction(reason: string): boolean {
-  return reason === "changed_components_have_blocking_tasks" || reason === "trust_score_declined_or_missing" || reason === "unknown";
+  return reason === "changed_components_have_blocking_tasks"
+    || reason === "trust_score_declined_or_missing"
+    || reason === "knowledge_lint_remediation_unresolved"
+    || reason === "unknown";
 }
 
 function releaseReasonLabel(reason: string): string {
@@ -251,6 +254,10 @@ function releaseReasonLabel(reason: string): string {
       return "缺少发布基线";
     case "no_component_changes":
       return "没有组件变更";
+    case "has_pending_review_corrections":
+      return "存在待复核源覆盖";
+    case "knowledge_lint_remediation_unresolved":
+      return "Knowledge Lint 治理未完成";
     case "unknown":
       return "未记录具体原因";
     default:

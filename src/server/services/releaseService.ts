@@ -4,7 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { nanoid } from "nanoid";
 
-import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, ReleaseRecord, ReviewTask } from "../types";
+import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, LintRemediationSummary, ReleaseRecord, ReviewTask } from "../types";
 import { mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createLegislationService } from "./legislationService";
@@ -60,6 +60,7 @@ export interface AutoPublishCheck {
   blockingTaskIds: string[];
   trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
   pendingSourceCorrections: PendingSourceCorrection[];
+  lintRemediation: LintRemediationSummary;
 }
 
 export interface AutoPublishReasonDetail {
@@ -590,6 +591,10 @@ export class ReleaseService {
     const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
     if (trustDeclines.length > 0) reasons.push("trust_score_declined_or_missing");
     if (pendingSourceCorrections.length > 0) reasons.push("has_pending_review_corrections");
+    const lintRemediation = await createLintRemediationService(this.db).summary(release.projectId);
+    if (lintRemediation.pending > 0 || lintRemediation.failed > 0 || lintRemediation.needsHuman > 0) {
+      reasons.push("knowledge_lint_remediation_unresolved");
+    }
     const details = buildAutoPublishReasonDetails({
       reasons,
       revision,
@@ -597,6 +602,7 @@ export class ReleaseService {
       blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
       trustDeclines,
       pendingSourceCorrections,
+      lintRemediation,
     });
 
     return {
@@ -608,6 +614,7 @@ export class ReleaseService {
       blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
       trustDeclines,
       pendingSourceCorrections,
+      lintRemediation,
     };
   }
 
@@ -857,6 +864,7 @@ function buildAutoPublishReasonDetails(input: {
   blockingTaskIds: string[];
   trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
   pendingSourceCorrections: PendingSourceCorrection[];
+  lintRemediation: LintRemediationSummary;
 }): AutoPublishReasonDetail[] {
   return input.reasons.map((reason) => {
     switch (reason) {
@@ -919,6 +927,21 @@ function buildAutoPublishReasonDetails(input: {
           action: "在策划立法/审核链路中确认这些源覆盖仍然有效，或退役过期覆盖后重新构建。",
           count: input.pendingSourceCorrections.length,
           sampleIds: input.pendingSourceCorrections.map((item) => `${item.sourcePath} · ${item.factKey || item.ruleId}`).slice(0, 8),
+        };
+      case "knowledge_lint_remediation_unresolved":
+        return {
+          code: reason,
+          label: "Knowledge Lint 治理未完成",
+          severity: input.lintRemediation.failed > 0 || input.lintRemediation.needsHuman > 0 ? "blocking" : "warning",
+          description: "当前项目还有自动治理中的 Lint 问题，或存在需要人工判断/失败的治理项；自动发布需要先让治理队列收敛。",
+          action: "在审核中心查看 Knowledge Lint 自动治理链路；等待 running 完成，处理 failed/needs_human 后再发布。",
+          count: input.lintRemediation.pending + input.lintRemediation.failed + input.lintRemediation.needsHuman,
+          sampleIds: [
+            `running=${input.lintRemediation.byStatus.running}`,
+            `pending=${input.lintRemediation.byStatus.pending}`,
+            `failed=${input.lintRemediation.failed}`,
+            `needs_human=${input.lintRemediation.needsHuman}`,
+          ].filter((item) => !item.endsWith("=0")),
         };
       default:
         return {
