@@ -56,6 +56,10 @@ describe("Knowledge Lint", () => {
 
       expect(report.summary.blocking).toBeGreaterThan(0);
       expect(report.domains.links.total).toBe(1);
+      expect(report.issues.find((issue) => issue.id.startsWith("okf_broken_link"))).toMatchObject({
+        okfPath: "/systems/one.md",
+        componentId: "cmp_one",
+      });
       expect(report.domains.evidence.total).toBeGreaterThan(0);
       expect(report.domains.graph.total).toBeGreaterThan(0);
       expect(report.domains.trust.total).toBeGreaterThan(0);

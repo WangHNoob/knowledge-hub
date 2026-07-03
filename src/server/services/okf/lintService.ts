@@ -123,14 +123,14 @@ export function buildKnowledgeLintReport(input: {
   conformance: ConformanceReport;
   audit: ReleaseAuditSummary;
 }): KnowledgeLintReport {
-  const issues = [
+  const issues = attachComponentRefs([
     ...issuesFromConformance(input.conformance),
     ...issuesFromEvidence(input.audit),
     ...issuesFromGraph(input.bundleDir),
     ...issuesFromTrust(input.audit),
     ...issuesFromTableDependencies(input.bundleDir),
     ...issuesFromMcpFeedback(input.audit),
-  ].map((issue) => ({ ...issue, governance: fallbackGovernance(issue) }));
+  ], input.bundleDir).map((issue) => ({ ...issue, governance: fallbackGovernance(issue) }));
   const summary = severitySummary(issues);
   return {
     version: 1,
@@ -372,6 +372,30 @@ function issuesFromMcpFeedback(audit: ReleaseAuditSummary): KnowledgeLintIssue[]
     });
   }
   return issues;
+}
+
+function attachComponentRefs(issues: KnowledgeLintIssue[], bundleDir: string): KnowledgeLintIssue[] {
+  const byPath = componentIdsByOkfPath(bundleDir);
+  if (byPath.size === 0) return issues;
+  return issues.map((issue) => {
+    if (issue.componentId || !issue.okfPath) return issue;
+    const componentId = byPath.get(normalizeOkfPath(issue.okfPath));
+    return componentId ? { ...issue, componentId } : issue;
+  });
+}
+
+function componentIdsByOkfPath(bundleDir: string): Map<string, string> {
+  const index = readJson<OkfSearchIndex>(join(bundleDir, "search", "index.json"));
+  const out = new Map<string, string>();
+  for (const page of index?.pages ?? []) {
+    if (page.okfPath && page.componentId) out.set(normalizeOkfPath(page.okfPath), page.componentId);
+  }
+  return out;
+}
+
+function normalizeOkfPath(value: string): string {
+  const normalized = value.trim().replace(/\\/gu, "/");
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
 
 function conformanceDomain(issue: OkfIssue): KnowledgeLintDomain | null {
