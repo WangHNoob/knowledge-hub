@@ -180,6 +180,45 @@ export class LintRemediationService {
     return out;
   }
 
+  async retry(input: {
+    projectId: string;
+    remediationId: string;
+    requestedBy: string;
+    kbBuilderService: Pick<KbBuilderPipelineService, "startScopedRebuildForComponent">;
+  }): Promise<KnowledgeLintRemediation> {
+    const item = await this.getRemediation(input.projectId, input.remediationId);
+    if (!item) throw new Error(`Unknown lint remediation: ${input.remediationId}`);
+    if (!item.targetComponentId) throw new Error("该治理项缺少目标组件，不能安全自动重试。");
+    if (!item.autoEligible && item.status !== "failed") throw new Error("该治理项不是自动治理项，不能自动重试。");
+    await this.markPending(input.remediationId);
+    try {
+      await this.markRunning(input.remediationId, "");
+      const run = await input.kbBuilderService.startScopedRebuildForComponent({
+        componentId: item.targetComponentId,
+        requestedBy: input.requestedBy,
+        sourcePath: item.targetOkfPath,
+      });
+      const running = await this.markRunning(input.remediationId, run.runId);
+      await emitKnowledgeEvent(this.db, {
+        eventType: "knowledge_lint.remediation_started",
+        entityType: "lint_remediation",
+        entityId: item.remediationId,
+        payload: {
+          projectId: item.projectId,
+          releaseId: item.releaseId,
+          remediationId: item.remediationId,
+          issueId: item.issueId,
+          componentId: item.targetComponentId,
+          runId: run.runId,
+          retry: true,
+        },
+      });
+      return running;
+    } catch (error) {
+      return this.markFailed(input.remediationId, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async markCompletedByRunId(runId: string): Promise<KnowledgeLintRemediation[]> {
     if (!runId) return [];
     const now = new Date().toISOString();
@@ -283,6 +322,25 @@ export class LintRemediationService {
       [projectId],
     );
     return rows.length ? String(rows[0].release_id) : null;
+  }
+
+  private async getRemediation(projectId: string, remediationId: string): Promise<KnowledgeLintRemediation | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT * FROM knowledge_lint_remediations WHERE project_id = $1 AND remediation_id = $2 LIMIT 1`,
+      [projectId, remediationId],
+    );
+    return rows.length ? mapRemediation(rows[0]) : null;
+  }
+
+  private async markPending(remediationId: string): Promise<KnowledgeLintRemediation> {
+    const { rows } = await this.adapter.query(
+      `UPDATE knowledge_lint_remediations
+       SET status = 'pending', error = '', finished_at = NULL, run_id = ''
+       WHERE remediation_id = $1
+       RETURNING *`,
+      [remediationId],
+    );
+    return mapRemediation(rows[0]);
   }
 
   private async markRunning(remediationId: string, runId: string): Promise<KnowledgeLintRemediation> {

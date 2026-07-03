@@ -1,7 +1,7 @@
 import { Activity, AlertTriangle, CheckCircle2, Clock3, Hammer, RefreshCw } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { listFlywheelRemediations, type KnowledgeLintRemediation, type LintRemediationSummary } from "../api";
+import { listFlywheelRemediations, retryFlywheelRemediation, type KnowledgeLintRemediation, type LintRemediationSummary } from "../api";
 import { formatTime } from "../utils/format";
 import { Badge, ErrorState, Loading } from "./Atoms";
 
@@ -44,11 +44,26 @@ export function LintRemediationPanel({
   compact?: boolean;
   onShowBuild?: (runId: string) => void;
 }) {
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["flywheel", "remediations", projectId, releaseId ?? "latest"],
     queryFn: () => listFlywheelRemediations(projectId, releaseId),
     enabled: Boolean(projectId),
     refetchInterval: 3000,
+  });
+  const retry = useMutation({
+    mutationFn: (remediationId: string) => {
+      if (!projectId) throw new Error("缺少项目 ID，无法重试自动治理。");
+      return retryFlywheelRemediation(projectId, remediationId);
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["flywheel", "remediations"] }),
+        queryClient.invalidateQueries({ queryKey: ["build-runs"] }),
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["review"] }),
+      ]);
+    },
   });
 
   if (query.isLoading) return <Loading title="正在读取自动治理链路" />;
@@ -83,18 +98,29 @@ export function LintRemediationPanel({
       <div className="lint-remediation-list">
         {visible.length === 0 && <p className="subtle">暂无 Knowledge Lint 治理记录。发布后若有可治理项，会自动出现在这里。</p>}
         {visible.map((item) => (
-          <RemediationRow key={item.remediationId} item={item} onShowBuild={onShowBuild} />
+          <RemediationRow
+            key={item.remediationId}
+            item={item}
+            retrying={retry.isPending}
+            onRetry={(remediationId) => retry.mutate(remediationId)}
+            onShowBuild={onShowBuild}
+          />
         ))}
       </div>
+      {retry.error && <p className="error">{retry.error instanceof Error ? retry.error.message : String(retry.error)}</p>}
     </section>
   );
 }
 
 function RemediationRow({
   item,
+  retrying,
+  onRetry,
   onShowBuild,
 }: {
   item: KnowledgeLintRemediation;
+  retrying: boolean;
+  onRetry: (remediationId: string) => void;
   onShowBuild?: (runId: string) => void;
 }) {
   const statusTone = toneForStatus(item.status);
@@ -120,6 +146,11 @@ function RemediationRow({
           {item.runId && (
             <button className="link-button" type="button" onClick={() => onShowBuild?.(item.runId)} title={item.runId}>
               构建 {shortId(item.runId)}
+            </button>
+          )}
+          {item.status === "failed" && item.targetComponentId && (
+            <button className="secondary-action compact-action" type="button" disabled={retrying} onClick={() => onRetry(item.remediationId)}>
+              重试自动治理
             </button>
           )}
           <span>{formatTime(item.createdAt)}</span>

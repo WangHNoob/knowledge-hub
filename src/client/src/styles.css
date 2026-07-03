@@ -1664,6 +1664,12 @@ button.writeback-step:disabled {
   font-size: 11px;
 }
 
+.compact-action {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
 .feedback-components {
   display: grid;
   gap: 8px;

@@ -35,6 +35,17 @@ export async function listFlywheelRemediations(
   return getJson<{ remediations: KnowledgeLintRemediation[]; summary: LintRemediationSummary }>(url);
 }
 
+export async function retryFlywheelRemediation(
+  projectId: string,
+  remediationId: string,
+): Promise<KnowledgeLintRemediation> {
+  const res = await postJson<{ remediation: KnowledgeLintRemediation }>(
+    `/api/projects/${encodeURIComponent(projectId)}/flywheel/remediations/${encodeURIComponent(remediationId)}/retry`,
+    {},
+  );
+  return res.remediation;
+}
+
 export async function listFeedbackClusters(projectId?: string): Promise<AgentFeedbackCluster[]> {
   const res = await getJson<{ clusters: AgentFeedbackCluster[] }>(
     projectId ? `/api/projects/${encodeURIComponent(projectId)}/flywheel/feedback-clusters` : "/api/flywheel/feedback-clusters",

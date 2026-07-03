@@ -54,6 +54,18 @@ export function registerFlywheelRoutes(app: FastifyInstance, ctx: RouteContext) 
       summary: await ctx.lintRemediationService.summary(request.params.projectId, request.query.releaseId),
     }),
   );
+  app.post<{ Params: { projectId: string; remediationId: string } }>(
+    "/api/projects/:projectId/flywheel/remediations/:remediationId/retry",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request) => ({
+      remediation: await ctx.lintRemediationService.retry({
+        projectId: request.params.projectId,
+        remediationId: request.params.remediationId,
+        requestedBy: request.user.username,
+        kbBuilderService: ctx.kbBuilderService,
+      }),
+    }),
+  );
 
   app.post<{ Body: z.infer<typeof flywheelSyncSchema> }>(
     "/api/flywheel/sync",

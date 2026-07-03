@@ -183,6 +183,19 @@ describe("flywheel lint remediation exceptions", () => {
       expect(failed).toBeTruthy();
       expect(failed?.attentionLevel).toBe("blocking");
       expect(failed?.type).toBe("lint");
+
+      const failedRemediation = (await remediationService.listRemediations({ projectId: "default_project", releaseId: "rel_gov", status: "failed" }))[0];
+      expect(failedRemediation).toBeTruthy();
+      const retried = await remediationService.retry({
+        projectId: "default_project",
+        remediationId: failedRemediation.remediationId,
+        requestedBy: "admin",
+        kbBuilderService: {
+          startScopedRebuildForComponent: async () => ({ runId: "run_retry_1" }) as Awaited<ReturnType<ReturnType<typeof createKbBuilderPipelineService>["startScopedRebuildForComponent"]>>,
+        },
+      });
+      expect(retried.status).toBe("running");
+      expect(retried.runId).toBe("run_retry_1");
     } finally {
       await fixture.cleanup();
     }
