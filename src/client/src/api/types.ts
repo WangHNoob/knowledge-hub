@@ -965,6 +965,15 @@ export interface McpConnectInfo {
   currentUser: {
     username: string;
     role: string;
+    currentProjectId?: string;
+  };
+  project?: {
+    projectId: string;
+    defaultToolPayload: Record<string, unknown>;
+  };
+  capabilities?: {
+    unified: string[];
+    hardBoundaries: string[];
   };
   examples: {
     generic: Record<string, unknown>;
@@ -1030,6 +1039,17 @@ export interface KnowledgeEnvelope<T = unknown> {
   trust: {
     averageScore: number | null;
     minScore: number | null;
+    summary?: {
+      level: "high" | "medium" | "low" | "unknown";
+      evidenceCount: number;
+      sourceRefs: string[];
+      lastReviewedAt: string | null;
+      lastPublishedAt: string | null;
+      negativeFeedbackCount: number;
+      lintStatus: "passed" | "warning" | "failed" | "unknown";
+      correctionStatus: "none" | "pending" | "applied" | "published";
+      ruleProfileHash: string;
+    };
     components: Array<{
       componentId: string;
       artifactId: string;

@@ -88,6 +88,88 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("lets MCP apply staged corrections with unified capability while keeping published releases immutable", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const beforeRelease = await service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" });
+      const search = await service.runTool("kb_search", { query: "Stamina", limit: 1 }, { sessionId: "agent", agentRole: "agent" });
+      expect(search.trust.summary).toMatchObject({
+        evidenceCount: expect.any(Number),
+        sourceRefs: expect.any(Array),
+        lastPublishedAt: beforeRelease.release.publishedAt,
+      });
+      const submitted = await service.runTool(
+        "kb_submit_correction",
+        {
+          componentId: fixture.pageComponentId,
+          issue: "Stamina description is incomplete.",
+          suggestion: { field: "overview", value: "Stamina controls skill usage and recovery timing." },
+          confidence: 0.88,
+        },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(submitted.result).toMatchObject({ state: "pending_review", sourcePath: "gamedocs/battle.md" });
+      const correctionId = submitted.result.correctionId;
+      expect(typeof correctionId).toBe("string");
+
+      const applied = await service.runTool(
+        "kb_apply_correction",
+        { correctionId, note: "agent verified" },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(applied.result.correction).toMatchObject({ correctionId, state: "active", componentId: fixture.pageComponentId });
+
+      const status = await service.runTool("kb_get_correction_status", { correctionId }, { sessionId: "agent", agentRole: "agent" });
+      expect(status.result.lifecycle.map((event: { type: string }) => event.type)).toEqual(expect.arrayContaining(["correction.submitted", "correction.applied"]));
+
+      const afterRelease = await service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" });
+      expect(afterRelease.release.manifestHash).toBe(beforeRelease.release.manifestHash);
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("governs flywheel corrections through one MCP tool without publishing directly", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const beforeRelease = await service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" });
+      const governed = await service.runTool(
+        "kb_govern_flywheel",
+        {
+          componentId: fixture.pageComponentId,
+          issue: "Stamina needs a clearer source-backed summary.",
+          suggestion: { field: "summary", value: "Use stamina source text as the canonical summary." },
+          confidence: 0.9,
+          check: false,
+          publish: false,
+        },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(governed.result).toMatchObject({
+        status: "publish_skipped_by_request",
+        boundary: {
+          stagedOnly: true,
+          publishedAssetsImmutable: true,
+          releaseChannelDirectWrite: false,
+        },
+      });
+      expect(governed.result.steps.map((step: { name: string }) => step.name)).toEqual([
+        "submit_correction",
+        "apply_correction",
+        "incremental_check",
+        "publish_if_ready",
+      ]);
+      const afterRelease = await service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" });
+      expect(afterRelease.release.manifestHash).toBe(beforeRelease.release.manifestHash);
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it("resolves page tables from graph relations when markdown dependencies are translated", async () => {
     const fixture = await setupPublishedKnowledgeFixture({ dependencyText: "Uses 技能表." });
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);

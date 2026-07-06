@@ -92,7 +92,7 @@ function severityValue(value: unknown): AutoPublishReasonDetailView["severity"] 
 export function autoPublishReasonAction(reason: string): string {
   switch (reason) {
     case "changed_components_have_blocking_tasks":
-      return "先到审核中心完成阻断任务，再重新发布或等待下一次自动发布。";
+      return "先到异常收件箱完成阻断任务，再重新发布或等待下一次自动发布。";
     case "trust_score_declined_or_missing":
       return "检查变更资产的可信度明细，补证据或完成人工标注后再发布。";
     case "removed_components_present":
@@ -104,7 +104,7 @@ export function autoPublishReasonAction(reason: string): string {
     case "has_pending_review_corrections":
       return "当前版本带着上一发布确认值继续发布；去策划立法的源覆盖层确认或退役对应修正。";
     case "knowledge_lint_remediation_unresolved":
-      return "等待自动治理完成，或在审核中心处理失败/需要人工判断的 Lint 治理项。";
+      return "等待自动治理完成，或在异常收件箱处理失败/需要人工判断的 Lint 治理项。";
     default:
       return "查看关联构建 run、资产包和审核任务后决定是否手动发布。";
   }

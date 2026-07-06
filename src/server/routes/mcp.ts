@@ -28,6 +28,21 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteContext) {
         projectId: currentProjectId,
         defaultToolPayload: { projectId: currentProjectId },
       },
+      capabilities: {
+        unified: [
+          "query published knowledge",
+          "read evidence/trust",
+          "report feedback",
+          "submit and apply staged corrections",
+          "start scoped incremental checks",
+          "ask the server to publish if gates pass",
+        ],
+        hardBoundaries: [
+          "cannot directly update/delete published releases",
+          "cannot directly rewrite OKF bundles",
+          "cannot directly switch release channels",
+        ],
+      },
       examples: {
         generic: {
           mcpServers: {
@@ -52,7 +67,8 @@ export function registerMcpRoutes(app: FastifyInstance, ctx: RouteContext) {
       notes: [
         "Streamable HTTP endpoint is /mcp and requires the same JWT used by this web app.",
         "For multi-game knowledge bases, pass projectId in each tool payload or switch the current project in the web app before connecting.",
-        "Use a developer or admin account token if the Agent needs to send feedback; viewer can query read-only tools but should not mutate the knowledge base.",
+        "MCP uses unified Agent capabilities. Safety is enforced by staged corrections, immutable release snapshots, server-side publish gates, and audit logs.",
+        "MCP governance tools modify staged correction state and trigger server gates only; they never rewrite published OKF bundles or release channels directly.",
         "Behind a reverse proxy, set KH_PUBLIC_BASE_URL to the public https origin so generated configs are stable.",
       ],
     };

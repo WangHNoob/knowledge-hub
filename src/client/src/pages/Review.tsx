@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type ReviewTask } from "../api";
+import { annotateReviewTask, listAutoFixedTasks, listFlywheelEvents, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks, type FlywheelEvent, type ReviewTask } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs, type TabItem } from "../components/Atoms";
 import { LintRemediationPanel } from "../components/LintRemediationPanel";
 import { WritebackSteps } from "../components/WritebackSteps";
@@ -183,6 +183,11 @@ export function Review() {
     queryKey: ["review", currentProjectId, severity || "all", status || "all"],
     queryFn: () => listReviewTasks(severity || undefined, status || undefined, currentProjectId)
   });
+  const correctionEvents = useQuery({
+    queryKey: ["review-correction-events", currentProjectId],
+    queryFn: () => listFlywheelEvents(currentProjectId),
+    refetchInterval: 5000,
+  });
   const workbench = useWorkbench(currentProjectId);
 
   useEffect(() => {
@@ -279,7 +284,7 @@ export function Review() {
   if (error) return <ErrorState error={error} />;
 
   return (
-    <Page title="审核中心" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。把质量门禁结果翻译成可处理的维护任务；解决 blocking 任务后即可解锁发布。`}>
+    <Page title="异常收件箱" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。这里只处理自动治理无法确定或会阻断发布的问题；正常飞轮不需要人工逐项审核。`}>
       <Tabs items={REVIEW_TABS} active={reviewTab} onChange={setReviewTab} />
 
       {(transition.error || annotate.error || rebuild.error) && (
@@ -320,6 +325,11 @@ export function Review() {
           </div>
 
           <section className="review-flow">
+            <CorrectionChainStrip
+              events={correctionEvents.data ?? []}
+              onOpenAgent={() => navigate("agent")}
+              onOpenBuild={(runId) => navigate("buildrelease", runId ? { runId } : {})}
+            />
             <LintRemediationPanel
               projectId={currentProjectId}
               compact
@@ -406,6 +416,56 @@ export function Review() {
       )}
     </Page>
   );
+}
+
+function CorrectionChainStrip({ events, onOpenAgent, onOpenBuild }: { events: FlywheelEvent[]; onOpenAgent: () => void; onOpenBuild: (runId?: string) => void }) {
+  const correctionEvents = events.filter((event) => [
+    "correction.submitted",
+    "correction.applied",
+    "lint.checked",
+    "publish.skipped",
+    "release.auto_publish_succeeded",
+    "release.auto_publish_skipped",
+  ].includes(event.eventType));
+  if (correctionEvents.length === 0) return null;
+  const latest = correctionEvents[0];
+  const payload = latest.payload ?? {};
+  const runId = typeof payload.runId === "string" ? payload.runId : "";
+  const correctionId = typeof payload.correctionId === "string" ? payload.correctionId : "";
+  const reason = typeof payload.reason === "string" ? payload.reason : "";
+  return (
+    <WorkbenchStrip
+      kicker="Agent 修正链路"
+      headline={correctionChainHeadline(latest.eventType)}
+      summary={[
+        correctionId ? `修正 ${correctionId}` : "",
+        runId ? `构建 ${runId}` : "",
+        reason ? `原因：${reason}` : "",
+      ].filter(Boolean).join(" · ") || "最近一次 Agent 治理事件已记录，可回到 MCP 控制台查看完整 envelope。"}
+      actions={[
+        { label: "打开 MCP 控制台", onClick: onOpenAgent },
+        { label: runId ? "查看构建" : "查看构建页", onClick: () => onOpenBuild(runId || undefined) },
+      ]}
+    />
+  );
+}
+
+function correctionChainHeadline(eventType: string): string {
+  switch (eventType) {
+    case "correction.submitted":
+      return "Agent 已提交修正建议，等待应用到中间态";
+    case "correction.applied":
+      return "修正已进入确定性覆盖，等待增量检查";
+    case "lint.checked":
+      return "已启动 scoped 增量检查";
+    case "release.auto_publish_succeeded":
+      return "门禁通过，已自动发布 revision";
+    case "publish.skipped":
+    case "release.auto_publish_skipped":
+      return "自动发布被跳过，需要查看门禁原因";
+    default:
+      return "Agent 修正链路有新事件";
+  }
 }
 
 const ReviewTaskCard = memo(function ReviewTaskCard({

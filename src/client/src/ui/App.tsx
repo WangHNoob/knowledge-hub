@@ -50,13 +50,13 @@ const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
 };
 
 const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
-  { id: "dashboard", label: "飞轮工作台", icon: Activity },
+  { id: "dashboard", label: "飞轮总览", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
   { id: "rules", label: "规则治理", icon: ScrollText },
   { id: "buildrelease", label: "构建发布", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
-  { id: "review", label: "审核中心", icon: CheckCircle2 },
-  { id: "agent", label: "Agent 反馈", icon: SearchCheck },
+  { id: "review", label: "异常收件箱", icon: CheckCircle2 },
+  { id: "agent", label: "MCP / 审计", icon: SearchCheck },
   { id: "system", label: "系统", icon: HardDrive },
 ];
 

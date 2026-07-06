@@ -260,7 +260,7 @@ export function Assets() {
                 {openReviewTasks.length > 0 && (
                   <span className="asset-link">
                     审核任务：
-                    <IdChip label={`${openReviewTasks.length} 个待处理`} title="在审核中心查看该资产包的任务" onClick={() => navigate("review", { packageId: pkg.packageId })} />
+                    <IdChip label={`${openReviewTasks.length} 个待处理`} title="在异常收件箱查看该资产包的任务" onClick={() => navigate("review", { packageId: pkg.packageId })} />
                   </span>
                 )}
               </div>
@@ -278,7 +278,7 @@ export function Assets() {
                   hint={`${detail.data.evidenceCoverage.coveredComponents}/${detail.data.evidenceCoverage.totalComponents} 个组件`}
                   tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"}
                 />
-                <Metric label="待补证据" value={detail.data.evidenceCoverage.missingComponents} hint="优先进入审核中心" tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"} />
+                <Metric label="待补证据" value={detail.data.evidenceCoverage.missingComponents} hint="优先进入异常收件箱" tone={detail.data.evidenceCoverage.missingComponents > 0 ? "warn" : "ok"} />
               </div>
               <div className="asset-browser">
                 <div className="asset-tree">

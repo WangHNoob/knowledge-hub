@@ -333,7 +333,7 @@ function appendMissingSections(markdown: string, sections: string[]): string {
   const existing = new Set([...base.matchAll(/^##\s+(.+)$/gmu)].map((match) => match[1].trim().toLowerCase()));
   const additions = sections
     .filter((section) => !existing.has(section.toLowerCase()))
-    .map((section) => `## ${section}\n待确认：该章节由审核中心按 spec 自动补齐，请后续根据原始资料完善。`);
+    .map((section) => `## ${section}\n待确认：该章节由异常收件箱按 spec 自动补齐，请后续根据原始资料完善。`);
   if (additions.length === 0) return base || sections.map((section) => `## ${section}\n待确认：请根据原始资料完善。`).join("\n\n");
   return `${base ? `${base}\n\n` : ""}${additions.join("\n\n")}\n`;
 }

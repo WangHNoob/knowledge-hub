@@ -160,7 +160,7 @@ export function Release() {
           <WorkbenchStrip
             kicker="飞轮发布位"
             headline={firstDraft ? `${wb.publishItems.length} 个版本待发布` : "发布前仍有阻断项"}
-            summary={firstDraft ? "这些 draft / revision 已经进入工作台，检查无阻断后应尽快推给 Agent 消费。" : "先回审核中心处理 blocking，再创建或发布版本。"}
+            summary={firstDraft ? "这些 draft / revision 已经进入工作台，检查无阻断后应尽快推给 Agent 消费。" : "先到异常收件箱处理 blocking，再创建或发布版本。"}
             focused={focused}
             actions={actions}
           />

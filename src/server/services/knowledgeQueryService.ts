@@ -5,10 +5,13 @@ import { nanoid } from "nanoid";
 import xlsx from "xlsx";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, ReleaseRecord, TrustScore } from "../types";
-import { jsonArray, mapComponent, mapPackage } from "../db/mappers";
+import { jsonArray, jsonObject, mapComponent, mapPackage } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createFeedbackService, type FeedbackService, type FeedbackType } from "./feedbackService";
-import { createReleaseService } from "./releaseService";
+import { AutoPublishEligibilityError, createReleaseService } from "./releaseService";
+import { createKbBuilderPipelineService } from "./kbBuilderService";
+import { createLintRemediationService } from "./lintRemediationService";
+import { emitKnowledgeEvent } from "./eventService";
 import { createSourceBundleService } from "./sourceBundleService";
 import { searchOkfIndex, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
@@ -17,6 +20,15 @@ const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
 const GRAPH_TOOLS = new Set(["kb_get_entity", "kb_get_neighbors", "kb_list_entities", "kb_get_relations"]);
 const TABLE_TOOLS = new Set(["kb_get_page_tables", "kb_list_tables", "kb_get_table_schema", "kb_query_table", "kb_get_table_raw", "kb_validate_table", "kb_check_table_value"]);
 const REPORT_TOOLS = new Set(["kb_report_gap", "kb_report_bad_hit", "kb_report_stale"]);
+const GOVERNANCE_TOOLS = new Set([
+  "kb_get_flywheel_status",
+  "kb_submit_correction",
+  "kb_apply_correction",
+  "kb_start_incremental_check",
+  "kb_publish_if_ready",
+  "kb_get_correction_status",
+  "kb_govern_flywheel",
+]);
 
 export interface KnowledgeQueryContext {
   sessionId?: string;
@@ -117,6 +129,33 @@ interface OkfCitation {
   okfPath: string;
 }
 
+interface SourceCorrectionView {
+  correctionId: string;
+  projectId: string;
+  bundleId: string;
+  sourcePath: string;
+  ruleId: string;
+  pageType: string;
+  factKey: string | null;
+  boundSourceHash: string;
+  state: string;
+  correctValue: Record<string, unknown>;
+  componentId: string | null;
+  packageId: string | null;
+  exampleId: string;
+  taskId: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PublishTarget {
+  runId: string;
+  packageId: string;
+  only: string;
+  componentIds: string[];
+}
+
 export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
   return new KnowledgeQueryService(db, dataDir, diagnostics);
 }
@@ -126,12 +165,16 @@ export class KnowledgeQueryService {
   private readonly releaseService;
   private readonly sourceService;
   private readonly feedback: FeedbackService;
+  private readonly builderService;
+  private readonly lintRemediationService;
 
   constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
     this.adapter = db.adapter;
-    this.releaseService = createReleaseService(db);
+    this.releaseService = createReleaseService(db, dataDir, diagnostics);
     this.sourceService = createSourceBundleService(db, dataDir);
     this.feedback = createFeedbackService(db);
+    this.builderService = createKbBuilderPipelineService(db, dataDir, diagnostics);
+    this.lintRemediationService = createLintRemediationService(db);
   }
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {
@@ -145,6 +188,9 @@ export class KnowledgeQueryService {
       requestPayload: payload
     });
     const projectId = optionalString(payload, "projectId") || context.projectId || "default_project";
+    if (GOVERNANCE_TOOLS.has(toolName)) {
+      return this.runGovernanceTool(toolName, payload, context, projectId, started, span);
+    }
     const release = await this.releaseService.getCurrent(projectId);
     if (!release) {
       const error = new Error("No current published release. Publish a release before using Knowledge MCP tools.");
@@ -217,6 +263,73 @@ export class KnowledgeQueryService {
       });
       await span?.fail(error, { releaseId: release.releaseId, hitComponentIds, qualityFlags });
       throw error;
+    }
+  }
+
+  private async runGovernanceTool(
+    toolName: string,
+    payload: Record<string, unknown>,
+    context: KnowledgeQueryContext,
+    projectId: string,
+    started: number,
+    span: ReturnType<NonNullable<DiagnosticLogger["startSpan"]>> | undefined,
+  ): Promise<KnowledgeEnvelope<any>> {
+    const release = await this.releaseService.getCurrent(projectId);
+    let status: "hit" | "miss" | "error" = "error";
+    let hitComponentIds: string[] = [];
+    try {
+      const toolResult = await this.executeGovernanceTool(projectId, toolName, payload, context);
+      hitComponentIds = uniqueSorted(toolResult.componentIds);
+      status = toolResult.forceHit || hitComponentIds.length > 0 ? "hit" : "miss";
+      const envelope = await this.governanceEnvelope(toolName, release, toolResult.result, hitComponentIds, toolResult.artifactIds ?? []);
+      await this.writeAudit({
+        context,
+        projectId,
+        toolName,
+        releaseId: release?.releaseId ?? "",
+        payload,
+        hitComponentIds,
+        qualityFlags: [],
+        status,
+        latencyMs: Date.now() - started,
+      });
+      await span?.complete({ releaseId: release?.releaseId ?? "", status, hitComponentIds, latencyMs: Date.now() - started });
+      return envelope;
+    } catch (error) {
+      await this.writeAudit({
+        context,
+        projectId,
+        toolName,
+        releaseId: release?.releaseId ?? "",
+        payload,
+        hitComponentIds,
+        qualityFlags: [],
+        status: "error",
+        latencyMs: Date.now() - started,
+      });
+      await span?.fail(error, { releaseId: release?.releaseId ?? "", hitComponentIds });
+      throw error;
+    }
+  }
+
+  private async executeGovernanceTool(projectId: string, toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    switch (toolName) {
+      case "kb_get_flywheel_status":
+        return this.kbGetFlywheelStatus(projectId);
+      case "kb_submit_correction":
+        return this.kbSubmitCorrection(projectId, payload, context);
+      case "kb_apply_correction":
+        return this.kbApplyCorrection(projectId, stringArg(payload, "correctionId"), context, optionalString(payload, "note"));
+      case "kb_start_incremental_check":
+        return this.kbStartIncrementalCheck(projectId, payload, context);
+      case "kb_publish_if_ready":
+        return this.kbPublishIfReady(projectId, payload, context);
+      case "kb_get_correction_status":
+        return this.kbGetCorrectionStatus(projectId, stringArg(payload, "correctionId"));
+      case "kb_govern_flywheel":
+        return this.kbGovernFlywheel(projectId, payload, context);
+      default:
+        throw new Error(`Unknown Knowledge MCP governance tool: ${toolName}`);
     }
   }
 
@@ -1066,6 +1179,548 @@ export class KnowledgeQueryService {
     return readFileSync(path, "utf8");
   }
 
+  private async kbGetFlywheelStatus(projectId: string): Promise<ToolResult> {
+    const [release, latestBuild, corrections, blockingTasks, lintSummary] = await Promise.all([
+      this.releaseService.getCurrent(projectId),
+      this.latestBuild(projectId),
+      this.listCorrections(projectId, 10),
+      this.countOpenBlockingTasks(projectId),
+      this.lintRemediationService.summary(projectId),
+    ]);
+    const pendingCorrections = corrections.filter((item) => item.state === "pending_review").length;
+    return {
+      result: {
+        projectId,
+        currentRelease: release ? releaseEnvelope(release) : null,
+        latestBuild,
+        corrections: {
+          pendingReview: pendingCorrections,
+          active: corrections.filter((item) => item.state === "active").length,
+          recent: corrections,
+        },
+        gates: {
+          blockingTasks,
+          pendingCorrections,
+          lintRemediation: lintSummary,
+          canAttemptPublish: Boolean(latestBuild?.packageId) && blockingTasks === 0 && pendingCorrections === 0 && lintSummary.pending === 0 && lintSummary.failed === 0 && lintSummary.needsHuman === 0,
+        },
+      },
+      componentIds: corrections.map((item) => item.componentId).filter(Boolean) as string[],
+      forceHit: true,
+    };
+  }
+
+  private async kbSubmitCorrection(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    const component = await this.resolveCorrectionComponent(projectId, optionalString(payload, "componentId"), optionalString(payload, "knowledgePath"));
+    if (!component) throw new Error("kb_submit_correction requires a componentId or knowledgePath that resolves to a staged asset component.");
+    const sourcePath = normalizeSourcePath(optionalString(payload, "sourcePath") || component.sourceRefs.find((ref) => ref.startsWith("gamedocs/") || ref.startsWith("gamedata/")) || "");
+    if (!sourcePath) throw new Error(`Component ${component.componentId} has no source reference; correction cannot be anchored.`);
+    const anchor = await this.resolveSourceCorrectionAnchor(component.packageId, sourcePath);
+    const suggestion = normalizeCorrectionValue(payload.suggestion);
+    const factKey = optionalString(payload, "factKey") || sourceCorrectionFactKey(suggestion);
+    const ruleId = optionalString(payload, "ruleId") || "mcp.agent_correction";
+    const pageType = optionalString(payload, "pageType") || component.kind;
+    const now = new Date().toISOString();
+    const correctionId = `corr_mcp_${slug(sourcePath)}_${slug(ruleId)}_${nanoid(6)}`;
+    const correctValue = {
+      ...suggestion,
+      factKey: factKey || suggestion.factKey,
+      issue: stringArg(payload, "issue"),
+      sourceContext: optionalString(payload, "sourceContext"),
+      queryContext: optionalString(payload, "queryContext"),
+      confidence: optionalNumber(payload, "confidence"),
+    };
+    await this.adapter.query(
+      `UPDATE source_corrections
+       SET state = 'retired', updated_at = $7
+       WHERE project_id = $1
+         AND bundle_id = $2
+         AND source_path = $3
+         AND rule_id = $4
+         AND page_type = $5
+         AND COALESCE(fact_key, '') = COALESCE($6, '')
+         AND state <> 'retired'`,
+      [projectId, anchor.bundleId, sourcePath, ruleId, pageType, factKey, now],
+    );
+    await this.adapter.query(
+      `INSERT INTO source_corrections (
+         correction_id, project_id, bundle_id, source_path, rule_id, page_type, fact_key,
+         bound_source_hash, state, correct_value, component_id, package_id,
+         example_id, task_id, created_by, created_at, updated_at
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending_review',$9,$10,$11,'','',$12,$13,$13)`,
+      [
+        correctionId,
+        projectId,
+        anchor.bundleId,
+        sourcePath,
+        ruleId,
+        pageType,
+        factKey || null,
+        anchor.contentHash,
+        JSON.stringify(correctValue),
+        component.componentId,
+        component.packageId,
+        context.sessionId ?? "mcp-agent",
+        now,
+      ],
+    );
+    await emitKnowledgeEvent(this.db, {
+      eventType: "correction.submitted",
+      entityType: "source_correction",
+      entityId: correctionId,
+      payload: { projectId, correctionId, componentId: component.componentId, packageId: component.packageId, sourcePath, ruleId, actor: context.sessionId ?? "mcp-agent" },
+    });
+    await emitKnowledgeEvent(this.db, {
+      eventType: "source_correction.created",
+      entityType: "source_correction",
+      entityId: correctionId,
+      payload: { projectId, correctionId, componentId: component.componentId, packageId: component.packageId, sourcePath, ruleId, state: "pending_review" },
+    });
+    return {
+      result: {
+        correctionId,
+        state: "pending_review",
+        message: "已提交修正建议；尚未改写发布知识。可继续调用 kb_apply_correction 激活后再做 scoped rebuild。",
+        component: componentSummary(component),
+        sourcePath,
+        ruleId,
+        pageType,
+        factKey: factKey || null,
+      },
+      componentIds: [component.componentId],
+      artifactIds: [component.artifactId],
+      forceHit: true,
+    };
+  }
+
+  private async kbApplyCorrection(projectId: string, correctionId: string, context: KnowledgeQueryContext, note = ""): Promise<ToolResult> {
+    const correction = await this.getCorrection(projectId, correctionId);
+    if (!correction) throw new Error(`Unknown correction in project ${projectId}: ${correctionId}`);
+    if (correction.state === "retired") throw new Error("Retired corrections cannot be applied.");
+    const currentHash = await this.findLatestSourceHash(correction.bundleId, correction.sourcePath);
+    if (!currentHash) throw new Error("当前资料版本中未找到该源文件，无法应用修正。");
+    const now = new Date().toISOString();
+    const { rows } = await this.adapter.query(
+      `UPDATE source_corrections
+       SET state = 'active', bound_source_hash = $3, updated_at = $4
+       WHERE project_id = $1 AND correction_id = $2
+       RETURNING *`,
+      [projectId, correctionId, currentHash, now],
+    );
+    const updated = sourceCorrectionRecord(rows[0]);
+    await emitKnowledgeEvent(this.db, {
+      eventType: "correction.applied",
+      entityType: "source_correction",
+      entityId: correctionId,
+      payload: { projectId, correctionId, componentId: updated.componentId, packageId: updated.packageId, sourcePath: updated.sourcePath, actor: context.sessionId ?? "mcp-agent", note },
+    });
+    await emitKnowledgeEvent(this.db, {
+      eventType: "source_correction.confirmed",
+      entityType: "source_correction",
+      entityId: correctionId,
+      payload: { projectId, correctionId, componentId: updated.componentId, sourcePath: updated.sourcePath, boundSourceHash: updated.boundSourceHash, actor: context.sessionId ?? "mcp-agent", note },
+    });
+    return { result: { correction: updated, message: "修正已激活为确定性覆盖；下一次 scoped rebuild 会把它注入中间态资产。" }, componentIds: updated.componentId ? [updated.componentId] : [], forceHit: true };
+  }
+
+  private async kbStartIncrementalCheck(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    const correctionId = optionalString(payload, "correctionId");
+    const correction = correctionId ? await this.getCorrection(projectId, correctionId) : null;
+    const componentId = correction?.componentId || optionalString(payload, "componentId");
+    if (!componentId) throw new Error("kb_start_incremental_check requires correctionId or componentId.");
+    const sourcePath = normalizeSourcePath(optionalString(payload, "sourcePath") || correction?.sourcePath || "");
+    const run = await this.builderService.startScopedRebuildForComponent({
+      componentId,
+      sourcePath,
+      requestedBy: context.sessionId ?? "mcp-agent",
+      traceId: context.traceId,
+      rebuildTaskId: correctionId ? `mcp:${correctionId}` : undefined,
+    });
+    await emitKnowledgeEvent(this.db, {
+      eventType: "lint.checked",
+      entityType: "build_run",
+      entityId: run.runId,
+      payload: { projectId, correctionId: correctionId || "", componentId, sourcePath, runId: run.runId, status: "started" },
+    });
+    return {
+      result: {
+        status: "started",
+        run,
+        correctionId: correctionId || "",
+        componentId,
+        sourcePath,
+        message: "已启动目标组件 scoped rebuild；构建完成后会重新计算 lint、证据、依赖和 trust。",
+      },
+      componentIds: [componentId],
+      forceHit: true,
+    };
+  }
+
+  private async kbPublishIfReady(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    const target = await this.resolvePublishTarget(projectId, optionalString(payload, "packageId"), optionalString(payload, "runId"));
+    if (!target) {
+      const result = await this.publishSkipped(projectId, "no_completed_build", [], context, { packageId: optionalString(payload, "packageId"), runId: optionalString(payload, "runId") });
+      return { result, componentIds: [], forceHit: true };
+    }
+    let release: ReleaseRecord | null = null;
+    try {
+      if (target.only) {
+        const revision = await this.releaseService.proposeRevisionDraftFromBuild({
+          packageId: target.packageId,
+          runId: target.runId,
+          requestedBy: context.sessionId ?? "mcp-agent",
+          only: target.only,
+        });
+        if (!revision.release) {
+          const result = await this.publishSkipped(projectId, revision.reason, [], context, { ...target });
+          return { result, componentIds: target.componentIds, forceHit: true };
+        }
+        release = revision.release;
+      } else {
+        release = await this.releaseService.createDraft({
+          version: await this.nextMcpReleaseVersion(projectId),
+          packageIds: [target.packageId],
+          projectId,
+          requestedBy: context.sessionId ?? "mcp-agent",
+          note: `MCP 自动发布检查：${target.runId}`,
+        });
+      }
+      const published = await this.releaseService.publish(release.releaseId, context.sessionId ?? "mcp-agent", { autoMode: Boolean(release.parentReleaseId) });
+      await emitKnowledgeEvent(this.db, {
+        eventType: "release.auto_publish_succeeded",
+        entityType: "release",
+        entityId: published.releaseId,
+        payload: { projectId, releaseId: published.releaseId, runId: target.runId, packageId: target.packageId, mode: "mcp_publish_if_ready" },
+      });
+      return { result: { status: "published", release: published, target }, componentIds: target.componentIds, forceHit: true };
+    } catch (error) {
+      const check = error instanceof AutoPublishEligibilityError ? error.check : null;
+      const result = await this.publishSkipped(projectId, error instanceof Error ? error.message : String(error), check?.reasonDetails ?? [], context, {
+        ...target,
+        releaseId: release?.releaseId ?? "",
+        autoPublishCheck: check,
+      });
+      return { result, componentIds: target.componentIds, forceHit: true };
+    }
+  }
+
+  private async kbGetCorrectionStatus(projectId: string, correctionId: string): Promise<ToolResult> {
+    const correction = await this.getCorrection(projectId, correctionId);
+    if (!correction) throw new Error(`Unknown correction in project ${projectId}: ${correctionId}`);
+    const { rows } = await this.adapter.query(
+      `SELECT event_id, event_type, entity_type, entity_id, payload_json, created_at
+       FROM knowledge_events
+       WHERE project_id = $1
+         AND (entity_id = $2 OR payload_json->>'correctionId' = $2)
+       ORDER BY created_at ASC`,
+      [projectId, correctionId],
+    );
+    const buildRunIds = rows.map((row) => String(jsonObject(row.payload_json).runId ?? "")).filter(Boolean);
+    return {
+      result: {
+        correction,
+        lifecycle: rows.map((row) => ({
+          eventId: String(row.event_id ?? ""),
+          type: String(row.event_type ?? ""),
+          entityType: String(row.entity_type ?? ""),
+          entityId: String(row.entity_id ?? ""),
+          payload: jsonObject(row.payload_json),
+          createdAt: String(row.created_at ?? ""),
+        })),
+        buildRunIds: uniqueSorted(buildRunIds),
+      },
+      componentIds: correction.componentId ? [correction.componentId] : [],
+      forceHit: true,
+    };
+  }
+
+  private async kbGovernFlywheel(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    const steps: Array<{ name: string; status: "completed" | "skipped"; result?: unknown; reason?: string }> = [];
+    const componentIds: string[] = [];
+    const artifactIds: string[] = [];
+    let correctionId = optionalString(payload, "correctionId");
+    let runId = optionalString(payload, "runId");
+
+    if (!correctionId) {
+      const submitted = await this.kbSubmitCorrection(projectId, payload, context);
+      correctionId = String((submitted.result as Record<string, unknown>).correctionId ?? "");
+      componentIds.push(...submitted.componentIds);
+      artifactIds.push(...(submitted.artifactIds ?? []));
+      steps.push({ name: "submit_correction", status: "completed", result: submitted.result });
+    } else {
+      const correction = await this.getCorrection(projectId, correctionId);
+      if (!correction) throw new Error(`Unknown correction in project ${projectId}: ${correctionId}`);
+      if (correction.componentId) componentIds.push(correction.componentId);
+      steps.push({ name: "submit_correction", status: "skipped", reason: "correctionId was provided" });
+    }
+
+    if (payload.apply === false) {
+      steps.push({ name: "apply_correction", status: "skipped", reason: "apply=false" });
+    } else {
+      const applied = await this.kbApplyCorrection(projectId, correctionId, context, optionalString(payload, "note") ?? "kb_govern_flywheel");
+      componentIds.push(...applied.componentIds);
+      artifactIds.push(...(applied.artifactIds ?? []));
+      steps.push({ name: "apply_correction", status: "completed", result: applied.result });
+    }
+
+    if (payload.check === false) {
+      steps.push({ name: "incremental_check", status: "skipped", reason: "check=false" });
+    } else {
+      const checked = await this.kbStartIncrementalCheck(projectId, { ...payload, correctionId }, context);
+      componentIds.push(...checked.componentIds);
+      artifactIds.push(...(checked.artifactIds ?? []));
+      runId = String(((checked.result as Record<string, unknown>).run as Record<string, unknown> | undefined)?.runId ?? runId ?? "");
+      steps.push({ name: "incremental_check", status: "completed", result: checked.result });
+    }
+
+    let finalStatus = "checked";
+    if (payload.publish === false) {
+      steps.push({ name: "publish_if_ready", status: "skipped", reason: "publish=false" });
+      finalStatus = "publish_skipped_by_request";
+    } else {
+      const published = await this.kbPublishIfReady(projectId, { ...payload, correctionId, runId }, context);
+      componentIds.push(...published.componentIds);
+      steps.push({ name: "publish_if_ready", status: "completed", result: published.result });
+      finalStatus = String((published.result as Record<string, unknown>).status ?? "publish_checked");
+    }
+
+    const result = {
+      status: finalStatus,
+      projectId,
+      correctionId,
+      runId,
+      steps,
+      boundary: {
+        stagedOnly: true,
+        publishedAssetsImmutable: true,
+        releaseChannelDirectWrite: false,
+      },
+      message: "飞轮治理已按统一 MCP 权限执行；发布只会在服务端门禁通过时生成新 revision。",
+    };
+    await emitKnowledgeEvent(this.db, {
+      eventType: "flywheel.governed",
+      entityType: "source_correction",
+      entityId: correctionId,
+      payload: { projectId, correctionId, runId, status: finalStatus, componentIds: uniqueSorted(componentIds), actor: context.sessionId ?? "mcp-agent" },
+    });
+
+    return {
+      result,
+      componentIds: uniqueSorted(componentIds),
+      artifactIds: uniqueSorted(artifactIds),
+      forceHit: true,
+    };
+  }
+
+  private async resolveCorrectionComponent(projectId: string, componentId?: string, knowledgePath?: string): Promise<AssetComponent | null> {
+    const params: unknown[] = [projectId];
+    const where = ["p.project_id = $1"];
+    if (componentId) {
+      params.push(componentId);
+      where.push(`c.component_id = $${params.length}`);
+    } else if (knowledgePath) {
+      const normalized = normalize(knowledgePath);
+      params.push(knowledgePath, normalized, `%${knowledgePath}%`);
+      where.push(`(
+        c.legacy_path = $${params.length - 2}
+        OR c.artifact_id = $${params.length - 2}
+        OR c.title = $${params.length - 2}
+        OR lower(c.legacy_path) = $${params.length - 1}
+        OR lower(c.artifact_id) = $${params.length - 1}
+        OR lower(c.title) = $${params.length - 1}
+        OR c.legacy_path ILIKE $${params.length}
+        OR c.artifact_id ILIKE $${params.length}
+        OR c.title ILIKE $${params.length}
+        OR c.source_refs::text ILIKE $${params.length}
+      )`);
+    } else {
+      return null;
+    }
+    const { rows } = await this.adapter.query(
+      `SELECT c.*
+       FROM asset_components c
+       JOIN asset_packages p ON p.package_id = c.package_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY p.created_at DESC, c.component_id
+       LIMIT 1`,
+      params,
+    );
+    return rows.length ? mapComponent(rows[0]) : null;
+  }
+
+  private async resolveSourceCorrectionAnchor(packageId: string, sourcePath: string): Promise<{ bundleId: string; contentHash: string }> {
+    const { rows: packageRows } = await this.adapter.query("SELECT source_version_ids FROM asset_packages WHERE package_id = $1", [packageId]);
+    const versionIds = packageRows.length ? jsonArray(packageRows[0].source_version_ids) : [];
+    if (versionIds.length === 0) return { bundleId: "default", contentHash: "" };
+    const placeholders = versionIds.map((_, index) => `$${index + 2}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT v.bundle_id, COALESCE(sf.content_hash, '') AS content_hash
+       FROM source_bundle_versions v
+       LEFT JOIN source_files sf ON sf.version_id = v.version_id AND sf.logical_path = $1
+       WHERE v.version_id IN (${placeholders})
+       ORDER BY v.created_at DESC, v.version_id DESC
+       LIMIT 1`,
+      [sourcePath, ...versionIds],
+    );
+    if (!rows.length) return { bundleId: "default", contentHash: "" };
+    return { bundleId: String(rows[0].bundle_id ?? "default"), contentHash: String(rows[0].content_hash ?? "") };
+  }
+
+  private async findLatestSourceHash(bundleId: string, sourcePath: string): Promise<string> {
+    const { rows } = await this.adapter.query(
+      `SELECT sf.content_hash
+       FROM source_bundle_versions v
+       JOIN source_files sf ON sf.version_id = v.version_id
+       WHERE v.bundle_id = $1 AND sf.logical_path = $2
+       ORDER BY v.created_at DESC, v.version_id DESC
+       LIMIT 1`,
+      [bundleId, sourcePath],
+    );
+    return rows.length ? String(rows[0].content_hash ?? "") : "";
+  }
+
+  private async getCorrection(projectId: string, correctionId: string): Promise<SourceCorrectionView | null> {
+    const { rows } = await this.adapter.query("SELECT * FROM source_corrections WHERE project_id = $1 AND correction_id = $2", [projectId, correctionId]);
+    return rows.length ? sourceCorrectionRecord(rows[0]) : null;
+  }
+
+  private async listCorrections(projectId: string, limit: number): Promise<SourceCorrectionView[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM source_corrections
+       WHERE project_id = $1
+       ORDER BY updated_at DESC, created_at DESC
+       LIMIT $2`,
+      [projectId, limit],
+    );
+    return rows.map(sourceCorrectionRecord);
+  }
+
+  private async latestBuild(projectId: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT run_id, project_id, source_version_id, package_id, status, current_stage, completed_stages, started_at, finished_at, error, config_json
+       FROM knowledge_build_runs
+       WHERE project_id = $1
+       ORDER BY started_at DESC, run_id DESC
+       LIMIT 1`,
+      [projectId],
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    return {
+      runId: String(row.run_id ?? ""),
+      projectId: String(row.project_id ?? ""),
+      sourceVersionId: String(row.source_version_id ?? ""),
+      packageId: row.package_id ? String(row.package_id) : null,
+      status: String(row.status ?? ""),
+      currentStage: String(row.current_stage ?? ""),
+      completedStages: jsonArray(row.completed_stages),
+      startedAt: String(row.started_at ?? ""),
+      finishedAt: row.finished_at ? String(row.finished_at) : null,
+      error: String(row.error ?? ""),
+      config: jsonObject(row.config_json),
+    };
+  }
+
+  private async countOpenBlockingTasks(projectId: string): Promise<number> {
+    const { rows } = await this.adapter.query(
+      `SELECT COUNT(*)::int AS c
+       FROM review_tasks t
+       JOIN asset_packages p ON p.package_id = t.package_id
+       WHERE p.project_id = $1 AND t.status = 'open' AND t.severity = 'blocking'`,
+      [projectId],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  private async resolvePublishTarget(projectId: string, packageId?: string, runId?: string): Promise<PublishTarget | null> {
+    const params: unknown[] = [projectId];
+    const where = ["r.project_id = $1", "r.status = 'completed'", "r.package_id IS NOT NULL"];
+    if (packageId) {
+      params.push(packageId);
+      where.push(`r.package_id = $${params.length}`);
+    }
+    if (runId) {
+      params.push(runId);
+      where.push(`r.run_id = $${params.length}`);
+    }
+    const { rows } = await this.adapter.query(
+      `SELECT r.run_id, r.package_id, r.config_json, p.source_version_ids
+       FROM knowledge_build_runs r
+       JOIN asset_packages p ON p.package_id = r.package_id
+       WHERE ${where.join(" AND ")}
+       ORDER BY r.finished_at DESC NULLS LAST, r.started_at DESC
+       LIMIT 1`,
+      params,
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    const pkgId = String(row.package_id ?? "");
+    const { rows: components } = await this.adapter.query("SELECT component_id FROM asset_components WHERE package_id = $1 ORDER BY component_id", [pkgId]);
+    return {
+      runId: String(row.run_id ?? ""),
+      packageId: pkgId,
+      only: String(jsonObject(row.config_json).only ?? ""),
+      componentIds: components.map((component) => String(component.component_id ?? "")).filter(Boolean),
+    };
+  }
+
+  private async publishSkipped(
+    projectId: string,
+    reason: string,
+    reasonDetails: unknown[],
+    context: KnowledgeQueryContext,
+    target: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    await emitKnowledgeEvent(this.db, {
+      eventType: "publish.skipped",
+      entityType: "release",
+      entityId: String(target.releaseId ?? target.runId ?? ""),
+      payload: { projectId, reason, reasonDetails, target, actor: context.sessionId ?? "mcp-agent", mode: "mcp_publish_if_ready" },
+    });
+    await emitKnowledgeEvent(this.db, {
+      eventType: "release.auto_publish_skipped",
+      entityType: "release",
+      entityId: String(target.releaseId ?? target.runId ?? ""),
+      payload: { projectId, reason, reasonDetails, ...target, mode: "mcp_publish_if_ready" },
+    });
+    return { status: "skipped", reason, reasonDetails, target };
+  }
+
+  private async nextMcpReleaseVersion(projectId: string): Promise<string> {
+    const prefix = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/gu, ".");
+    const { rows } = await this.adapter.query(
+      "SELECT COUNT(*)::int AS c FROM releases WHERE project_id = $1 AND version LIKE $2",
+      [projectId, `${prefix}.mcp.%`],
+    );
+    return `${prefix}.mcp.${String(Number(rows[0]?.c ?? 0) + 1).padStart(3, "0")}`;
+  }
+
+  private async governanceEnvelope<T>(
+    toolName: string,
+    release: ReleaseRecord | null,
+    result: T,
+    componentIds: string[],
+    artifactIds: string[],
+  ): Promise<KnowledgeEnvelope<T>> {
+    const trust = release ? await this.trustSummaryForComponents(release, componentIds) : { averageScore: null, minScore: null, summary: emptyTrustSummary(null), components: [] };
+    return {
+      contract: envelopeContract(toolName, []),
+      release: release ? releaseEnvelope(release) : { releaseId: "", version: "", publishedAt: null, manifestHash: "" },
+      result,
+      qualityFlags: [],
+      trust,
+      trace: {
+        releaseId: release?.releaseId ?? "",
+        componentIds,
+        artifactIds,
+        sourceVersionIds: release ? releaseSourceVersionIds(release) : [],
+        evidenceIds: [],
+      },
+    };
+  }
+
   private async evidenceRecordsForComponents(componentIds: string[]): Promise<Record<string, unknown>[]> {
     if (componentIds.length === 0) return [];
     const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
@@ -1094,6 +1749,37 @@ export class KnowledgeQueryService {
     return new Map([...idsByComponent.entries()].map(([componentId, ids]) => [componentId, ids.size] as const));
   }
 
+  private async negativeFeedbackCountForComponents(projectId: string, componentIds: string[]): Promise<number> {
+    if (componentIds.length === 0) return 0;
+    const { rows } = await this.adapter.query(
+      `SELECT COUNT(*)::int AS c
+       FROM agent_events
+       WHERE project_id = $1
+         AND feedback_type IN ('low_quality_hit', 'evidence_insufficient', 'bad_hit', 'stale_knowledge', 'knowledge_gap')
+         AND hit_component_ids ?| $2::text[]`,
+      [projectId, componentIds],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  private async correctionStatusForComponents(projectId: string, componentIds: string[]): Promise<"none" | "pending" | "applied" | "published"> {
+    if (componentIds.length === 0) return "none";
+    const placeholders = componentIds.map((_, index) => `$${index + 2}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT state, COUNT(*)::int AS c
+       FROM source_corrections
+       WHERE project_id = $1
+         AND component_id IN (${placeholders})
+         AND state <> 'retired'
+       GROUP BY state`,
+      [projectId, ...componentIds],
+    );
+    const states = new Set(rows.map((row) => String(row.state ?? "")));
+    if (states.has("pending_review")) return "pending";
+    if (states.has("active")) return "applied";
+    return "none";
+  }
+
   private async artifactIdsForComponents(componentIds: string[]): Promise<string[]> {
     if (componentIds.length === 0) return [];
     const placeholders = componentIds.map((_, index) => `$${index + 1}`).join(",");
@@ -1102,9 +1788,21 @@ export class KnowledgeQueryService {
   }
 
   private async trustSummaryForComponents(release: ReleaseRecord, componentIds: string[]): Promise<KnowledgeEnvelope["trust"]> {
-    if (componentIds.length === 0) return { averageScore: null, minScore: null, components: [] };
+    if (componentIds.length === 0) {
+      return {
+        averageScore: null,
+        minScore: null,
+        summary: emptyTrustSummary(release),
+        components: [],
+      };
+    }
     const components = await this.componentsByIds(componentIds);
     const okfTrust = this.okfTrustByComponent(release, componentIds);
+    const evidenceCounts = await this.evidenceCountsForComponents(release, componentIds);
+    const [negativeFeedbackCount, correctionStatus] = await Promise.all([
+      this.negativeFeedbackCountForComponents(release.projectId, componentIds),
+      this.correctionStatusForComponents(release.projectId, componentIds),
+    ]);
     const out = components.map((component) => ({
       componentId: component.componentId,
       artifactId: component.artifactId,
@@ -1116,6 +1814,17 @@ export class KnowledgeQueryService {
     return {
       averageScore: scores.length ? round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : null,
       minScore: scores.length ? Math.min(...scores) : null,
+      summary: {
+        level: trustLevel(scores.length ? Math.min(...scores) : null),
+        evidenceCount: [...evidenceCounts.values()].reduce((sum, count) => sum + count, 0),
+        sourceRefs: uniqueSorted(components.flatMap((component) => component.sourceRefs)),
+        lastReviewedAt: latestIso(out.map((component) => component.trust?.lastTrustedAuditAt ?? "")),
+        lastPublishedAt: release.publishedAt,
+        negativeFeedbackCount,
+        lintStatus: lintStatusFromTrust(out.map((component) => component.trust ?? null)),
+        correctionStatus,
+        ruleProfileHash: ruleProfileHashFromRelease(release),
+      },
       components: out,
     };
   }
@@ -1198,6 +1907,51 @@ function releaseEnvelope(release: ReleaseRecord) {
   };
 }
 
+function emptyTrustSummary(release: ReleaseRecord | null): NonNullable<KnowledgeEnvelope["trust"]["summary"]> {
+  return {
+    level: "unknown",
+    evidenceCount: 0,
+    sourceRefs: [],
+    lastReviewedAt: null,
+    lastPublishedAt: release?.publishedAt ?? null,
+    negativeFeedbackCount: 0,
+    lintStatus: "unknown",
+    correctionStatus: "none",
+    ruleProfileHash: release ? ruleProfileHashFromRelease(release) : "",
+  };
+}
+
+function trustLevel(minScore: number | null): "high" | "medium" | "low" | "unknown" {
+  if (minScore === null) return "unknown";
+  if (minScore >= 0.8) return "high";
+  if (minScore >= 0.6) return "medium";
+  return "low";
+}
+
+function lintStatusFromTrust(trustScores: Array<TrustScore | null>): "passed" | "warning" | "failed" | "unknown" {
+  const known = trustScores.filter((score): score is TrustScore => Boolean(score));
+  if (known.length === 0) return "unknown";
+  if (known.some((score) => score.status === "blocked")) return "failed";
+  if (known.some((score) => score.status === "needs_review" || score.status === "usable_with_risk")) return "warning";
+  return "passed";
+}
+
+function latestIso(values: string[]): string | null {
+  const sorted = values.filter(Boolean).sort();
+  return sorted.length ? sorted[sorted.length - 1] : null;
+}
+
+function ruleProfileHashFromRelease(release: ReleaseRecord): string {
+  const manifest = release.manifest as Record<string, unknown>;
+  const qualityGate = release.qualityGate as Record<string, unknown>;
+  return String(
+    manifest.activeRuleProfileHash
+      ?? manifest.legislationProfileHash
+      ?? qualityGate.legislationProfileHash
+      ?? "",
+  );
+}
+
 function envelopeContract(toolName: string, evidenceIds: string[]): KnowledgeEnvelope["contract"] {
   return {
     schemaVersion: "knowledge-envelope/v1",
@@ -1241,6 +1995,12 @@ function optionalString(payload: Record<string, unknown>, ...keys: string[]): st
   return undefined;
 }
 
+function optionalNumber(payload: Record<string, unknown>, key: string): number | null {
+  const value = payload[key];
+  const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
 function numberArg(payload: Record<string, unknown>, fallback: number, ...keys: string[]): number {
   for (const key of keys) {
     const value = payload[key];
@@ -1257,6 +2017,57 @@ function boundedLimitArg(value: number, fallback: number, max: number): number {
 
 function objectArg(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function normalizeCorrectionValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : { value };
+}
+
+function normalizeSourcePath(value: string): string {
+  return value.trim().replace(/\\/gu, "/").replace(/^processed\/parsed\//u, "");
+}
+
+function sourceCorrectionFactKey(value: Record<string, unknown>): string | null {
+  const direct = String(value.factKey ?? value.fact_key ?? value.field ?? value.key ?? "").trim();
+  return direct || null;
+}
+
+function sourceCorrectionRecord(row: Record<string, unknown>): SourceCorrectionView {
+  return {
+    correctionId: String(row.correction_id ?? ""),
+    projectId: String(row.project_id ?? "default_project"),
+    bundleId: String(row.bundle_id ?? ""),
+    sourcePath: String(row.source_path ?? ""),
+    ruleId: String(row.rule_id ?? ""),
+    pageType: String(row.page_type ?? ""),
+    factKey: row.fact_key ? String(row.fact_key) : null,
+    boundSourceHash: String(row.bound_source_hash ?? ""),
+    state: String(row.state ?? ""),
+    correctValue: jsonObject(row.correct_value),
+    componentId: row.component_id ? String(row.component_id) : null,
+    packageId: row.package_id ? String(row.package_id) : null,
+    exampleId: String(row.example_id ?? ""),
+    taskId: String(row.task_id ?? ""),
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? ""),
+  };
+}
+
+function componentSummary(component: AssetComponent): Record<string, unknown> {
+  return {
+    componentId: component.componentId,
+    packageId: component.packageId,
+    artifactId: component.artifactId,
+    title: component.title,
+    kind: component.kind,
+    legacyPath: component.legacyPath,
+    sourceRefs: component.sourceRefs,
+  };
+}
+
+function slug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "") || "item";
 }
 
 function searchCard(item: OkfSearchResultItem, index: number, evidenceCount: number): Record<string, unknown> {

@@ -904,7 +904,7 @@ function buildAutoPublishReasonDetails(input: {
           label: "变更组件仍有阻断任务",
           severity: "blocking",
           description: "至少一个本次新增或修改的组件还有 open blocking 审核任务，发布后会把未解决问题暴露给 Agent。",
-          action: "进入审核中心处理这些 blocking 任务，或确认规则不适用后再重新发布。",
+          action: "进入异常收件箱处理这些 blocking 任务，或确认规则不适用后再重新发布。",
           count: input.blockingTaskIds.length,
           sampleIds: input.blockingTaskIds.slice(0, 8),
         };
@@ -934,7 +934,7 @@ function buildAutoPublishReasonDetails(input: {
           label: "Knowledge Lint 治理未完成",
           severity: input.lintRemediation.failed > 0 || input.lintRemediation.needsHuman > 0 ? "blocking" : "warning",
           description: "当前项目还有自动治理中的 Lint 问题，或存在需要人工判断/失败的治理项；自动发布需要先让治理队列收敛。",
-          action: "在审核中心查看 Knowledge Lint 自动治理链路；等待 running 完成，处理 failed/needs_human 后再发布。",
+          action: "在异常收件箱查看 Knowledge Lint 自动治理链路；等待 running 完成，处理 failed/needs_human 后再发布。",
           count: input.lintRemediation.pending + input.lintRemediation.failed + input.lintRemediation.needsHuman,
           sampleIds: [
             `running=${input.lintRemediation.byStatus.running}`,

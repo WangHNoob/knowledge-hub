@@ -98,6 +98,43 @@ const MCP_TOOL_SPECS: McpToolSpec[] = [
     { name: "query", label: "查询（可选）", type: "text" },
   ] },
   { name: "kb_get_release", title: "读取发布", fields: [] },
+  { name: "kb_get_flywheel_status", title: "飞轮状态", fields: [] },
+  { name: "kb_submit_correction", title: "提交修正建议", fields: [
+    { name: "componentId", label: "组件 ID", type: "text", placeholder: "优先使用 MCP 命中的 componentId" },
+    { name: "knowledgePath", label: "知识路径", type: "text", placeholder: "没有组件 ID 时填写 wiki 路径/标题/来源路径" },
+    { name: "issue", label: "问题说明", type: "textarea", required: true, placeholder: "哪里错了、缺了或不可信" },
+    { name: "suggestion", label: "修正内容", type: "textarea", required: true, placeholder: "可填文本，也可填 JSON 对象" },
+    { name: "sourceContext", label: "来源上下文", type: "textarea" },
+    { name: "queryContext", label: "查询上下文", type: "textarea" },
+    { name: "confidence", label: "置信度", type: "number", placeholder: "0-1" },
+  ] },
+  { name: "kb_apply_correction", title: "应用修正", fields: [
+    { name: "correctionId", label: "修正 ID", type: "text", required: true },
+    { name: "note", label: "备注", type: "text" },
+  ] },
+  { name: "kb_start_incremental_check", title: "增量检查", fields: [
+    { name: "correctionId", label: "修正 ID", type: "text", placeholder: "优先填写 correctionId" },
+    { name: "componentId", label: "组件 ID", type: "text", placeholder: "没有 correctionId 时填写 componentId" },
+    { name: "sourcePath", label: "来源路径", type: "text" },
+  ] },
+  { name: "kb_publish_if_ready", title: "门禁通过则发布", fields: [
+    { name: "packageId", label: "资产包 ID", type: "text", placeholder: "可选，默认最新完成构建" },
+    { name: "runId", label: "构建 ID", type: "text", placeholder: "可选，默认最新完成构建" },
+  ] },
+  { name: "kb_get_correction_status", title: "修正链路状态", fields: [
+    { name: "correctionId", label: "修正 ID", type: "text", required: true },
+  ] },
+  { name: "kb_govern_flywheel", title: "一键治理飞轮", fields: [
+    { name: "correctionId", label: "已有修正 ID", type: "text", placeholder: "有 correctionId 时可跳过新建修正" },
+    { name: "componentId", label: "组件 ID", type: "text", placeholder: "没有 correctionId 时优先填写" },
+    { name: "knowledgePath", label: "知识路径", type: "text", placeholder: "组件 ID 不明确时填写 wiki 路径/标题/来源路径" },
+    { name: "issue", label: "问题说明", type: "textarea", placeholder: "新建修正时填写：哪里错了、缺了或不可信" },
+    { name: "suggestion", label: "修正内容", type: "textarea", placeholder: "新建修正时填写：可填文本，也可填 JSON 对象" },
+    { name: "sourceContext", label: "来源上下文", type: "textarea" },
+    { name: "queryContext", label: "查询上下文", type: "textarea" },
+    { name: "confidence", label: "置信度", type: "number", placeholder: "0-1" },
+    { name: "note", label: "备注", type: "text" },
+  ] },
 ];
 
 function specForTool(name: string): McpToolSpec {
@@ -123,6 +160,12 @@ function buildPayload(spec: McpToolSpec, form: Record<string, string>, whereRows
     if (field.type === "number") {
       const parsed = Number(raw);
       if (!Number.isNaN(parsed)) payload[field.name] = parsed;
+    } else if (field.name === "suggestion") {
+      try {
+        payload[field.name] = JSON.parse(raw);
+      } catch {
+        payload[field.name] = raw;
+      }
     } else {
       payload[field.name] = raw;
     }
@@ -207,7 +250,7 @@ export function AgentFeedback() {
   const latestFlag = eventRows.find((event) => event.qualityFlags.length > 0)?.qualityFlags[0] ?? "";
   const connectInfo = connect.data;
   return (
-    <Page title="MCP 控制台" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。Agent 通过 Knowledge MCP 只读该项目 current release；审计和反馈会回流为维护任务。`}>
+    <Page title="MCP 控制台" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。Agent 查询读取 current release，治理写入中间态修正并交给服务端门禁发布。`}>
       <Tabs
         active={tab}
         onChange={setTab}
@@ -233,11 +276,11 @@ export function AgentFeedback() {
           </button>
           <button type="button" className="flow-card" onClick={() => setTab("feedback")}>
             <strong>2. 查看回流</strong>
-            <span>miss 或低质量命中会沉淀为反馈记录，并同步进入审核中心。</span>
+            <span>miss 或低质量命中会沉淀为反馈记录，只有自动化无法处理时才进入异常收件箱。</span>
           </button>
           <button type="button" className="flow-card" onClick={() => navigate("review")}>
             <strong>3. 处理任务</strong>
-            <span>回到审核中心处理证据、质量或缺资产问题，再重新发布验证。</span>
+            <span>进入异常收件箱处理证据、质量或缺资产问题，再重新发布验证。</span>
           </button>
         </div>
       </section>
@@ -291,13 +334,23 @@ export function AgentFeedback() {
                 ) : (
                   <label className="field-label" key={field.name}>
                     {field.label}{field.required && <span className="required-mark"> *</span>}
-                    <input
-                      type={field.type === "number" ? "number" : "text"}
-                      value={form[field.name] ?? ""}
-                      placeholder={field.placeholder}
-                      spellCheck={false}
-                      onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))}
-                    />
+                    {field.type === "textarea" ? (
+                      <textarea
+                        value={form[field.name] ?? ""}
+                        placeholder={field.placeholder}
+                        spellCheck={false}
+                        rows={3}
+                        onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))}
+                      />
+                    ) : (
+                      <input
+                        type={field.type === "number" ? "number" : "text"}
+                        value={form[field.name] ?? ""}
+                        placeholder={field.placeholder}
+                        spellCheck={false}
+                        onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))}
+                      />
+                    )}
                     {field.hint && <small className="field-hint">{field.hint}</small>}
                   </label>
                 ))}
@@ -782,14 +835,16 @@ function McpConnectPanel({ info }: { info: McpConnectInfo }) {
     `KNOWLEDGE_HUB_MCP_URL=${info.url}`,
     `KNOWLEDGE_HUB_MCP_AUTHORIZATION=${bearer}`,
   ].join("\n");
+  const projectId = info.project?.projectId ?? info.currentUser.currentProjectId ?? "default_project";
+  const toolPayload = { projectId };
   return (
     <section className="mcp-panel">
       <div className="detail-head">
         <div>
           <h2>Streamable HTTP 连接</h2>
-          <p>部署到服务器后，外部 Agent 推荐用这个入口连接；工具只读取当前发布版本，反馈会回流到审核中心。</p>
+          <p>部署到服务器后，外部 Agent 推荐用这个入口连接；查询读取 current release，治理工具只操作中间态 correction / scoped rebuild / 发布门禁。</p>
         </div>
-        <Badge label="streamable http" tone="ok" />
+        <Badge label="统一 MCP 能力 · streamable http" tone="ok" />
       </div>
 
       <div className="mcp-connect-grid">
@@ -806,14 +861,30 @@ function McpConnectPanel({ info }: { info: McpConnectInfo }) {
         <div className="mcp-connect-card">
           <span>当前账号</span>
           <code>{info.currentUser.username} · {info.currentUser.role}</code>
-          <small>建议给 Agent 使用 developer/admin 账号；viewer 更适合只读查询。</small>
+          <small>MCP 不做消费/治理分层；安全边界由中间态修正、发布门禁和审计保证。</small>
+        </div>
+        <div className="mcp-connect-card">
+          <span>当前项目 payload</span>
+          <code>{JSON.stringify(toolPayload)}</code>
+          <CopyButton text={JSON.stringify(toolPayload, null, 2)} label="复制 payload" />
+        </div>
+      </div>
+
+      <div className="agent-diagnosis">
+        <div className="diagnosis-item">
+          <strong>统一能力</strong>
+          <span>{(info.capabilities?.unified ?? ["查询发布知识", "读取证据/可信度", "提交反馈", "提交并应用中间态修正", "启动 scoped 增量检查", "请求系统按门禁发布"]).join("、")}</span>
+        </div>
+        <div className="diagnosis-item">
+          <strong>硬边界</strong>
+          <span>{(info.capabilities?.hardBoundaries ?? ["不能直接修改已发布 OKF bundle", "不能直接修改历史 release", "不能直接切换 current channel"]).join("、")}；发布只能由服务端门禁生成新 revision。</span>
         </div>
       </div>
 
       <div className="mcp-connect-steps">
         <span><b>1</b><strong>确认已经发布知识包</strong><small>MCP 默认读取 current release；没有发布时查询会为空或报未发布。</small></span>
         <span><b>2</b><strong>在 Agent 中添加 MCP server</strong><small>选择 Streamable HTTP / Remote MCP，填入 URL 和 Authorization header。</small></span>
-        <span><b>3</b><strong>先跑 kb_get_release / kb_search</strong><small>确认 release、命中组件、可信度和证据都能返回。</small></span>
+        <span><b>3</b><strong>先跑 kb_get_release / kb_get_flywheel_status</strong><small>确认项目、发布、构建和 correction 门禁状态。</small></span>
       </div>
 
       <div className="mcp-config-block">
@@ -889,7 +960,7 @@ function FeedbackWorkbenchPanel({
       <div className="detail-head">
         <div>
           <h3>工作台待处理</h3>
-          <p>这些反馈已经被飞轮工作台判定为下一批优先复测或复核对象。</p>
+          <p>这些反馈已经被飞轮总览判定为下一批优先复测或复核对象。</p>
         </div>
         <Badge label={`${retestItems.length} 待复测`} tone={retestItems.length ? "warn" : "ok"} />
       </div>
@@ -926,7 +997,7 @@ function FeedbackWorkbenchPanel({
 function diagnosisForEnvelope(envelope: KnowledgeEnvelope): Array<{ title: string; body: string }> {
   const items: Array<{ title: string; body: string }> = [];
   if (envelope.trace.componentIds.length === 0) {
-    items.push({ title: "未命中资产", body: "这会形成 miss 反馈；下一步是在审核中心补候选资产或扩展索引词。" });
+    items.push({ title: "未命中资产", body: "这会形成 miss 反馈；下一步是在异常收件箱补候选资产或扩展索引词。" });
   } else {
     items.push({ title: "已命中资产", body: "trace 中的组件就是 Agent 实际消费的知识入口，可直接跳到资产详情复核来源。" });
   }
@@ -1022,7 +1093,7 @@ function AgentFeedbackCard({
         )}
         <div className="task-primary-actions">
           <button className="secondary-action" type="button" onClick={() => onRetest(insight)}>复测此查询</button>
-          <button className="secondary-action" type="button" onClick={() => onNavigateReview(event.taskId)}>去审核中心处理</button>
+          <button className="secondary-action" type="button" onClick={() => onNavigateReview(event.taskId)}>去异常收件箱处理</button>
           {insight.componentIds[0] && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(insight.componentIds[0])}>查看首个命中资产</button>}
         </div>
       </div>

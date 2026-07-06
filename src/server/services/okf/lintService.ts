@@ -342,7 +342,7 @@ function issuesFromTableDependencies(bundleDir: string): KnowledgeLintIssue[] {
         message: `${page.title} 的依赖段落包含未解析/待确认表述。`,
         okfPath: page.okfPath,
         componentId: page.componentId,
-        suggestedAction: "在审核中心确认依赖关系，正文和结构化 graph/table schema 对齐后重新发布。",
+        suggestedAction: "在异常收件箱确认依赖关系，正文和结构化 graph/table schema 对齐后重新发布。",
       });
     }
   }

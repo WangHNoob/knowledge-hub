@@ -1775,7 +1775,7 @@ function buildFlywheelRiskItems(input: {
       title: task.title,
       body: task.suggestedAction || task.description,
       code: task.componentId,
-      meta: "审核中心",
+      meta: "异常收件箱",
       view: "review",
       params: { taskId: task.taskId },
     }));
