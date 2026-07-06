@@ -157,6 +157,13 @@ export const knowledgeMcpTools: Array<{
     readOnly: true,
   },
   {
+    name: "kb_list_projects",
+    title: "List Projects",
+    description: "List Knowledge Hub game projects available to this MCP connection and show the current/default projectId.",
+    inputSchema: noArgs,
+    readOnly: true,
+  },
+  {
     name: "kb_get_flywheel_status",
     title: "Get Flywheel Status",
     description: "Read project flywheel status: current release, latest build, open exceptions, corrections, and auto-publish gates.",

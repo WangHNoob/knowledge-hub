@@ -18,6 +18,9 @@ describe("KnowledgeQueryService", () => {
     const { db, cleanup } = await createTestDb();
     try {
       const service = createKnowledgeQueryService(db, dataDir);
+      const projects = await service.runTool("kb_list_projects", {}, { sessionId: "test", agentRole: "planner" });
+      expect(projects.result.currentProjectId).toBe("default_project");
+      expect(projects.result.projects.some((project: { projectId: string }) => project.projectId === "default_project")).toBe(true);
       await expect(service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" }))
         .rejects.toThrow(/No current published release/i);
     } finally {

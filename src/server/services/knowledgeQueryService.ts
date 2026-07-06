@@ -13,6 +13,7 @@ import { createKbBuilderPipelineService } from "./kbBuilderService";
 import { createLintRemediationService } from "./lintRemediationService";
 import { emitKnowledgeEvent } from "./eventService";
 import { createSourceBundleService } from "./sourceBundleService";
+import { createProjectService } from "./projectService";
 import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
@@ -21,6 +22,7 @@ const GRAPH_TOOLS = new Set(["kb_get_entity", "kb_get_neighbors", "kb_list_entit
 const TABLE_TOOLS = new Set(["kb_get_page_tables", "kb_list_tables", "kb_get_table_schema", "kb_query_table", "kb_get_table_raw", "kb_validate_table", "kb_check_table_value"]);
 const REPORT_TOOLS = new Set(["kb_report_gap", "kb_report_bad_hit", "kb_report_stale"]);
 const GOVERNANCE_TOOLS = new Set([
+  "kb_list_projects",
   "kb_get_flywheel_status",
   "kb_submit_correction",
   "kb_apply_correction",
@@ -368,6 +370,8 @@ export class KnowledgeQueryService {
 
   private async executeGovernanceTool(projectId: string, toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
     switch (toolName) {
+      case "kb_list_projects":
+        return this.kbListProjects(projectId);
       case "kb_get_flywheel_status":
         return this.kbGetFlywheelStatus(projectId);
       case "kb_submit_correction":
@@ -1282,6 +1286,25 @@ export class KnowledgeQueryService {
     const path = candidates.find((candidate) => existsSync(candidate));
     if (!path) throw new Error(`Artifact file not found for component ${component.componentId}: ${component.storageUri}`);
     return readFileSync(path, "utf8");
+  }
+
+  private async kbListProjects(currentProjectId: string): Promise<ToolResult> {
+    const projects = await createProjectService(this.db).listProjects();
+    return {
+      result: {
+        currentProjectId,
+        projects: projects.map((project) => ({
+          projectId: project.projectId,
+          name: project.name,
+          description: project.description,
+          status: project.status,
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+        })),
+      },
+      componentIds: [],
+      forceHit: true,
+    };
   }
 
   private async kbGetFlywheelStatus(projectId: string): Promise<ToolResult> {
