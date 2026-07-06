@@ -152,8 +152,12 @@ export const knowledgeMcpTools: Array<{
   {
     name: "kb_get_release",
     title: "Get Release",
-    description: "Read the current published release summary. Pass includeManifest=true only when the full frozen manifest is needed.",
-    inputSchema: z.object({ ...contextFields, includeManifest: z.boolean().optional().describe("Return the full frozen release manifest. Defaults to false to keep MCP responses small.") }).passthrough(),
+    description: "Read the current published release summary. includeManifest=true returns a bounded manifest preview, not the full frozen manifest, to keep MCP responses small.",
+    inputSchema: z.object({
+      ...contextFields,
+      includeManifest: z.boolean().optional().describe("Return a bounded frozen manifest preview. Defaults to false to keep MCP responses small."),
+      manifestLimit: z.number().int().positive().max(200).optional().describe("Maximum number of manifest sample entries to return when includeManifest=true. Defaults to 30."),
+    }).passthrough(),
     readOnly: true,
   },
   {

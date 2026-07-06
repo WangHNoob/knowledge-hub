@@ -4,11 +4,11 @@ import { isAbsolute, join, relative } from "node:path";
 import { nanoid } from "nanoid";
 import xlsx from "xlsx";
 
-import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, ReleaseRecord, TrustScore } from "../types";
+import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, KnowledgeTrace, ReleaseRecord, TrustScore } from "../types";
 import { jsonArray, jsonObject, mapComponent, mapPackage } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createFeedbackService, type FeedbackService, type FeedbackType } from "./feedbackService";
-import { AutoPublishEligibilityError, createReleaseService } from "./releaseService";
+import { AutoPublishEligibilityError, createReleaseService, type AutoPublishCheck } from "./releaseService";
 import { createKbBuilderPipelineService } from "./kbBuilderService";
 import { createLintRemediationService } from "./lintRemediationService";
 import { emitKnowledgeEvent } from "./eventService";
@@ -31,6 +31,7 @@ const GOVERNANCE_TOOLS = new Set([
   "kb_get_correction_status",
   "kb_govern_flywheel",
 ]);
+const MCP_ENVELOPE_DETAIL_LIMIT = 20;
 
 export interface KnowledgeQueryContext {
   sessionId?: string;
@@ -275,13 +276,15 @@ export class KnowledgeQueryService {
         release: releaseEnvelope(release),
         result: toolResult.result,
         qualityFlags,
-        trust,
+        trust: slimTrustEnvelope(trust),
         trace: {
           releaseId: release.releaseId,
-          componentIds: hitComponentIds,
-          artifactIds: toolResult.artifactIds ?? await this.artifactIdsForComponents(hitComponentIds),
-          sourceVersionIds: uniqueSorted([...(toolResult.sourceVersionIds ?? []), ...releaseSourceVersionIds(release)]),
-          evidenceIds,
+          ...slimTraceArrays({
+            componentIds: hitComponentIds,
+            artifactIds: toolResult.artifactIds ?? await this.artifactIdsForComponents(hitComponentIds),
+            sourceVersionIds: uniqueSorted([...(toolResult.sourceVersionIds ?? []), ...releaseSourceVersionIds(release)]),
+            evidenceIds,
+          }),
         },
       };
 
@@ -394,7 +397,7 @@ export class KnowledgeQueryService {
   private async executeTool(release: ReleaseRecord, toolName: string, payload: Record<string, unknown>): Promise<ToolResult> {
     switch (toolName) {
       case "kb_get_release":
-        return { result: releaseSummary(release, booleanArg(payload, false, "includeManifest", "manifest")), componentIds: [], forceHit: true };
+        return { result: releaseSummary(release, booleanArg(payload, false, "includeManifest", "manifest"), numberArg(payload, 30, "manifestLimit", "limit")), componentIds: [], forceHit: true };
       case "kb_search":
         return this.kbSearch(release, stringArg(payload, "query", "q"), numberArg(payload, 10, "limit", "topK", "top_k"));
       case "kb_resolve_topic":
@@ -1460,7 +1463,8 @@ export class KnowledgeQueryService {
     const correction = await this.getCorrection(projectId, correctionId);
     if (!correction) throw new Error(`Unknown correction in project ${projectId}: ${correctionId}`);
     if (correction.state === "retired") throw new Error("Retired corrections cannot be applied.");
-    const componentLevel = correction.sourcePath.startsWith("component:");
+    const componentLevel = correction.sourcePath.startsWith("component:")
+      || Boolean(correction.componentId && !sourceRefLooksLikeSource(correction.sourcePath));
     const currentHash = componentLevel ? correction.boundSourceHash : await this.findLatestSourceHash(correction.bundleId, correction.sourcePath);
     if (!componentLevel && !currentHash) throw new Error("当前资料版本中未找到该源文件，无法应用修正。");
     const now = new Date().toISOString();
@@ -1492,7 +1496,8 @@ export class KnowledgeQueryService {
     const correction = correctionId ? await this.getCorrection(projectId, correctionId) : null;
     const componentId = correction?.componentId || optionalString(payload, "componentId");
     if (!componentId) throw new Error("kb_start_incremental_check requires correctionId or componentId.");
-    const sourcePath = normalizeSourcePath(optionalString(payload, "sourcePath") || correction?.sourcePath || "");
+    const rawSourcePath = normalizeSourcePath(optionalString(payload, "sourcePath") || correction?.sourcePath || "");
+    const sourcePath = sourceRefLooksLikeSource(rawSourcePath) ? rawSourcePath : "";
     const run = await this.builderService.startScopedRebuildForComponent({
       componentId,
       sourcePath,
@@ -1536,7 +1541,7 @@ export class KnowledgeQueryService {
           only: target.only,
         });
         if (!revision.release) {
-          const result = await this.publishSkipped(projectId, revision.reason, [], context, { ...target });
+          const result = await this.publishSkipped(projectId, revision.reason, [], context, publishTargetSummary(target));
           return { result, componentIds: target.componentIds, forceHit: true };
         }
         release = revision.release;
@@ -1556,13 +1561,21 @@ export class KnowledgeQueryService {
         entityId: published.releaseId,
         payload: { projectId, releaseId: published.releaseId, runId: target.runId, packageId: target.packageId, mode: "mcp_publish_if_ready" },
       });
-      return { result: { status: "published", release: published, target }, componentIds: target.componentIds, forceHit: true };
+      return {
+        result: {
+          status: "published",
+          release: releaseSummary(published, false),
+          target: publishTargetSummary(target),
+        },
+        componentIds: target.componentIds,
+        forceHit: true,
+      };
     } catch (error) {
       const check = error instanceof AutoPublishEligibilityError ? error.check : null;
       const result = await this.publishSkipped(projectId, error instanceof Error ? error.message : String(error), check?.reasonDetails ?? [], context, {
-        ...target,
+        ...publishTargetSummary(target),
         releaseId: release?.releaseId ?? "",
-        autoPublishCheck: check,
+        autoPublishCheck: check ? slimAutoPublishCheck(check) : null,
       });
       return { result, componentIds: target.componentIds, forceHit: true };
     }
@@ -1959,7 +1972,7 @@ export class KnowledgeQueryService {
       entityId: String(target.releaseId ?? target.runId ?? ""),
       payload: { projectId, reason, reasonDetails, ...target, mode: "mcp_publish_if_ready" },
     });
-    return { status: "skipped", reason, reasonDetails, target };
+    return { status: "skipped", reason, reasonDetails, target: slimPublishTarget(target) };
   }
 
   private async nextMcpReleaseVersion(projectId: string): Promise<string> {
@@ -1984,13 +1997,15 @@ export class KnowledgeQueryService {
       release: release ? releaseEnvelope(release) : { releaseId: "", version: "", publishedAt: null, manifestHash: "" },
       result,
       qualityFlags: [],
-      trust,
+      trust: slimTrustEnvelope(trust),
       trace: {
         releaseId: release?.releaseId ?? "",
-        componentIds,
-        artifactIds,
-        sourceVersionIds: release ? releaseSourceVersionIds(release) : [],
-        evidenceIds: [],
+        ...slimTraceArrays({
+          componentIds,
+          artifactIds,
+          sourceVersionIds: release ? releaseSourceVersionIds(release) : [],
+          evidenceIds: [],
+        }),
       },
     };
   }
@@ -2181,7 +2196,33 @@ function releaseEnvelope(release: ReleaseRecord) {
   };
 }
 
-function releaseSummary(release: ReleaseRecord, includeManifest: boolean): Record<string, unknown> {
+function slimTrustEnvelope(trust: KnowledgeEnvelope["trust"], limit = MCP_ENVELOPE_DETAIL_LIMIT): KnowledgeEnvelope["trust"] {
+  const components = trust.components ?? [];
+  return {
+    ...trust,
+    components: components.slice(0, limit),
+    componentsSummary: {
+      count: components.length,
+      sampleComponentIds: components.slice(0, limit).map((component) => component.componentId),
+      truncated: components.length > limit,
+    },
+  };
+}
+
+function slimTraceArrays(trace: Omit<KnowledgeTrace, "releaseId">, limit = MCP_ENVELOPE_DETAIL_LIMIT): Omit<KnowledgeTrace, "releaseId"> {
+  return {
+    componentIds: trace.componentIds.slice(0, limit),
+    artifactIds: trace.artifactIds.slice(0, limit),
+    sourceVersionIds: trace.sourceVersionIds.slice(0, limit),
+    evidenceIds: trace.evidenceIds.slice(0, limit),
+    componentIdSummary: sampleArray(trace.componentIds, limit),
+    artifactIdSummary: sampleArray(trace.artifactIds, limit),
+    sourceVersionIdSummary: sampleArray(trace.sourceVersionIds, limit),
+    evidenceIdSummary: sampleArray(trace.evidenceIds, limit),
+  };
+}
+
+function releaseSummary(release: ReleaseRecord, includeManifest: boolean, manifestLimit = 30): Record<string, unknown> {
   const manifest = release.manifest as Record<string, unknown>;
   const okf = jsonObject(manifest.okf);
   return {
@@ -2215,7 +2256,170 @@ function releaseSummary(release: ReleaseRecord, includeManifest: boolean): Recor
     },
     componentCount: jsonArray(manifest.componentIds).length,
     sourceVersionIds: releaseSourceVersionIds(release),
-    manifest: includeManifest ? manifest : undefined,
+    manifest: includeManifest ? manifestPreview(manifest, manifestLimit) : undefined,
+    manifestTruncated: includeManifest ? true : undefined,
+    manifestAccess: includeManifest ? {
+      mode: "preview",
+      reason: "Full release manifests can exceed MCP response limits. Use okf.bundleUri and related OKF URIs to consume the frozen bundle files.",
+      limit: boundedLimitArg(manifestLimit, 30, 200),
+    } : undefined,
+  };
+}
+
+function manifestPreview(manifest: Record<string, unknown>, limit: number): Record<string, unknown> {
+  const boundedLimit = boundedLimitArg(limit, 30, 200);
+  const componentIds = jsonArray(manifest.componentIds);
+  const packageIds = jsonArray(manifest.packageIds);
+  const sourceVersionIds = jsonArray(manifest.sourceVersionIds);
+  const components = arraySample(manifest.components, boundedLimit);
+  return {
+    releaseId: String(manifest.releaseId ?? ""),
+    projectId: String(manifest.projectId ?? ""),
+    version: String(manifest.version ?? ""),
+    status: String(manifest.status ?? ""),
+    publishedAt: manifest.publishedAt ?? null,
+    manifestHash: String(manifest.manifestHash ?? ""),
+    okf: jsonObject(manifest.okf),
+    qualityGate: jsonObject(manifest.qualityGate),
+    auditSummary: jsonObject(manifest.auditSummary),
+    revision: slimRevision(jsonObject(manifest.revision), boundedLimit),
+    autoPublish: slimAutoPublishPreview(jsonObject(manifest.autoPublish), boundedLimit),
+    packageIds: sampleArray(packageIds, boundedLimit),
+    sourceVersionIds: sampleArray(sourceVersionIds, boundedLimit),
+    componentIds: sampleArray(componentIds, boundedLimit),
+    components: {
+      count: components.count,
+      sample: components.sample.map((component) => slimManifestComponent(jsonObject(component))),
+      truncated: components.truncated,
+    },
+  };
+}
+
+function slimRevision(revision: Record<string, unknown>, limit: number): Record<string, unknown> {
+  if (Object.keys(revision).length === 0) return {};
+  const diff = jsonObject(revision.diff);
+  const packageIds = jsonObject(diff.packageIds);
+  const componentIds = jsonObject(diff.componentIds);
+  const sourceVersionIds = jsonObject(diff.sourceVersionIds);
+  return {
+    parentReleaseId: revision.parentReleaseId ?? null,
+    mode: String(revision.mode ?? ""),
+    summary: jsonObject(revision.summary),
+    diff: {
+      packageIds: slimDiffBucket(packageIds, limit),
+      componentIds: slimDiffBucket(componentIds, limit),
+      sourceVersionIds: slimDiffBucket(sourceVersionIds, limit),
+      changedComponents: sampleArray(jsonArray(diff.changedComponents), limit),
+      unchangedComponents: sampleArray(jsonArray(diff.unchangedComponents), limit),
+    },
+  };
+}
+
+function slimDiffBucket(bucket: Record<string, unknown>, limit: number): Record<string, unknown> {
+  return {
+    added: sampleArray(jsonArray(bucket.added), limit),
+    removed: sampleArray(jsonArray(bucket.removed), limit),
+    unchanged: sampleArray(jsonArray(bucket.unchanged), limit),
+  };
+}
+
+function slimAutoPublishPreview(autoPublish: Record<string, unknown>, limit: number): Record<string, unknown> {
+  if (Object.keys(autoPublish).length === 0) return {};
+  const trustDeclines = arraySample(autoPublish.trustDeclines, limit);
+  const pendingSourceCorrections = arraySample(autoPublish.pendingSourceCorrections, limit);
+  return {
+    eligible: Boolean(autoPublish.eligible),
+    mode: String(autoPublish.mode ?? ""),
+    reasons: jsonArray(autoPublish.reasons),
+    reasonDetails: Array.isArray(autoPublish.reasonDetails) ? autoPublish.reasonDetails : [],
+    changedComponents: sampleArray(jsonArray(autoPublish.changedComponentIds), limit),
+    blockingTasks: sampleArray(jsonArray(autoPublish.blockingTaskIds), limit),
+    trustDeclines: {
+      count: trustDeclines.count,
+      sample: trustDeclines.sample,
+      truncated: trustDeclines.truncated,
+    },
+    pendingSourceCorrections: {
+      count: pendingSourceCorrections.count,
+      sample: pendingSourceCorrections.sample,
+      truncated: pendingSourceCorrections.truncated,
+    },
+    lintRemediation: jsonObject(autoPublish.lintRemediation),
+  };
+}
+
+function slimManifestComponent(component: Record<string, unknown>): Record<string, unknown> {
+  return {
+    componentId: String(component.componentId ?? ""),
+    packageId: String(component.packageId ?? ""),
+    artifactId: String(component.artifactId ?? ""),
+    title: String(component.title ?? ""),
+    kind: String(component.kind ?? ""),
+    groupName: String(component.groupName ?? component.group_name ?? ""),
+    trust: component.trust ?? null,
+  };
+}
+
+function publishTargetSummary(target: PublishTarget, limit = 20): Record<string, unknown> {
+  return {
+    runId: target.runId,
+    packageId: target.packageId,
+    only: target.only,
+    componentCount: target.componentIds.length,
+    componentIdSample: target.componentIds.slice(0, limit),
+    componentIdsTruncated: target.componentIds.length > limit,
+  };
+}
+
+function slimAutoPublishCheck(check: AutoPublishCheck, limit = 20): Record<string, unknown> {
+  return {
+    eligible: check.eligible,
+    mode: check.mode,
+    reasons: check.reasons,
+    reasonDetails: check.reasonDetails,
+    changedComponents: sampleArray(check.changedComponentIds, limit),
+    blockingTasks: sampleArray(check.blockingTaskIds, limit),
+    trustDeclines: {
+      count: check.trustDeclines.length,
+      sample: check.trustDeclines.slice(0, limit),
+      truncated: check.trustDeclines.length > limit,
+    },
+    pendingSourceCorrections: {
+      count: check.pendingSourceCorrections.length,
+      sample: check.pendingSourceCorrections.slice(0, limit),
+      truncated: check.pendingSourceCorrections.length > limit,
+    },
+    lintRemediation: check.lintRemediation,
+  };
+}
+
+function slimPublishTarget(target: Record<string, unknown>): Record<string, unknown> {
+  const componentIds = jsonArray(target.componentIds);
+  if (componentIds.length === 0) return target;
+  const rest = { ...target };
+  delete rest.componentIds;
+  return {
+    ...rest,
+    componentCount: Number(target.componentCount ?? componentIds.length),
+    componentIdSample: jsonArray(target.componentIdSample).length ? jsonArray(target.componentIdSample) : componentIds.slice(0, 20),
+    componentIdsTruncated: Boolean(target.componentIdsTruncated ?? componentIds.length > 20),
+  };
+}
+
+function sampleArray(values: string[], limit: number): { count: number; sample: string[]; truncated: boolean } {
+  return {
+    count: values.length,
+    sample: values.slice(0, limit),
+    truncated: values.length > limit,
+  };
+}
+
+function arraySample(value: unknown, limit: number): { count: number; sample: unknown[]; truncated: boolean } {
+  const values = Array.isArray(value) ? value : [];
+  return {
+    count: values.length,
+    sample: values.slice(0, limit),
+    truncated: values.length > limit,
   };
 }
 
@@ -2412,10 +2616,11 @@ function componentSummary(component: AssetComponent): Record<string, unknown> {
 function correctionTargetForComponent(component: AssetComponent, requestedSourcePath: string, matchMethod: CorrectionAnchorMatchMethod): CorrectionTarget {
   const componentSourcePath = normalizeSourcePath(
     component.sourceRefs.find((ref) => sourceRefLooksLikeSource(ref)) ??
-    component.sourceRefs[0] ??
     "",
   );
-  const sourcePath = requestedSourcePath || componentSourcePath || `component:${component.componentId}`;
+  const normalizedRequestedSourcePath = normalizeSourcePath(requestedSourcePath);
+  const usableRequestedSourcePath = sourceRefLooksLikeSource(normalizedRequestedSourcePath) ? normalizedRequestedSourcePath : "";
+  const sourcePath = usableRequestedSourcePath || componentSourcePath || `component:${component.componentId}`;
   const fallback = sourcePath.startsWith("component:");
   return {
     component,

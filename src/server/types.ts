@@ -798,6 +798,16 @@ export interface KnowledgeTrace {
   artifactIds: string[];
   sourceVersionIds: string[];
   evidenceIds: string[];
+  componentIdSummary?: CollectionSample<string>;
+  artifactIdSummary?: CollectionSample<string>;
+  sourceVersionIdSummary?: CollectionSample<string>;
+  evidenceIdSummary?: CollectionSample<string>;
+}
+
+export interface CollectionSample<T = string> {
+  count: number;
+  sample: T[];
+  truncated: boolean;
 }
 
 export interface KnowledgeEnvelope<T = unknown> {
@@ -842,6 +852,11 @@ export interface KnowledgeEnvelope<T = unknown> {
       kind: string;
       trust: TrustScore | null;
     }>;
+    componentsSummary?: {
+      count: number;
+      sampleComponentIds: string[];
+      truncated: boolean;
+    };
   };
   trace: KnowledgeTrace;
 }

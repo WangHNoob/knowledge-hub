@@ -41,6 +41,11 @@ describe("KnowledgeQueryService", () => {
 
       const releaseWithManifest = await service.runTool("kb_get_release", { includeManifest: true }, { sessionId: "test", agentRole: "planner" });
       expect(releaseWithManifest.result.manifest).toMatchObject({ releaseId: fixture.releaseId });
+      expect(releaseWithManifest.result.manifestTruncated).toBe(true);
+      expect(releaseWithManifest.result.manifest.componentIds).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
+      expect(releaseWithManifest.result.manifest.components).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
+      expect(releaseWithManifest.result.manifest.revision.diff.componentIds.added).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
+      expect(releaseWithManifest.result.manifest.autoPublish.changedComponents).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
 
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
       expect(search.result.items[0].title).toBe("Battle System");
@@ -155,6 +160,59 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("summarizes large MCP envelope trust and trace arrays", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const extraIds: string[] = [];
+      for (let index = 0; index < 25; index += 1) {
+        const componentId = `cmp_query_extra_${index}`;
+        extraIds.push(componentId);
+        await fixture.db.adapter.query(
+          `INSERT INTO asset_components
+            (component_id, package_id, artifact_id, group_name, kind, title, status, legacy_path, storage_uri, source_refs, quality)
+           VALUES ($1,'pkg_query_fixture',$2,'wiki','wiki_page',$3,'draft',$2,'data/wiki/systems/battle.md',$4,$5)`,
+          [
+            componentId,
+            `wiki/systems/extra-${index}.md`,
+            `Extra ${index}`,
+            JSON.stringify(["gamedocs/battle.md"]),
+            JSON.stringify({ confidence: 0.9 }),
+          ],
+        );
+      }
+      const { rows } = await fixture.db.adapter.query("SELECT manifest_json FROM releases WHERE release_id = $1", [fixture.releaseId]);
+      const manifest = rows[0].manifest_json as Record<string, unknown>;
+      const componentIds = [...((manifest.componentIds as string[]) ?? []), ...extraIds];
+      const components = [
+        ...(((manifest.components as unknown[]) ?? []) as Array<Record<string, unknown>>),
+        ...extraIds.map((componentId, index) => ({
+          componentId,
+          packageId: "pkg_query_fixture",
+          artifactId: `wiki/systems/extra-${index}.md`,
+          title: `Extra ${index}`,
+          kind: "wiki_page",
+          groupName: "wiki",
+          trust: { version: "v2-lite", score: 0.9, status: "ok" },
+        })),
+      ];
+      await fixture.db.adapter.query(
+        "UPDATE releases SET manifest_json = $2 WHERE release_id = $1",
+        [fixture.releaseId, JSON.stringify({ ...manifest, componentIds, components })],
+      );
+
+      const quality = await service.runTool("kb_get_quality", {}, { sessionId: "test", agentRole: "planner" });
+      expect(quality.trace.componentIdSummary).toMatchObject({ count: 30, truncated: true });
+      expect(quality.trace.componentIds).toHaveLength(20);
+      expect(quality.trust.componentsSummary).toMatchObject({ count: 30, truncated: true });
+      expect(quality.trust.components).toHaveLength(20);
+      expect(quality.trust.summary).toMatchObject({ level: expect.any(String), evidenceCount: expect.any(Number) });
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it("anchors corrections predictably without letting sourcePath override the target component", async () => {
     const fixture = await setupPublishedKnowledgeFixture();
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
@@ -217,6 +275,40 @@ describe("KnowledgeQueryService", () => {
           sourcePath: `component:${fixture.pageComponentId}`,
           matchMethod: "component_fallback",
           confidence: "low",
+        },
+      });
+
+      const applied = await service.runTool(
+        "kb_apply_correction",
+        { correctionId: submitted.result.correctionId },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(applied.result.correction).toMatchObject({ state: "active", componentId: fixture.pageComponentId });
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("treats wiki artifact source references as component-level correction anchors", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      await fixture.db.adapter.query("UPDATE asset_components SET source_refs = $2::jsonb WHERE component_id = $1", [fixture.pageComponentId, JSON.stringify(["wiki/systems/battle.md"])]);
+      const submitted = await service.runTool(
+        "kb_submit_correction",
+        {
+          componentId: fixture.pageComponentId,
+          issue: "Wiki artifact path is not an original source file.",
+          suggestion: { field: "summary", value: "component-level wiki fix" },
+        },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(submitted.result).toMatchObject({
+        sourcePath: `component:${fixture.pageComponentId}`,
+        anchor: {
+          componentId: fixture.pageComponentId,
+          matchMethod: "component_fallback",
         },
       });
 

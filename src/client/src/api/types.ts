@@ -1057,6 +1057,11 @@ export interface KnowledgeEnvelope<T = unknown> {
       kind: string;
       trust: TrustScore | null;
     }>;
+    componentsSummary?: {
+      count: number;
+      sampleComponentIds: string[];
+      truncated: boolean;
+    };
   };
   trace: {
     releaseId: string;
@@ -1064,7 +1069,17 @@ export interface KnowledgeEnvelope<T = unknown> {
     artifactIds: string[];
     sourceVersionIds: string[];
     evidenceIds: string[];
+    componentIdSummary?: CollectionSample<string>;
+    artifactIdSummary?: CollectionSample<string>;
+    sourceVersionIdSummary?: CollectionSample<string>;
+    evidenceIdSummary?: CollectionSample<string>;
   };
+}
+
+export interface CollectionSample<T = string> {
+  count: number;
+  sample: T[];
+  truncated: boolean;
 }
 
 export type DiagnosticLogLevel = "debug" | "info" | "warn" | "error";

@@ -554,6 +554,12 @@ export class KbBuilderPipelineService {
     if (!version) throw new Error(`Unknown source version: ${versionId}`);
 
     const only = scopedOnlyFilter([input.sourcePath ?? "", ...target.sourceRefs], target.legacyPath);
+    if (!only) {
+      throw new Error(
+        `无法对组件 ${input.componentId} 启动 scoped rebuild：未找到可映射到 gamedocs/ 或 gamedata/ 的原始资料路径。`
+        + `请先补齐组件 source_refs，或手动发起全量构建。`,
+      );
+    }
     const run = await this.startBuild({
       bundleId: version.bundleId,
       versionId,
