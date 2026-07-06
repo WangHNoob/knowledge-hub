@@ -1267,19 +1267,50 @@ export class KnowledgeQueryService {
   }
 
   private async kbGetFlywheelStatus(projectId: string): Promise<ToolResult> {
-    const [release, latestBuild, corrections, blockingTasks, lintSummary] = await Promise.all([
+    const [release, latestBuild, corrections, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, latestFeedback, latestPublishSkip] = await Promise.all([
       this.releaseService.getCurrent(projectId),
       this.latestBuild(projectId),
       this.listCorrections(projectId, 10),
       this.countOpenBlockingTasks(projectId),
+      this.countOpenReviewTasks(projectId),
+      this.countNegativeFeedback(projectId),
       this.lintRemediationService.summary(projectId),
+      this.latestAgentFeedback(projectId),
+      this.latestKnowledgeEvent(projectId, "publish.skipped"),
     ]);
     const pendingCorrections = corrections.filter((item) => item.state === "pending_review").length;
+    const failedLintRemediations = lintSummary.failed + lintSummary.needsHuman;
+    const canAttemptPublish = Boolean(latestBuild?.packageId) &&
+      blockingTasks === 0 &&
+      pendingCorrections === 0 &&
+      lintSummary.pending === 0 &&
+      lintSummary.failed === 0 &&
+      lintSummary.needsHuman === 0;
+    const gateReasons = flywheelGateReasons({
+      latestBuild,
+      blockingTasks,
+      pendingReviewTasks,
+      pendingCorrections,
+      lintSummary,
+    });
     return {
       result: {
         projectId,
         currentRelease: release ? releaseEnvelope(release) : null,
         latestBuild,
+        exceptions: {
+          blockingTasks,
+          pendingReviewTasks,
+          negativeFeedback,
+          pendingCorrections,
+          failedLintRemediations,
+        },
+        recentActivity: {
+          latestBuild,
+          latestCorrection: corrections[0] ?? null,
+          latestFeedback,
+          latestPublishSkip,
+        },
         corrections: {
           pendingReview: pendingCorrections,
           active: corrections.filter((item) => item.state === "active").length,
@@ -1287,9 +1318,12 @@ export class KnowledgeQueryService {
         },
         gates: {
           blockingTasks,
+          pendingReviewTasks,
+          negativeFeedback,
           pendingCorrections,
           lintRemediation: lintSummary,
-          canAttemptPublish: Boolean(latestBuild?.packageId) && blockingTasks === 0 && pendingCorrections === 0 && lintSummary.pending === 0 && lintSummary.failed === 0 && lintSummary.needsHuman === 0,
+          canAttemptPublish,
+          reasons: gateReasons,
         },
       },
       componentIds: corrections.map((item) => item.componentId).filter(Boolean) as string[],
@@ -1759,12 +1793,78 @@ export class KnowledgeQueryService {
   private async countOpenBlockingTasks(projectId: string): Promise<number> {
     const { rows } = await this.adapter.query(
       `SELECT COUNT(*)::int AS c
-       FROM review_tasks t
-       JOIN asset_packages p ON p.package_id = t.package_id
-       WHERE p.project_id = $1 AND t.status = 'open' AND t.severity = 'blocking'`,
+       FROM review_tasks
+       WHERE project_id = $1 AND status = 'open' AND severity = 'blocking'`,
       [projectId],
     );
     return Number(rows[0]?.c ?? 0);
+  }
+
+  private async countOpenReviewTasks(projectId: string): Promise<number> {
+    const { rows } = await this.adapter.query(
+      `SELECT COUNT(*)::int AS c
+       FROM review_tasks
+       WHERE project_id = $1 AND status = 'open'`,
+      [projectId],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  private async countNegativeFeedback(projectId: string): Promise<number> {
+    const { rows } = await this.adapter.query(
+      `SELECT COUNT(*)::int AS c
+       FROM agent_events
+       WHERE project_id = $1
+         AND feedback_type <> 'hit'`,
+      [projectId],
+    );
+    return Number(rows[0]?.c ?? 0);
+  }
+
+  private async latestAgentFeedback(projectId: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT event_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, created_at
+       FROM agent_events
+       WHERE project_id = $1
+       ORDER BY created_at DESC, event_id DESC
+       LIMIT 1`,
+      [projectId],
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    return {
+      eventId: String(row.event_id ?? ""),
+      releaseId: String(row.release_id ?? ""),
+      query: String(row.query ?? ""),
+      hitComponentIds: jsonArray(row.hit_component_ids),
+      qualityFlags: jsonArray(row.quality_flags),
+      status: String(row.status ?? ""),
+      feedbackType: String(row.feedback_type ?? ""),
+      suggestedAction: String(row.suggested_action ?? ""),
+      taskId: String(row.task_id ?? ""),
+      createdAt: String(row.created_at ?? ""),
+    };
+  }
+
+  private async latestKnowledgeEvent(projectId: string, eventType: string): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT event_id, event_type, entity_type, entity_id, payload_json, created_at
+       FROM knowledge_events
+       WHERE project_id = $1 AND event_type = $2
+       ORDER BY created_at DESC, event_id DESC
+       LIMIT 1`,
+      [projectId, eventType],
+    );
+    if (!rows.length) return null;
+    const row = rows[0];
+    return {
+      eventId: String(row.event_id ?? ""),
+      type: String(row.event_type ?? ""),
+      entityType: String(row.entity_type ?? ""),
+      entityId: String(row.entity_id ?? ""),
+      payload: jsonObject(row.payload_json),
+      createdAt: String(row.created_at ?? ""),
+    };
   }
 
   private async resolvePublishTarget(projectId: string, packageId?: string, runId?: string): Promise<PublishTarget | null> {
@@ -2144,6 +2244,24 @@ function releaseSourceVersionIds(release: ReleaseRecord): string[] {
     ? ((release.manifest as Record<string, unknown>).packages as Array<Record<string, unknown>>).flatMap((pkg) => jsonArray(pkg.sourceVersionIds))
     : [];
   return uniqueSorted([...manifestSources, ...packageSources]);
+}
+
+function flywheelGateReasons(input: {
+  latestBuild: Record<string, unknown> | null;
+  blockingTasks: number;
+  pendingReviewTasks: number;
+  pendingCorrections: number;
+  lintSummary: { pending: number; failed: number; needsHuman: number };
+}): string[] {
+  const reasons: string[] = [];
+  if (!input.latestBuild?.packageId) reasons.push("no_completed_build_package");
+  if (input.blockingTasks > 0) reasons.push("blocking_tasks");
+  if (input.pendingReviewTasks > 0) reasons.push("pending_review_tasks");
+  if (input.pendingCorrections > 0) reasons.push("pending_corrections");
+  if (input.lintSummary.pending > 0) reasons.push("lint_pending");
+  if (input.lintSummary.failed > 0) reasons.push("lint_failed");
+  if (input.lintSummary.needsHuman > 0) reasons.push("lint_needs_human");
+  return reasons;
 }
 
 function manifestComponentIds(release: ReleaseRecord): string[] {

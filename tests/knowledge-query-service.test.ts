@@ -648,6 +648,20 @@ describe("KnowledgeQueryService", () => {
       );
       expect(rebuildEvents).toHaveLength(1);
 
+      const flywheelStatus = await service.runTool("kb_get_flywheel_status", {}, { sessionId: "test", agentRole: "planner" });
+      expect(flywheelStatus.result.exceptions).toMatchObject({
+        pendingReviewTasks: expect.any(Number),
+        negativeFeedback: expect.any(Number),
+        pendingCorrections: 0,
+      });
+      expect(flywheelStatus.result.exceptions.pendingReviewTasks).toBeGreaterThanOrEqual(1);
+      expect(flywheelStatus.result.exceptions.negativeFeedback).toBeGreaterThanOrEqual(1);
+      expect(flywheelStatus.result.recentActivity.latestFeedback).toMatchObject({
+        feedbackType: expect.any(String),
+        query: expect.any(String),
+      });
+      expect(flywheelStatus.result.gates.reasons).toContain("pending_review_tasks");
+
       const startedEvent = await waitForRebuildStartedEvent(fixture.db, String(rebuildTasks[0].task_id));
       const run = await builder.startRebuildFromReviewTask(String(rebuildTasks[0].task_id), "admin");
       expect(run.runId).toBe(startedEvent.run_id);
