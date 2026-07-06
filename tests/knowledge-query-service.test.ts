@@ -380,6 +380,21 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("marks generic-only search hits as weak matches when core query terms are missing", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const search = await service.runTool("kb_search", { query: "跨服婚姻活动结构" }, { sessionId: "test", agentRole: "planner" });
+      expect(search.result.guidance.status).toBe("near_miss");
+      expect(search.result.guidance.qualityFlags).toEqual(expect.arrayContaining(["weak_match", "missing_core_terms"]));
+      expect(search.qualityFlags).toEqual(expect.arrayContaining(["weak_match", "missing_core_terms"]));
+      expect(search.result.cards[0].qualitySignals.matchStatus).toBe("near_miss");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it("resolves topics to actionable table, entity, and page targets", async () => {
     const fixture = await setupPublishedKnowledgeFixture({ dependencyText: "Uses 技能表." });
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);

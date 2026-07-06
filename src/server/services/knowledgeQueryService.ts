@@ -13,7 +13,7 @@ import { createKbBuilderPipelineService } from "./kbBuilderService";
 import { createLintRemediationService } from "./lintRemediationService";
 import { emitKnowledgeEvent } from "./eventService";
 import { createSourceBundleService } from "./sourceBundleService";
-import { searchOkfIndex, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
+import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
 const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
@@ -43,6 +43,7 @@ interface ToolResult {
   artifactIds?: string[];
   sourceVersionIds?: string[];
   evidenceIds?: string[];
+  qualityFlags?: string[];
   forceHit?: boolean;
 }
 
@@ -191,6 +192,14 @@ interface CorrectionTarget {
   anchor: CorrectionAnchorExplanation;
 }
 
+interface SearchMatchClassification {
+  status: "hit" | "near_miss" | "low_confidence_hit";
+  qualityFlags: string[];
+  coreTerms: string[];
+  matchedCoreTerms: string[];
+  missingCoreTerms: string[];
+}
+
 interface PublishTarget {
   runId: string;
   packageId: string;
@@ -253,7 +262,10 @@ export class KnowledgeQueryService {
         ...okfEvidenceRecords.map((record) => record.evidenceId),
         ...dbEvidenceRecords.map((record) => String(record.evidence_id)),
       ]);
-      qualityFlags = await this.qualityFlagsForComponents(hitComponentIds, dbEvidenceRecords, new Set(okfEvidenceRecords.map((record) => record.componentId)), new Map(trust.components.map((component) => [component.componentId, component.trust] as const)));
+      qualityFlags = uniqueSorted([
+        ...(toolResult.qualityFlags ?? []),
+        ...await this.qualityFlagsForComponents(hitComponentIds, dbEvidenceRecords, new Set(okfEvidenceRecords.map((record) => record.componentId)), new Map(trust.components.map((component) => [component.componentId, component.trust] as const))),
+      ]);
       status = toolResult.forceHit || hitComponentIds.length > 0 ? "hit" : "miss";
 
       const envelope: KnowledgeEnvelope<any> = {
@@ -430,10 +442,12 @@ export class KnowledgeQueryService {
     const boundedLimit = boundedLimitArg(limit, 10, 50);
     const indexItems = await this.kbSearchIndex(release, query, boundedLimit);
     if (indexItems.length > 0) {
+      const match = classifySearchMatch(query, indexItems);
       return {
         result: await this.searchResultPayload(release, query, indexItems),
         componentIds: indexItems.map((item) => item.componentId),
         artifactIds: indexItems.map((item) => item.artifactId),
+        qualityFlags: match.qualityFlags,
       };
     }
     return this.kbSearchMarkdownFallback(release, query, boundedLimit);
@@ -472,21 +486,25 @@ export class KnowledgeQueryService {
     }
     items.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
     const limited = await this.alignSearchItemsWithPageTables(release, items.slice(0, limit));
+    const match = classifySearchMatch(query, limited);
     return {
       result: await this.searchResultPayload(release, query, limited),
       componentIds: limited.map((item) => item.componentId),
       artifactIds: limited.map((item) => item.artifactId),
+      qualityFlags: match.qualityFlags,
     };
   }
 
   private async searchResultPayload(release: ReleaseRecord, query: string, items: OkfSearchResultItem[]): Promise<Record<string, unknown>> {
     const evidenceCounts = await this.evidenceCountsForComponents(release, items.map((item) => item.componentId));
+    const match = classifySearchMatch(query, items);
     return {
       query,
       total: items.length,
       items,
-      cards: items.map((item, index) => searchCard(item, index, evidenceCounts.get(item.componentId) ?? 0)),
-      guidance: searchGuidance(query, items, evidenceCounts),
+      match,
+      cards: items.map((item, index) => searchCard(item, index, evidenceCounts.get(item.componentId) ?? 0, match)),
+      guidance: searchGuidance(query, items, evidenceCounts, match),
     };
   }
 
@@ -2398,7 +2416,7 @@ function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "") || "item";
 }
 
-function searchCard(item: OkfSearchResultItem, index: number, evidenceCount: number): Record<string, unknown> {
+function searchCard(item: OkfSearchResultItem, index: number, evidenceCount: number, match: SearchMatchClassification): Record<string, unknown> {
   const unresolvedDependencies = unresolvedFromWhy(item.why);
   return {
     rank: index + 1,
@@ -2421,6 +2439,9 @@ function searchCard(item: OkfSearchResultItem, index: number, evidenceCount: num
     qualitySignals: {
       matchedFields: item.matchedFields,
       matchedTerms: item.matchedTerms.slice(0, 12),
+      matchStatus: index === 0 ? match.status : "supporting_hit",
+      missingCoreTerms: index === 0 ? match.missingCoreTerms : [],
+      qualityFlags: index === 0 ? match.qualityFlags : [],
       why: item.why,
     },
     suggestedNextTools: pageSuggestedTools(item),
@@ -2428,13 +2449,23 @@ function searchCard(item: OkfSearchResultItem, index: number, evidenceCount: num
   };
 }
 
-function searchGuidance(query: string, items: OkfSearchResultItem[], evidenceCounts: Map<string, number>): Record<string, unknown> {
+function searchGuidance(query: string, items: OkfSearchResultItem[], evidenceCounts: Map<string, number>, match: SearchMatchClassification): Record<string, unknown> {
   const top = items[0];
   if (!top) {
     return {
       status: "miss",
       nextStep: `No published knowledge matched "${query}". Report a knowledge gap or import/build source material, then publish again.`,
       suggestedNextTools: ["kb_resolve_topic"],
+    };
+  }
+  if (match.status !== "hit") {
+    return {
+      status: match.status,
+      topComponentId: top.componentId,
+      qualityFlags: match.qualityFlags,
+      missingCoreTerms: match.missingCoreTerms,
+      nextStep: `Only weak/partial matches were found for "${query}". Treat this as insufficient for final answers; call kb_report_gap if the missing topic matters, or refine the query.`,
+      suggestedNextTools: ["kb_get_page", "kb_get_evidence", "kb_report_gap"],
     };
   }
   return {
@@ -2449,6 +2480,45 @@ function unresolvedFromWhy(why: string[]): string[] {
   const prefix = "未解析为具体表：";
   const line = why.find((item) => item.startsWith(prefix));
   return line ? line.slice(prefix.length).split(/,\s*/u).map((item) => item.trim()).filter(Boolean) : [];
+}
+
+const GENERIC_SEARCH_TERMS = new Set([
+  "系统", "流程", "结构", "活动", "玩法", "规则", "配置", "配置表", "表", "字段", "数据", "资料", "知识",
+  "system", "flow", "process", "structure", "activity", "config", "table", "field", "data", "rule",
+]);
+
+function classifySearchMatch(query: string, items: OkfSearchResultItem[]): SearchMatchClassification {
+  const top = items[0];
+  const coreTerms = tokenizeSearchText(query)
+    .filter((term) => term.length >= 2)
+    .filter((term) => !GENERIC_SEARCH_TERMS.has(term))
+    .slice(0, 20);
+  const matched = new Set((top?.matchedTerms ?? []).map(String));
+  const matchedCoreTerms = uniqueSorted(coreTerms.filter((term) => matched.has(term)));
+  const missingCoreTerms = uniqueSorted(coreTerms.filter((term) => !matched.has(term)));
+  const missingCoreSignal = top?.why.some((line) => line.includes("缺少核心词")) ?? false;
+  if (!top) {
+    return { status: "near_miss", qualityFlags: [], coreTerms, matchedCoreTerms, missingCoreTerms };
+  }
+  if ((coreTerms.length > 0 && matchedCoreTerms.length === 0) || missingCoreSignal) {
+    return {
+      status: "near_miss",
+      qualityFlags: ["weak_match", "missing_core_terms"],
+      coreTerms,
+      matchedCoreTerms,
+      missingCoreTerms,
+    };
+  }
+  if (coreTerms.length >= 4 && matchedCoreTerms.length / coreTerms.length < 0.35) {
+    return {
+      status: "low_confidence_hit",
+      qualityFlags: ["weak_match"],
+      coreTerms,
+      matchedCoreTerms,
+      missingCoreTerms,
+    };
+  }
+  return { status: "hit", qualityFlags: [], coreTerms, matchedCoreTerms, missingCoreTerms: [] };
 }
 
 function nextStepForSearchItem(item: OkfSearchResultItem, evidenceCount: number, unresolvedDependencies: string[]): string {
