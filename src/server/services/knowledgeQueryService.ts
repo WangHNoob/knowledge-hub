@@ -72,6 +72,32 @@ interface TableSchema {
   sheets?: string[];
 }
 
+interface TableFieldMapping {
+  rawKey: string;
+  columnIndex: number;
+  headerValue: string;
+  matchMethod: "header" | "schema_order";
+}
+
+interface TableMappedRow extends Record<string, unknown> {
+  row: Record<string, unknown>;
+  rawRow: Record<string, unknown>;
+  fieldMap: Record<string, TableFieldMapping>;
+}
+
+interface TableReadResult {
+  sheet: string;
+  rows: TableMappedRow[];
+  fieldMap: Record<string, TableFieldMapping>;
+  mappedFields: string[];
+  missingFields: string[];
+  unmappedRawColumns: string[];
+  headerRowGuess: number;
+  dataStartRow: number;
+  rowCount: { schema: number; data: number };
+  diagnostics: string[];
+}
+
 interface KnowledgeAssetRef {
   componentId: string;
   artifactId: string;
@@ -784,10 +810,22 @@ export class KnowledgeQueryService {
   private async kbQueryTable(release: ReleaseRecord, table: string, limit: number, where: Record<string, unknown>): Promise<ToolResult> {
     const found = await this.findTableSchema(release, table);
     if (!found) return { result: { found: false, table, rows: [] }, componentIds: [] };
-    const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
-    const filtered = rows.filter((row) => Object.entries(where).every(([key, value]) => String(row[key] ?? "") === String(value)));
+    const tableData = await this.readMappedTableRows(release, found.schema, found.sourceVersionIds);
+    const filtered = tableData.rows.filter((row) => Object.entries(where).every(([key, value]) => String(row.row[key] ?? row[key] ?? "") === String(value)));
     return {
-      result: { found: true, table: found.schema.table_name, rows: filtered.slice(0, Math.max(1, Math.min(limit || 20, 200))), totalRows: filtered.length, trust: found.component.trust ?? null },
+      result: {
+        found: true,
+        table: found.schema.table_name,
+        rows: filtered.slice(0, Math.max(1, Math.min(limit || 20, 200))),
+        totalRows: filtered.length,
+        fieldMap: tableData.fieldMap,
+        mappedFields: tableData.mappedFields,
+        missingFields: tableData.missingFields,
+        unmappedRawColumns: tableData.unmappedRawColumns,
+        headerRowGuess: tableData.headerRowGuess,
+        diagnostics: tableData.diagnostics,
+        trust: found.component.trust ?? null,
+      },
       componentIds: [found.component.componentId],
       artifactIds: [found.component.artifactId],
       sourceVersionIds: releaseSourceVersionIds(release),
@@ -797,10 +835,19 @@ export class KnowledgeQueryService {
   private async kbValidateTable(release: ReleaseRecord, table: string): Promise<ToolResult> {
     const found = await this.findTableSchema(release, table);
     if (!found) return { result: { valid: false, table, errors: ["table schema not found"] }, componentIds: [] };
-    const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
-    const missingFields = found.schema.fields.filter((field) => rows.some((row) => !(field in row)));
+    const tableData = await this.readMappedTableRows(release, found.schema, found.sourceVersionIds);
     return {
-      result: { valid: missingFields.length === 0, table: found.schema.table_name, rowCount: rows.length, missingFields, trust: found.component.trust ?? null },
+      result: {
+        valid: tableData.missingFields.length === 0,
+        table: found.schema.table_name,
+        mappedFields: tableData.mappedFields,
+        missingFields: tableData.missingFields,
+        unmappedRawColumns: tableData.unmappedRawColumns,
+        headerRowGuess: tableData.headerRowGuess,
+        rowCount: tableData.rowCount,
+        diagnostics: tableData.diagnostics,
+        trust: found.component.trust ?? null,
+      },
       componentIds: [found.component.componentId],
       artifactIds: [found.component.artifactId],
     };
@@ -809,10 +856,21 @@ export class KnowledgeQueryService {
   private async kbCheckTableValue(release: ReleaseRecord, table: string, field: string, value: unknown): Promise<ToolResult> {
     const found = await this.findTableSchema(release, table);
     if (!found) return { result: { found: false, table, matches: [] }, componentIds: [] };
-    const rows = await this.readTableRows(release, found.schema, found.sourceVersionIds);
-    const matches = rows.filter((row) => String(row[field] ?? "") === String(value));
+    const tableData = await this.readMappedTableRows(release, found.schema, found.sourceVersionIds);
+    const matches = tableData.rows.filter((row) => String(row.row[field] ?? row[field] ?? "") === String(value));
     return {
-      result: { found: true, table: found.schema.table_name, field, value, matches, trust: found.component.trust ?? null },
+      result: {
+        found: true,
+        table: found.schema.table_name,
+        field,
+        value,
+        matches,
+        fieldMap: tableData.fieldMap,
+        mappedFields: tableData.mappedFields,
+        missingFields: tableData.missingFields,
+        diagnostics: tableData.diagnostics,
+        trust: found.component.trust ?? null,
+      },
       componentIds: [found.component.componentId],
       artifactIds: [found.component.artifactId],
     };
@@ -1027,20 +1085,6 @@ export class KnowledgeQueryService {
     return null;
   }
 
-  private async readTableRows(release: ReleaseRecord, schema: TableSchema, sourceVersionIds?: string[]): Promise<Array<Record<string, unknown>>> {
-    for (const versionId of (sourceVersionIds?.length ? sourceVersionIds : releaseSourceVersionIds(release))) {
-      const file = await this.sourceService.readFile(versionId, schema.rel_path);
-      if (!file) continue;
-      const workbook = xlsx.read(file.content, { type: "buffer" });
-      const rows = [];
-      for (const sheetName of workbook.SheetNames) {
-        rows.push(...xlsx.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], { defval: "" }));
-      }
-      return rows;
-    }
-    throw new Error(`Source table file not found for ${schema.table_name}: ${schema.rel_path}`);
-  }
-
   /**
    * 读取源表的**原始网格**（array-of-arrays），保留列顺序与空列——
    * 不同于 readTableRows 的对象模式（会丢列序/空列）。用于忠实重建配表格式。
@@ -1055,6 +1099,33 @@ export class KnowledgeQueryService {
       return { sheet: sheetName, grid };
     }
     throw new Error(`Source table file not found for ${schema.table_name}: ${schema.rel_path}`);
+  }
+
+  private async readMappedTableRows(release: ReleaseRecord, schema: TableSchema, sourceVersionIds?: string[]): Promise<TableReadResult> {
+    const { sheet, grid } = await this.readTableGrid(release, schema, sourceVersionIds);
+    const mapping = inferTableFieldMapping(schema, grid);
+    const rows: TableMappedRow[] = [];
+    for (const gridRow of grid.slice(mapping.dataStartIndex)) {
+      if (!gridRow.some((value) => normalizeCellValue(value) !== "")) continue;
+      const rawRow = rawRowFromGridRow(gridRow, mapping.rawKeys);
+      const canonical: Record<string, unknown> = {};
+      for (const [field, fieldMap] of Object.entries(mapping.fieldMap)) {
+        canonical[field] = gridRow[fieldMap.columnIndex] ?? "";
+      }
+      rows.push({ ...canonical, row: canonical, rawRow, fieldMap: mapping.fieldMap });
+    }
+    return {
+      sheet,
+      rows,
+      fieldMap: mapping.fieldMap,
+      mappedFields: Object.keys(mapping.fieldMap),
+      missingFields: (schema.fields ?? []).filter((field) => !(field in mapping.fieldMap)),
+      unmappedRawColumns: mapping.unmappedRawColumns,
+      headerRowGuess: mapping.headerRowIndex + 1,
+      dataStartRow: mapping.dataStartIndex + 1,
+      rowCount: { schema: schema.row_count ?? 0, data: rows.length },
+      diagnostics: mapping.diagnostics,
+    };
   }
 
   private async kbGetTableRaw(release: ReleaseRecord, table: string, headerRows: number): Promise<ToolResult> {
@@ -2145,6 +2216,116 @@ function nextStepForTarget(target: { type?: unknown; title?: unknown; id?: unkno
   if (target.type === "entity") return `Use kb_get_entity for ${title}, then kb_get_neighbors to inspect related pages and tables.`;
   if (target.type === "page") return `Use kb_get_page for ${title}; call kb_get_page_tables when tableDependencies are present.`;
   return "Use kb_search with a more specific topic.";
+}
+
+function inferTableFieldMapping(schema: TableSchema, grid: unknown[][]): {
+  fieldMap: Record<string, TableFieldMapping>;
+  rawKeys: string[];
+  headerRowIndex: number;
+  dataStartIndex: number;
+  unmappedRawColumns: string[];
+  diagnostics: string[];
+} {
+  const fields = schema.fields ?? [];
+  const maxCols = grid.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), fields.length);
+  const headerRowIndex = chooseHeaderRow(fields, grid);
+  const labelRowIndex = chooseLabelRow(grid, headerRowIndex);
+  const rawKeys = uniqueRawKeys(Array.from({ length: maxCols }, (_, columnIndex) => {
+    const label = normalizeCellValue(grid[labelRowIndex]?.[columnIndex]);
+    const header = normalizeCellValue(grid[headerRowIndex]?.[columnIndex]);
+    return label || header || `column_${columnIndex + 1}`;
+  }));
+  const fieldMap: Record<string, TableFieldMapping> = {};
+  const usedColumns = new Set<number>();
+  const fieldByKey = new Map(fields.map((field) => [aliasKey(field), field] as const));
+  const headerRow = grid[headerRowIndex] ?? [];
+
+  for (let columnIndex = 0; columnIndex < maxCols; columnIndex += 1) {
+    const headerValue = normalizeCellValue(headerRow[columnIndex]);
+    const field = fieldByKey.get(aliasKey(headerValue));
+    if (!field || fieldMap[field]) continue;
+    fieldMap[field] = { rawKey: rawKeys[columnIndex], columnIndex, headerValue, matchMethod: "header" };
+    usedColumns.add(columnIndex);
+  }
+
+  for (const [fieldIndex, field] of fields.entries()) {
+    if (fieldMap[field]) continue;
+    if (fieldIndex >= maxCols || usedColumns.has(fieldIndex)) continue;
+    fieldMap[field] = {
+      rawKey: rawKeys[fieldIndex],
+      columnIndex: fieldIndex,
+      headerValue: normalizeCellValue(headerRow[fieldIndex]),
+      matchMethod: "schema_order",
+    };
+    usedColumns.add(fieldIndex);
+  }
+
+  const unmappedRawColumns = rawKeys.filter((rawKey, columnIndex) =>
+    !usedColumns.has(columnIndex) && grid.some((row) => normalizeCellValue(row[columnIndex]) !== "")
+  );
+  const missingFields = fields.filter((field) => !(field in fieldMap));
+  const diagnostics: string[] = [];
+  if (fields.length === 0) diagnostics.push("schema has no fields");
+  const orderedFallbackFields = Object.entries(fieldMap)
+    .filter(([, mapping]) => mapping.matchMethod === "schema_order")
+    .map(([field]) => field);
+  if (orderedFallbackFields.length > 0) {
+    diagnostics.push(`mapped by schema field order: ${orderedFallbackFields.join(", ")}`);
+  }
+  if (missingFields.length > 0) diagnostics.push(`unmapped schema fields: ${missingFields.join(", ")}`);
+  if (unmappedRawColumns.length > 0) diagnostics.push(`unmapped raw columns: ${unmappedRawColumns.join(", ")}`);
+
+  return {
+    fieldMap,
+    rawKeys,
+    headerRowIndex,
+    dataStartIndex: Math.min(grid.length, headerRowIndex + 1),
+    unmappedRawColumns,
+    diagnostics,
+  };
+}
+
+function chooseHeaderRow(fields: string[], grid: unknown[][]): number {
+  if (grid.length === 0) return 0;
+  const fieldKeys = new Set(fields.map(aliasKey));
+  let best = { row: 0, score: -1 };
+  const scanRows = Math.min(grid.length, 12);
+  for (let rowIndex = 0; rowIndex < scanRows; rowIndex += 1) {
+    const row = grid[rowIndex] ?? [];
+    const nonEmpty = row.map(normalizeCellValue).filter(Boolean);
+    if (nonEmpty.length === 0) continue;
+    const directMatches = nonEmpty.filter((value) => fieldKeys.has(aliasKey(value))).length;
+    const technicalNames = nonEmpty.filter((value) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(value)).length;
+    const score = directMatches * 20 + technicalNames - Math.max(0, nonEmpty.length - fields.length);
+    if (score > best.score) best = { row: rowIndex, score };
+  }
+  return best.row;
+}
+
+function chooseLabelRow(grid: unknown[][], headerRowIndex: number): number {
+  for (let rowIndex = 0; rowIndex < headerRowIndex; rowIndex += 1) {
+    if ((grid[rowIndex] ?? []).some((value) => normalizeCellValue(value) !== "")) return rowIndex;
+  }
+  return headerRowIndex;
+}
+
+function uniqueRawKeys(keys: string[]): string[] {
+  const seen = new Map<string, number>();
+  return keys.map((key, index) => {
+    const normalized = key || `column_${index + 1}`;
+    const count = seen.get(normalized) ?? 0;
+    seen.set(normalized, count + 1);
+    return count === 0 ? normalized : `${normalized}_${count + 1}`;
+  });
+}
+
+function rawRowFromGridRow(row: unknown[], rawKeys: string[]): Record<string, unknown> {
+  return Object.fromEntries(rawKeys.map((rawKey, columnIndex) => [rawKey, row[columnIndex] ?? ""]));
+}
+
+function normalizeCellValue(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
 }
 
 function normalize(value: string): string {

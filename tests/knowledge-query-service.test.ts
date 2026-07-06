@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import xlsx from "xlsx";
 
 import { createKnowledgeQueryService } from "../src/server/services/knowledgeQueryService";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
@@ -67,7 +68,13 @@ describe("KnowledgeQueryService", () => {
       expect(schema.result.schema.fields).toContain("StaminaCost");
 
       const rows = await service.runTool("kb_query_table", { table: "Combat/Skill", limit: 2 }, { sessionId: "test", agentRole: "planner" });
-      expect(rows.result.rows).toEqual([{ Id: 1, Name: "Slash", StaminaCost: 10 }]);
+      expect(rows.result.rows[0]).toMatchObject({
+        Id: 1,
+        Name: "Slash",
+        StaminaCost: 10,
+        row: { Id: 1, Name: "Slash", StaminaCost: 10 },
+        rawRow: { Id: 1, Name: "Slash", StaminaCost: 10 },
+      });
 
       const value = await service.runTool("kb_check_table_value", { table: "Combat/Skill", field: "Name", value: "Slash" }, { sessionId: "test", agentRole: "planner" });
       expect(value.result.matches[0].StaminaCost).toBe(10);
@@ -402,7 +409,52 @@ describe("KnowledgeQueryService", () => {
       expect(schema.trace.componentIds).toContain(fixture.tableSchemaComponentId);
 
       const rows = await service.runTool("kb_query_table", { table: "Combat/SkillFromOKF", where: { Name: "Slash" } }, { sessionId: "test", agentRole: "planner" });
-      expect(rows.result.rows).toEqual([{ Id: 1, Name: "Slash", StaminaCost: 10 }]);
+      expect(rows.result.rows[0]).toMatchObject({
+        Id: 1,
+        Name: "Slash",
+        StaminaCost: 10,
+        row: { Id: 1, Name: "Slash", StaminaCost: 10 },
+      });
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("maps raw Excel rows to canonical schema fields before querying and validating tables", async () => {
+    const fixture = await setupPublishedKnowledgeFixture({ excelLabelHeader: true });
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const rows = await service.runTool(
+        "kb_query_table",
+        { table: "Combat/Skill", where: { Id: 1 }, limit: 5 },
+        { sessionId: "test", agentRole: "planner" },
+      );
+      expect(rows.result.rows).toHaveLength(1);
+      expect(rows.result.rows[0]).toMatchObject({
+        Id: 1,
+        Name: "Slash",
+        StaminaCost: 10,
+        row: { Id: 1, Name: "Slash", StaminaCost: 10 },
+        rawRow: { "技能ID": 1, "技能名称": "Slash", "体力消耗": 10 },
+      });
+      expect(rows.result.rows[0].fieldMap.Id).toMatchObject({ rawKey: "技能ID", columnIndex: 0, matchMethod: "header" });
+
+      const value = await service.runTool(
+        "kb_check_table_value",
+        { table: "Combat/Skill", field: "Id", value: 1 },
+        { sessionId: "test", agentRole: "planner" },
+      );
+      expect(value.result.matches[0].row.Name).toBe("Slash");
+
+      const validation = await service.runTool("kb_validate_table", { table: "Combat/Skill" }, { sessionId: "test", agentRole: "planner" });
+      expect(validation.result).toMatchObject({
+        valid: true,
+        mappedFields: ["Id", "Name", "StaminaCost"],
+        missingFields: [],
+        headerRowGuess: 2,
+        rowCount: { schema: 1, data: 1 },
+      });
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
@@ -549,14 +601,26 @@ async function waitForBuildRun(builder: ReturnType<typeof createKbBuilderPipelin
   throw new Error(`Timed out waiting for build run ${runId}`);
 }
 
-async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string; withGraphRelation?: boolean } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; graphComponentId: string; tableSchemaComponentId: string; sourceVersionId: string; cleanup: () => Promise<void> }> {
+async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; withEvidence?: boolean; dependencyText?: string; withGraphRelation?: boolean; excelLabelHeader?: boolean } = {}): Promise<{ db: TestDbHandle["db"]; dataDir: string; releaseId: string; pageComponentId: string; graphComponentId: string; tableSchemaComponentId: string; sourceVersionId: string; cleanup: () => Promise<void> }> {
   const dataDir = mkdtempSync(join(tmpdir(), "kh-query-"));
   const handle = await createTestDb();
   const db = handle.db;
   const sourceRoot = join(dataDir, "raw");
   mkdirSync(join(sourceRoot, "gamedata", "Combat"), { recursive: true });
   mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
-  writeFileSync(join(sourceRoot, "gamedata", "Combat", "Skill.csv"), "Id,Name,StaminaCost\n1,Slash,10\n");
+  const tableRelPath = options.excelLabelHeader ? "gamedata/Combat/Skill.xlsx" : "gamedata/Combat/Skill.csv";
+  if (options.excelLabelHeader) {
+    const workbook = xlsx.utils.book_new();
+    const sheet = xlsx.utils.aoa_to_sheet([
+      ["技能ID", "技能名称", "体力消耗"],
+      ["Id", "Name", "StaminaCost"],
+      [1, "Slash", 10],
+    ]);
+    xlsx.utils.book_append_sheet(workbook, sheet, "Skill");
+    xlsx.writeFile(workbook, join(sourceRoot, "gamedata", "Combat", "Skill.xlsx"));
+  } else {
+    writeFileSync(join(sourceRoot, "gamedata", "Combat", "Skill.csv"), "Id,Name,StaminaCost\n1,Slash,10\n");
+  }
   writeFileSync(join(sourceRoot, "gamedocs", "battle.md"), "Battle system source says stamina controls skill usage.\n");
   const imported = await createSourceBundleService(db, dataDir).importDirectoryAsVersion({
     rootPath: sourceRoot,
@@ -592,7 +656,7 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
   writeFileSync(join(buildData, "wiki", "_tables", "schemas.json"), JSON.stringify({
     "Combat/Skill": {
       table_name: "Combat/Skill",
-      rel_path: "gamedata/Combat/Skill.csv",
+      rel_path: tableRelPath,
       fields: ["Id", "Name", "StaminaCost"],
       row_count: 1,
       sheets: ["Skill"]
@@ -603,7 +667,7 @@ async function setupPublishedKnowledgeFixture(options: { lowQuality?: boolean; w
   ], null, 2));
   writeFileSync(join(buildData, "table_schemas", "Combat__Skill.json"), JSON.stringify({
     table_name: "Combat/Skill",
-    rel_path: "gamedata/Combat/Skill.csv",
+    rel_path: tableRelPath,
     fields: ["Id", "Name", "StaminaCost"],
     row_count: 1,
     sheets: ["Skill"]
