@@ -33,6 +33,11 @@ describe("KnowledgeQueryService", () => {
       const release = await service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" });
       expect(release.release.releaseId).toBe(fixture.releaseId);
       expect(release.result.version).toBe("query.1");
+      expect(release.result.manifest).toBeUndefined();
+      expect(release.result.okf).toMatchObject({ bundleUri: expect.any(String) });
+
+      const releaseWithManifest = await service.runTool("kb_get_release", { includeManifest: true }, { sessionId: "test", agentRole: "planner" });
+      expect(releaseWithManifest.result.manifest).toMatchObject({ releaseId: fixture.releaseId });
 
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
       expect(search.result.items[0].title).toBe("Battle System");

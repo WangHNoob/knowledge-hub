@@ -149,7 +149,13 @@ export const knowledgeMcpTools: Array<{
     inputSchema: z.object({ ...contextFields, componentId: componentIdField.optional(), page: pageField.optional(), query: z.string().optional(), q: z.string().optional(), topic: z.string().optional() }).passthrough(),
     readOnly: true,
   },
-  { name: "kb_get_release", title: "Get Release", description: "Read the current published release envelope and OKF manifest.", inputSchema: noArgs, readOnly: true },
+  {
+    name: "kb_get_release",
+    title: "Get Release",
+    description: "Read the current published release summary. Pass includeManifest=true only when the full frozen manifest is needed.",
+    inputSchema: z.object({ ...contextFields, includeManifest: z.boolean().optional().describe("Return the full frozen release manifest. Defaults to false to keep MCP responses small.") }).passthrough(),
+    readOnly: true,
+  },
   {
     name: "kb_get_flywheel_status",
     title: "Get Flywheel Status",

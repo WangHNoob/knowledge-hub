@@ -378,7 +378,7 @@ export class KnowledgeQueryService {
   private async executeTool(release: ReleaseRecord, toolName: string, payload: Record<string, unknown>): Promise<ToolResult> {
     switch (toolName) {
       case "kb_get_release":
-        return { result: release, componentIds: [], forceHit: true };
+        return { result: releaseSummary(release, booleanArg(payload, false, "includeManifest", "manifest")), componentIds: [], forceHit: true };
       case "kb_search":
         return this.kbSearch(release, stringArg(payload, "query", "q"), numberArg(payload, 10, "limit", "topK", "top_k"));
       case "kb_resolve_topic":
@@ -2040,6 +2040,44 @@ function releaseEnvelope(release: ReleaseRecord) {
   };
 }
 
+function releaseSummary(release: ReleaseRecord, includeManifest: boolean): Record<string, unknown> {
+  const manifest = release.manifest as Record<string, unknown>;
+  const okf = jsonObject(manifest.okf);
+  return {
+    releaseId: release.releaseId,
+    projectId: release.projectId,
+    parentReleaseId: release.parentReleaseId,
+    version: release.version,
+    status: release.status,
+    publishedAt: release.publishedAt,
+    publishedBy: release.publishedBy,
+    manifestHash: release.manifestHash,
+    packageIds: release.packageIds,
+    quality: release.qualityGate,
+    okf: {
+      bundleUri: okf.bundleUri ?? "",
+      reportUri: okf.reportUri ?? "",
+      reportMarkdownUri: okf.reportMarkdownUri ?? "",
+      graphUri: okf.graphUri ?? "",
+      tableSchemasUri: okf.tableSchemasUri ?? "",
+      tableAliasesUri: okf.tableAliasesUri ?? "",
+      evidenceUri: okf.evidenceUri ?? "",
+      searchIndexUri: okf.searchIndexUri ?? "",
+      logUri: okf.logUri ?? "",
+      lintUri: okf.lintUri ?? "",
+      okfVersion: okf.okfVersion ?? "",
+      bundleHash: okf.bundleHash ?? "",
+      summary: okf.summary ?? null,
+      linkSummary: okf.linkSummary ?? null,
+      citationSummary: okf.citationSummary ?? null,
+      lintSummary: okf.lintSummary ?? null,
+    },
+    componentCount: jsonArray(manifest.componentIds).length,
+    sourceVersionIds: releaseSourceVersionIds(release),
+    manifest: includeManifest ? manifest : undefined,
+  };
+}
+
 function emptyTrustSummary(release: ReleaseRecord | null): NonNullable<KnowledgeEnvelope["trust"]["summary"]> {
   return {
     level: "unknown",
@@ -2139,6 +2177,19 @@ function numberArg(payload: Record<string, unknown>, fallback: number, ...keys: 
     const value = payload[key];
     const numeric = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
     if (Number.isFinite(numeric)) return numeric;
+  }
+  return fallback;
+}
+
+function booleanArg(payload: Record<string, unknown>, fallback: boolean, ...keys: string[]): boolean {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes"].includes(normalized)) return true;
+      if (["false", "0", "no"].includes(normalized)) return false;
+    }
   }
   return fallback;
 }
