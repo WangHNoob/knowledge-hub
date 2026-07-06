@@ -175,6 +175,22 @@ interface SourceCorrectionView {
   updatedAt: string;
 }
 
+type CorrectionAnchorMatchMethod = "componentId" | "knowledgePath" | "sourcePath_unique" | "component_fallback";
+
+interface CorrectionAnchorExplanation {
+  componentId: string;
+  sourcePath: string;
+  matchMethod: CorrectionAnchorMatchMethod;
+  candidates: Array<Record<string, unknown>>;
+  confidence: "high" | "medium" | "low";
+}
+
+interface CorrectionTarget {
+  component: AssetComponent;
+  sourcePath: string;
+  anchor: CorrectionAnchorExplanation;
+}
+
 interface PublishTarget {
   runId: string;
   packageId: string;
@@ -1282,10 +1298,9 @@ export class KnowledgeQueryService {
   }
 
   private async kbSubmitCorrection(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
-    const component = await this.resolveCorrectionComponent(projectId, optionalString(payload, "componentId"), optionalString(payload, "knowledgePath"));
-    if (!component) throw new Error("kb_submit_correction requires a componentId or knowledgePath that resolves to a staged asset component.");
-    const sourcePath = normalizeSourcePath(optionalString(payload, "sourcePath") || component.sourceRefs.find((ref) => ref.startsWith("gamedocs/") || ref.startsWith("gamedata/")) || "");
-    if (!sourcePath) throw new Error(`Component ${component.componentId} has no source reference; correction cannot be anchored.`);
+    const target = await this.resolveCorrectionTarget(projectId, payload);
+    if (!target) throw new Error("kb_submit_correction requires componentId, knowledgePath, or an unambiguous sourcePath that resolves to a staged asset component.");
+    const { component, sourcePath, anchor: anchorExplanation } = target;
     const anchor = await this.resolveSourceCorrectionAnchor(component.packageId, sourcePath);
     const suggestion = normalizeCorrectionValue(payload.suggestion);
     const factKey = optionalString(payload, "factKey") || sourceCorrectionFactKey(suggestion);
@@ -1340,13 +1355,13 @@ export class KnowledgeQueryService {
       eventType: "correction.submitted",
       entityType: "source_correction",
       entityId: correctionId,
-      payload: { projectId, correctionId, componentId: component.componentId, packageId: component.packageId, sourcePath, ruleId, actor: context.sessionId ?? "mcp-agent" },
+      payload: { projectId, correctionId, componentId: component.componentId, packageId: component.packageId, sourcePath, ruleId, anchor: anchorExplanation, actor: context.sessionId ?? "mcp-agent" },
     });
     await emitKnowledgeEvent(this.db, {
       eventType: "source_correction.created",
       entityType: "source_correction",
       entityId: correctionId,
-      payload: { projectId, correctionId, componentId: component.componentId, packageId: component.packageId, sourcePath, ruleId, state: "pending_review" },
+      payload: { projectId, correctionId, componentId: component.componentId, packageId: component.packageId, sourcePath, ruleId, state: "pending_review", anchor: anchorExplanation },
     });
     return {
       result: {
@@ -1355,6 +1370,7 @@ export class KnowledgeQueryService {
         message: "已提交修正建议；尚未改写发布知识。可继续调用 kb_apply_correction 激活后再做 scoped rebuild。",
         component: componentSummary(component),
         sourcePath,
+        anchor: anchorExplanation,
         ruleId,
         pageType,
         factKey: factKey || null,
@@ -1369,8 +1385,9 @@ export class KnowledgeQueryService {
     const correction = await this.getCorrection(projectId, correctionId);
     if (!correction) throw new Error(`Unknown correction in project ${projectId}: ${correctionId}`);
     if (correction.state === "retired") throw new Error("Retired corrections cannot be applied.");
-    const currentHash = await this.findLatestSourceHash(correction.bundleId, correction.sourcePath);
-    if (!currentHash) throw new Error("当前资料版本中未找到该源文件，无法应用修正。");
+    const componentLevel = correction.sourcePath.startsWith("component:");
+    const currentHash = componentLevel ? correction.boundSourceHash : await this.findLatestSourceHash(correction.bundleId, correction.sourcePath);
+    if (!componentLevel && !currentHash) throw new Error("当前资料版本中未找到该源文件，无法应用修正。");
     const now = new Date().toISOString();
     const { rows } = await this.adapter.query(
       `UPDATE source_corrections
@@ -1594,16 +1611,17 @@ export class KnowledgeQueryService {
       const normalized = normalize(knowledgePath);
       params.push(knowledgePath, normalized, `%${knowledgePath}%`);
       where.push(`(
-        c.legacy_path = $${params.length - 2}
+        c.component_id = $${params.length - 2}
+        OR c.legacy_path = $${params.length - 2}
         OR c.artifact_id = $${params.length - 2}
         OR c.title = $${params.length - 2}
+        OR lower(c.component_id) = $${params.length - 1}
         OR lower(c.legacy_path) = $${params.length - 1}
         OR lower(c.artifact_id) = $${params.length - 1}
         OR lower(c.title) = $${params.length - 1}
         OR c.legacy_path ILIKE $${params.length}
         OR c.artifact_id ILIKE $${params.length}
         OR c.title ILIKE $${params.length}
-        OR c.source_refs::text ILIKE $${params.length}
       )`);
     } else {
       return null;
@@ -1618,6 +1636,50 @@ export class KnowledgeQueryService {
       params,
     );
     return rows.length ? mapComponent(rows[0]) : null;
+  }
+
+  private async resolveCorrectionTarget(projectId: string, payload: Record<string, unknown>): Promise<CorrectionTarget | null> {
+    const componentId = optionalString(payload, "componentId");
+    const knowledgePath = optionalString(payload, "knowledgePath");
+    const requestedSourcePath = normalizeSourcePath(optionalString(payload, "sourcePath") || "");
+
+    if (componentId) {
+      const component = await this.resolveCorrectionComponent(projectId, componentId, undefined);
+      if (!component) return null;
+      return correctionTargetForComponent(component, requestedSourcePath, "componentId");
+    }
+
+    if (knowledgePath) {
+      const component = await this.resolveCorrectionComponent(projectId, undefined, knowledgePath);
+      if (!component) return null;
+      return correctionTargetForComponent(component, requestedSourcePath, "knowledgePath");
+    }
+
+    if (requestedSourcePath) {
+      const candidates = await this.findCorrectionComponentsBySourcePath(projectId, requestedSourcePath);
+      if (candidates.length === 1) {
+        return correctionTargetForComponent(candidates[0], requestedSourcePath, "sourcePath_unique");
+      }
+      if (candidates.length > 1) {
+        throw new Error(`sourcePath ${requestedSourcePath} is referenced by multiple components; provide componentId or knowledgePath. Candidates: ${candidates.map((component) => `${component.componentId} (${component.title || component.artifactId})`).join(", ")}`);
+      }
+    }
+
+    return null;
+  }
+
+  private async findCorrectionComponentsBySourcePath(projectId: string, sourcePath: string): Promise<AssetComponent[]> {
+    const like = `%${sourcePath}%`;
+    const { rows } = await this.adapter.query(
+      `SELECT c.*
+       FROM asset_components c
+       JOIN asset_packages p ON p.package_id = c.package_id
+       WHERE p.project_id = $1
+         AND (c.source_refs ? $2 OR c.source_refs::text ILIKE $3)
+       ORDER BY p.created_at DESC, c.component_id`,
+      [projectId, sourcePath, like],
+    );
+    return rows.map(mapComponent);
   }
 
   private async resolveSourceCorrectionAnchor(packageId: string, sourcePath: string): Promise<{ bundleId: string; contentHash: string }> {
@@ -2135,6 +2197,32 @@ function componentSummary(component: AssetComponent): Record<string, unknown> {
     legacyPath: component.legacyPath,
     sourceRefs: component.sourceRefs,
   };
+}
+
+function correctionTargetForComponent(component: AssetComponent, requestedSourcePath: string, matchMethod: CorrectionAnchorMatchMethod): CorrectionTarget {
+  const componentSourcePath = normalizeSourcePath(
+    component.sourceRefs.find((ref) => sourceRefLooksLikeSource(ref)) ??
+    component.sourceRefs[0] ??
+    "",
+  );
+  const sourcePath = requestedSourcePath || componentSourcePath || `component:${component.componentId}`;
+  const fallback = sourcePath.startsWith("component:");
+  return {
+    component,
+    sourcePath,
+    anchor: {
+      componentId: component.componentId,
+      sourcePath,
+      matchMethod: fallback ? "component_fallback" : matchMethod,
+      candidates: [],
+      confidence: fallback ? "low" : matchMethod === "sourcePath_unique" ? "medium" : "high",
+    },
+  };
+}
+
+function sourceRefLooksLikeSource(value: string): boolean {
+  const normalized = normalizeSourcePath(value);
+  return normalized.startsWith("gamedocs/") || normalized.startsWith("gamedata/");
 }
 
 function slug(value: string): string {

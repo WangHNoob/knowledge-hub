@@ -116,7 +116,16 @@ describe("KnowledgeQueryService", () => {
         },
         { sessionId: "agent", agentRole: "agent" },
       );
-      expect(submitted.result).toMatchObject({ state: "pending_review", sourcePath: "gamedocs/battle.md" });
+      expect(submitted.result).toMatchObject({
+        state: "pending_review",
+        sourcePath: "gamedocs/battle.md",
+        anchor: {
+          componentId: fixture.pageComponentId,
+          sourcePath: "gamedocs/battle.md",
+          matchMethod: "componentId",
+          confidence: "high",
+        },
+      });
       const correctionId = submitted.result.correctionId;
       expect(typeof correctionId).toBe("string");
 
@@ -132,6 +141,83 @@ describe("KnowledgeQueryService", () => {
 
       const afterRelease = await service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" });
       expect(afterRelease.release.manifestHash).toBe(beforeRelease.release.manifestHash);
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("anchors corrections predictably without letting sourcePath override the target component", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const explicit = await service.runTool(
+        "kb_submit_correction",
+        {
+          componentId: fixture.pageComponentId,
+          sourcePath: "gamedata/Combat/Skill.csv",
+          issue: "Wiki text and table dependency should be reviewed together.",
+          suggestion: { field: "dataDependencies", value: ["Combat/Skill"] },
+        },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(explicit.result).toMatchObject({
+        component: { componentId: fixture.pageComponentId },
+        sourcePath: "gamedata/Combat/Skill.csv",
+        anchor: {
+          componentId: fixture.pageComponentId,
+          sourcePath: "gamedata/Combat/Skill.csv",
+          matchMethod: "componentId",
+          confidence: "high",
+        },
+      });
+
+      await expect(service.runTool(
+        "kb_submit_correction",
+        {
+          sourcePath: "gamedocs/battle.md",
+          issue: "Source-only request is ambiguous in this fixture.",
+          suggestion: { field: "summary", value: "ambiguous" },
+        },
+        { sessionId: "agent", agentRole: "agent" },
+      )).rejects.toThrow(/multiple components/i);
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it("allows wiki component-level correction when source references are missing", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      await fixture.db.adapter.query("UPDATE asset_components SET source_refs = '[]'::jsonb WHERE component_id = $1", [fixture.pageComponentId]);
+      const submitted = await service.runTool(
+        "kb_submit_correction",
+        {
+          componentId: fixture.pageComponentId,
+          issue: "Wiki component has no source refs but still needs a staged correction.",
+          suggestion: { field: "summary", value: "component-level fix" },
+        },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(submitted.result).toMatchObject({
+        component: { componentId: fixture.pageComponentId },
+        sourcePath: `component:${fixture.pageComponentId}`,
+        anchor: {
+          componentId: fixture.pageComponentId,
+          sourcePath: `component:${fixture.pageComponentId}`,
+          matchMethod: "component_fallback",
+          confidence: "low",
+        },
+      });
+
+      const applied = await service.runTool(
+        "kb_apply_correction",
+        { correctionId: submitted.result.correctionId },
+        { sessionId: "agent", agentRole: "agent" },
+      );
+      expect(applied.result.correction).toMatchObject({ state: "active", componentId: fixture.pageComponentId });
     } finally {
       await fixture.cleanup();
       rmSync(fixture.dataDir, { recursive: true, force: true });
