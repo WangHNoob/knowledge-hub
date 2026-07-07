@@ -69,7 +69,7 @@ describe("KnowledgeQueryService", () => {
           },
         },
         recommendations: expect.arrayContaining([
-          expect.objectContaining({ tool: "kb_apply_correction", payload: { correctionId } }),
+          expect.objectContaining({ tool: "kb_govern_flywheel", payload: { correctionId } }),
         ]),
       });
       expect(health.result.reasons).toEqual(expect.any(Array));

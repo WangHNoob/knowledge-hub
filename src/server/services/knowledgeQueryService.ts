@@ -2734,19 +2734,19 @@ function healthRecommendations(
   const pending = samples.pendingCorrections[0];
   if (reasons.has("pending_corrections") && pending) {
     out.push({
-      action: "apply_correction",
-      tool: "kb_apply_correction",
-      reason: "存在待应用修正；先激活确定性覆盖，再触发 scoped rebuild/check。",
+      action: "govern_pending_correction",
+      tool: "kb_govern_flywheel",
+      reason: "存在待应用修正；使用一键治理让服务端按顺序激活修正、增量检查并尝试门禁发布。",
       payload: { correctionId: pending.correctionId },
     });
   }
   const active = samples.activeCorrections[0];
   if (reasons.has("active_corrections_waiting_rebuild") && active) {
     out.push({
-      action: "run_incremental_check",
-      tool: "kb_start_incremental_check",
-      reason: "存在已激活修正，需要 scoped rebuild/check 后才能进入发布判断。",
-      payload: { correctionId: active.correctionId, componentId: active.componentId || undefined },
+      action: "govern_active_correction",
+      tool: "kb_govern_flywheel",
+      reason: "存在已激活修正；跳过重复应用，继续 scoped rebuild/check 与发布门禁判断。",
+      payload: { correctionId: active.correctionId, apply: false, componentId: active.componentId || undefined },
     });
   }
   if (reasons.has("lint_failed") || reasons.has("lint_needs_human")) {
