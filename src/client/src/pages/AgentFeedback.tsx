@@ -636,6 +636,7 @@ interface AutomationChain {
   status: "proposed" | "running" | "built" | "draft" | "published" | "skipped";
   statusText: string;
   reason: string;
+  recommendations: Array<{ action: string; tool: string; payload: Record<string, unknown> }>;
   updatedAt: string;
   steps: Array<{ key: string; label: string; status: "done" | "current" | "blocked" | "pending"; detail: string; at: string }>;
 }
@@ -665,6 +666,7 @@ function createAutomationChain(id: string): AutomationChain {
     status: "proposed",
     statusText: "等待触发",
     reason: "",
+    recommendations: [],
     updatedAt: "",
     steps: [
       { key: "proposal", label: "反馈提案", status: "pending", detail: "", at: "" },
@@ -720,9 +722,27 @@ function applyAutomationEvent(chain: AutomationChain, event: FlywheelEvent, payl
     chain.status = "skipped";
     chain.statusText = "等待人工确认";
   }
+  if (event.eventType === "knowledge_lint.health_checked") {
+    const healthStatus = stringField(payload.status) || "unknown";
+    const consumption = stringField(payload.consumption) || "unknown";
+    const reasons = stringArray(payload.reasons);
+    const recommendations = recommendationList(payload.recommendations);
+    chain.title = "知识健康巡检";
+    chain.releaseId = stringField(payload.releaseId) || (event.entityType === "release" ? event.entityId : chain.releaseId);
+    chain.status = healthStatus === "needs_attention" ? "skipped" : "built";
+    chain.statusText = healthStatus === "passed" ? "巡检通过" : healthStatus === "warning" ? "存在风险" : "需要处理";
+    chain.reason = reasons.length ? `原因：${reasons.slice(0, 4).join("、")}` : "";
+    chain.recommendations = recommendations;
+    chain.steps = [
+      { key: "health-release", label: "巡检对象", status: "done", detail: chain.releaseId || stringField(payload.projectId) || "当前项目", at: event.createdAt },
+      { key: "health-status", label: "健康状态", status: healthStatus === "needs_attention" ? "blocked" : "done", detail: `${healthStatus} / ${consumption}`, at: event.createdAt },
+      { key: "health-next", label: "建议动作", status: recommendations.length ? "current" : "done", detail: recommendations[0] ? `${recommendations[0].tool} · ${recommendations[0].action}` : "无需治理动作", at: event.createdAt },
+    ];
+  }
 }
 
 function chainKey(event: FlywheelEvent, chains: Map<string, AutomationChain>): string {
+  if (event.eventType === "knowledge_lint.health_checked") return `health:${event.eventId}`;
   const payload = event.payload ?? {};
   const ids = [
     stringField(payload.taskId),
@@ -745,6 +765,25 @@ function updateStep(chain: AutomationChain, key: string, status: AutomationChain
 
 function stringField(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => stringField(item)).filter(Boolean) : [];
+}
+
+function recommendationList(value: unknown): Array<{ action: string; tool: string; payload: Record<string, unknown> }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+      return {
+        action: stringField(row.action),
+        tool: stringField(row.tool),
+        payload: row.payload && typeof row.payload === "object" && !Array.isArray(row.payload) ? row.payload as Record<string, unknown> : {},
+      };
+    })
+    .filter((item) => item.action && item.tool)
+    .slice(0, 3);
 }
 
 function AutomationTimeline({
@@ -778,6 +817,16 @@ function AutomationTimeline({
             ))}
           </div>
           {row.reason && <p className="automation-reason">{row.reason}</p>}
+          {row.recommendations.length > 0 && (
+            <div className="agent-diagnosis compact">
+              {row.recommendations.map((item) => (
+                <div className="diagnosis-item" key={`${item.tool}:${item.action}`}>
+                  <strong>{item.tool}</strong>
+                  <span>{item.action}{Object.keys(item.payload).length > 0 ? ` · ${JSON.stringify(item.payload)}` : ""}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="task-primary-actions">
             {row.componentId && <button className="secondary-action" type="button" onClick={() => onNavigateAsset(row.componentId)}>查看资产</button>}
             <button className="secondary-action" type="button" onClick={onNavigateReview}>查看审核任务</button>
