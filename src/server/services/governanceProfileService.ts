@@ -22,7 +22,7 @@ export const DEFAULT_GOVERNANCE_DEFAULTS: GovernanceDefaults = {
   requireEvidence: true,
   lintAutoGovernanceEnabled: true,
   lintAutoEligibleThreshold: 0.85,
-  autoPublishRevisions: false,
+  autoPublishRevisions: true,
   blockOnDeletes: true,
   blockOnTrustDecline: true,
   blockOnPendingCorrections: true,

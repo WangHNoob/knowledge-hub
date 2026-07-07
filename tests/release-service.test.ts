@@ -385,6 +385,12 @@ describe("ReleaseService", () => {
       const draft = await waitForDraftRevision(fixture.db, current.releaseId, "pkg_event_scoped", "run_event_scoped");
       expect(draft).toMatchObject({ parent_release_id: current.releaseId, status: "draft" });
       expect(String(draft.note)).toContain("run_event_scoped");
+      expect((await service.getCurrent())?.releaseId).toBe(current.releaseId);
+      const { rows: autoEvents } = await fixture.db.adapter.query(
+        "SELECT event_id FROM knowledge_events WHERE event_type = 'release.auto_publish_succeeded' AND payload_json ->> 'runId' = $1",
+        ["run_event_scoped"],
+      );
+      expect(autoEvents).toHaveLength(0);
     } finally {
       unsubscribe();
       await fixture.cleanup();

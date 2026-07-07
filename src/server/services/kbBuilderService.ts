@@ -573,8 +573,6 @@ export class KbBuilderPipelineService {
       traceId: input.traceId,
       rebuildTaskId: input.rebuildTaskId,
       mergeIntoPackageId: target.packageId,
-      publishOnComplete: true,
-      releaseVersion: `auto-${new Date().toISOString().replace(/[:.]/g, "-")}`,
       generateAliases: false,
     });
     return run;
