@@ -168,6 +168,14 @@ export interface TrustScore {
   evidenceRequired: boolean;
 }
 
+export interface KnowledgeEnvelopeTrustScore {
+  version: TrustScore["version"];
+  score: number;
+  status: TrustScore["status"];
+  lastTrustedAuditAt: string | null;
+  evidenceRequired: boolean;
+}
+
 export interface TrustPolicyDimension {
   key: keyof TrustScoreBreakdown;
   label: string;
@@ -1055,7 +1063,7 @@ export interface KnowledgeEnvelope<T = unknown> {
       artifactId: string;
       title: string;
       kind: string;
-      trust: TrustScore | null;
+      trust: KnowledgeEnvelopeTrustScore | null;
     }>;
     componentsSummary?: {
       count: number;

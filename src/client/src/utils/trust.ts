@@ -1,5 +1,7 @@
-import type { TrustScore } from "../api";
+import type { KnowledgeEnvelopeTrustScore, TrustScore } from "../api";
 import { formatPercent } from "./format";
+
+type DisplayTrustScore = TrustScore | KnowledgeEnvelopeTrustScore;
 
 export function trustFromQuality(quality: Record<string, unknown>): TrustScore | null {
   const trust = quality.trust;
@@ -24,14 +26,14 @@ export function trustFromQuality(quality: Record<string, unknown>): TrustScore |
   };
 }
 
-export function trustTone(trust: TrustScore | null): "ok" | "warn" | "hot" {
+export function trustTone(trust: DisplayTrustScore | null): "ok" | "warn" | "hot" {
   if (!trust) return "warn";
   if (trust.score < 0.55 || trust.status === "blocked") return "hot";
-  if (trust.score < 0.85 || trust.caps.length > 0) return "warn";
+  if (trust.score < 0.85 || ("caps" in trust && trust.caps.length > 0)) return "warn";
   return "ok";
 }
 
-export function trustLabel(trust: TrustScore | null): string {
+export function trustLabel(trust: DisplayTrustScore | null): string {
   return trust ? `可信度 ${formatPercent(trust.score)}` : "可信度 n/a";
 }
 

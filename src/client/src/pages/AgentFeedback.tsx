@@ -2,7 +2,7 @@ import { Play } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-import { getFlywheelConvergenceSummary, getMcpConnectInfo, getToken, listAgentEvents, listFeedbackClusters, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type AgentFeedbackCluster, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope, type McpAuditRecord, type McpConnectInfo } from "../api";
+import { getFlywheelConvergenceSummary, getMcpConnectInfo, getToken, listAgentEvents, listFeedbackClusters, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery, type AgentEvent, type AgentFeedbackCluster, type FlywheelConvergenceSummary, type FlywheelEvent, type FlywheelRiskItem, type KnowledgeEnvelope, type KnowledgeEnvelopeTrustScore, type McpAuditRecord, type McpConnectInfo, type TrustScore } from "../api";
 import { Badge, ErrorState, Loading, Metric, Page, Tabs } from "../components/Atoms";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { componentLabel } from "../utils/componentLabel";
@@ -1102,7 +1102,9 @@ function AgentFeedbackCard({
   );
 }
 
-function TrustPanel({ title, subtitle, trust, onClick }: { title: string; subtitle: string; trust: AgentEvent["components"][number]["trust"]; onClick?: () => void }) {
+type TrustPanelScore = TrustScore | KnowledgeEnvelopeTrustScore | null;
+
+function TrustPanel({ title, subtitle, trust, onClick }: { title: string; subtitle: string; trust: TrustPanelScore; onClick?: () => void }) {
   return (
     <button type="button" className="trust-panel" onClick={onClick}>
       <span>
@@ -1113,13 +1115,17 @@ function TrustPanel({ title, subtitle, trust, onClick }: { title: string; subtit
         <Badge label={trustLabel(trust)} tone={trustTone(trust)} />
         {trust && <Badge label={trustStatusLabel(trust.status)} tone={trustTone(trust)} />}
       </span>
-      {trust && <TrustBreakdown trust={trust} />}
-      {trust?.caps.length ? <small>封顶：{trust.caps.map((cap) => cap.label).join(" / ")}</small> : null}
+      {hasTrustBreakdown(trust) && <TrustBreakdown trust={trust} />}
+      {hasTrustBreakdown(trust) && trust.caps.length ? <small>封顶：{trust.caps.map((cap) => cap.label).join(" / ")}</small> : null}
     </button>
   );
 }
 
-function TrustBreakdown({ trust }: { trust: NonNullable<AgentEvent["components"][number]["trust"]> }) {
+function hasTrustBreakdown(trust: TrustPanelScore): trust is TrustScore {
+  return Boolean(trust && "breakdown" in trust && "caps" in trust);
+}
+
+function TrustBreakdown({ trust }: { trust: TrustScore }) {
   return (
     <span className="trust-breakdown">
       {TRUST_DIMENSIONS.map((dimension) => (

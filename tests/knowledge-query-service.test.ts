@@ -51,6 +51,9 @@ describe("KnowledgeQueryService", () => {
       expect(search.result.items[0].title).toBe("Battle System");
       expect(search.trace.componentIds).toContain(fixture.pageComponentId);
       expect(search.trust.components[0].trust?.score).toBeGreaterThan(0);
+      expect(search.trust.components[0].trust).not.toHaveProperty("breakdown");
+      expect(search.trust.components[0].trust).not.toHaveProperty("caps");
+      expect(search.trust.components[0].trust).not.toHaveProperty("reasons");
       expect(search.result.items[0].trust?.version).toBe("v2-lite");
       expect(search.result.items[0].matchedFields).toContain("title");
       expect(search.result.items[0].why.length).toBeGreaterThan(0);
@@ -206,6 +209,7 @@ describe("KnowledgeQueryService", () => {
       expect(quality.trace.componentIds).toHaveLength(20);
       expect(quality.trust.componentsSummary).toMatchObject({ count: 30, truncated: true });
       expect(quality.trust.components).toHaveLength(20);
+      expect(quality.trust.components[0].trust).not.toHaveProperty("breakdown");
       expect(quality.trust.summary).toMatchObject({ level: expect.any(String), evidenceCount: expect.any(Number) });
     } finally {
       await fixture.cleanup();

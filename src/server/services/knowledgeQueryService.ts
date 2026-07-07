@@ -4,7 +4,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { nanoid } from "nanoid";
 import xlsx from "xlsx";
 
-import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, KnowledgeTrace, ReleaseRecord, TrustScore } from "../types";
+import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, KnowledgeEnvelopeTrustScore, KnowledgeTrace, ReleaseRecord, TrustScore } from "../types";
 import { jsonArray, jsonObject, mapComponent, mapPackage } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createFeedbackService, type FeedbackService, type FeedbackType } from "./feedbackService";
@@ -2132,7 +2132,7 @@ export class KnowledgeQueryService {
     return out;
   }
 
-  private async qualityFlagsForComponents(componentIds: string[], evidenceRecords: Record<string, unknown>[], okfEvidenceComponentIds = new Set<string>(), trustByComponent = new Map<string, TrustScore | null>()): Promise<string[]> {
+  private async qualityFlagsForComponents(componentIds: string[], evidenceRecords: Record<string, unknown>[], okfEvidenceComponentIds = new Set<string>(), trustByComponent = new Map<string, { score?: number | null } | null>()): Promise<string[]> {
     if (componentIds.length === 0) return [];
     const components = await this.componentsByIds(componentIds);
     const componentsWithEvidence = new Set(evidenceRecords.map((record) => String(record.component_id)));
@@ -2200,12 +2200,26 @@ function slimTrustEnvelope(trust: KnowledgeEnvelope["trust"], limit = MCP_ENVELO
   const components = trust.components ?? [];
   return {
     ...trust,
-    components: components.slice(0, limit),
+    components: components.slice(0, limit).map((component) => ({
+      ...component,
+      trust: slimEnvelopeTrustScore(component.trust),
+    })),
     componentsSummary: {
       count: components.length,
       sampleComponentIds: components.slice(0, limit).map((component) => component.componentId),
       truncated: components.length > limit,
     },
+  };
+}
+
+function slimEnvelopeTrustScore(trust: TrustScore | KnowledgeEnvelopeTrustScore | null): KnowledgeEnvelopeTrustScore | null {
+  if (!trust) return null;
+  return {
+    version: trust.version,
+    score: trust.score,
+    status: trust.status,
+    lastTrustedAuditAt: trust.lastTrustedAuditAt,
+    evidenceRequired: trust.evidenceRequired,
   };
 }
 
