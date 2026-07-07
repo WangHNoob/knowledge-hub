@@ -156,7 +156,7 @@ export function Dashboard() {
             {status.primaryAction.action === "sync_and_publish" && isSyncing ? "正在同步…" : status.primaryAction.label}
             {status.primaryAction.action === "sync_and_publish" ? <RefreshCw size={16} /> : <ArrowRight size={16} />}
           </button>
-          {status.metrics.runningBuilds > 0 && (
+          {status.metrics.runningBuilds > 0 || isSyncing ? (
             <button
               className="secondary-action danger"
               type="button"
@@ -165,9 +165,9 @@ export function Dashboard() {
               title="停止该项目当前所有正在运行的构建"
             >
               <Square size={15} />
-              {stopMutation.isPending ? "停止中…" : `停止构建（${status.metrics.runningBuilds}）`}
+              {stopMutation.isPending ? "停止中…" : status.metrics.runningBuilds > 0 ? `停止构建（${status.metrics.runningBuilds}）` : "停止构建"}
             </button>
-          )}
+          ) : null}
         </div>
       </section>
 
