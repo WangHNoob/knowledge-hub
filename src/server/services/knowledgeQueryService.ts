@@ -1421,7 +1421,7 @@ export class KnowledgeQueryService {
           release: { status: "failed", reason: "no_current_release" },
         },
         recommendations: [
-          { action: "upload_or_build", tool: "kb_get_flywheel_status", reason: "先确认资料库、构建和发布状态。" },
+          { action: "upload_or_build", tool: "kb_get_flywheel_status", reason: "先确认资料库、构建和发布状态。", payload: { projectId } },
         ],
       };
       await emitKnowledgeEvent(this.db, {
@@ -1461,7 +1461,7 @@ export class KnowledgeQueryService {
     const reasons = [...blockingReasons, ...warningReasons];
     const status = blockingReasons.length > 0 ? "needs_attention" : warningReasons.length > 0 ? "warning" : "passed";
     const consumption = status === "needs_attention" ? "use_with_care" : "ready";
-    const recommendations = healthRecommendations(blockingReasons, warningReasons, {
+    const recommendations = healthRecommendations(projectId, blockingReasons, warningReasons, {
       pendingCorrections: pendingCorrectionSamples,
       activeCorrections: activeCorrectionSamples,
       lowTrust,
@@ -2726,6 +2726,7 @@ function healthSummary(status: string, version: string, blockingCount: number, w
 }
 
 function healthRecommendations(
+  projectId: string,
   blockingReasons: string[],
   warningReasons: string[],
   samples: {
@@ -2743,7 +2744,7 @@ function healthRecommendations(
       action: "govern_pending_correction",
       tool: "kb_govern_flywheel",
       reason: "存在待应用修正；使用一键治理让服务端按顺序激活修正、增量检查并尝试门禁发布。",
-      payload: { correctionId: pending.correctionId },
+      payload: { projectId, correctionId: pending.correctionId },
     });
   }
   const active = samples.activeCorrections[0];
@@ -2752,11 +2753,11 @@ function healthRecommendations(
       action: "govern_active_correction",
       tool: "kb_govern_flywheel",
       reason: "存在已激活修正；跳过重复应用，继续 scoped rebuild/check 与发布门禁判断。",
-      payload: { correctionId: active.correctionId, apply: false, componentId: active.componentId || undefined },
+      payload: { projectId, correctionId: active.correctionId, apply: false, componentId: active.componentId || undefined },
     });
   }
   if (reasons.has("lint_failed") || reasons.has("lint_needs_human")) {
-    out.push({ action: "inspect_exceptions", tool: "kb_get_flywheel_status", reason: "Knowledge Lint 治理项需要先处理，自动发布门禁不会绕过。" });
+    out.push({ action: "inspect_exceptions", tool: "kb_get_flywheel_status", reason: "Knowledge Lint 治理项需要先处理，自动发布门禁不会绕过。", payload: { projectId } });
   }
   const weak = samples.lowTrust[0] ?? samples.staleAudit[0];
   if (reasons.has("low_trust_components") || reasons.has("stale_audit_components") || reasons.has("negative_feedback")) {
@@ -2764,10 +2765,10 @@ function healthRecommendations(
       action: "submit_correction_or_feedback",
       tool: "kb_govern_flywheel",
       reason: "低可信、审计过期或负反馈应由 Agent 提交修正并触发增量检查。",
-      ...(weak ? { payload: { componentId: weak.componentId } } : {}),
+      payload: { projectId, ...(weak ? { componentId: weak.componentId } : {}) },
     });
   }
-  if (out.length === 0) out.push({ action: "publish_if_ready", tool: "kb_publish_if_ready", reason: "未发现阻断项，可请求系统按门禁判断是否发布修订。" });
+  if (out.length === 0) out.push({ action: "publish_if_ready", tool: "kb_publish_if_ready", reason: "未发现阻断项，可请求系统按门禁判断是否发布修订。", payload: { projectId } });
   return out;
 }
 

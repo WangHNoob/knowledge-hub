@@ -69,7 +69,7 @@ describe("KnowledgeQueryService", () => {
           },
         },
         recommendations: expect.arrayContaining([
-          expect.objectContaining({ tool: "kb_govern_flywheel", payload: { correctionId } }),
+          expect.objectContaining({ tool: "kb_govern_flywheel", payload: { projectId: "default_project", correctionId } }),
         ]),
       });
       expect(health.result.reasons).toEqual(expect.any(Array));
@@ -78,7 +78,7 @@ describe("KnowledgeQueryService", () => {
       expect(healthEvents[0].entity_id).toBe(fixture.releaseId);
       const healthPayload = typeof healthEvents[0].payload_json === "string" ? JSON.parse(healthEvents[0].payload_json) : healthEvents[0].payload_json;
       expect(healthPayload.recommendations).toEqual(expect.arrayContaining([
-        expect.objectContaining({ tool: "kb_govern_flywheel", payload: { correctionId } }),
+        expect.objectContaining({ tool: "kb_govern_flywheel", payload: { projectId: "default_project", correctionId } }),
       ]));
 
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
