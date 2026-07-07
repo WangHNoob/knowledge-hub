@@ -47,6 +47,14 @@ describe("KnowledgeQueryService", () => {
       expect(releaseWithManifest.result.manifest.revision.diff.componentIds.added).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
       expect(releaseWithManifest.result.manifest.autoPublish.changedComponents).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
 
+      const submittedCorrection = await service.runTool("kb_submit_correction", {
+        componentId: fixture.pageComponentId,
+        issue: "Health check should expose actionable pending corrections.",
+        suggestion: { factKey: "summary", value: "Battle stamina rules need a clearer summary." },
+        confidence: 0.9,
+      }, { sessionId: "test", agentRole: "planner" });
+      const correctionId = String(submittedCorrection.result.correctionId);
+
       const health = await service.runTool("kb_run_health_check", { maxAuditAgeDays: 3650 }, { sessionId: "test", agentRole: "planner" });
       expect(health.result).toMatchObject({
         projectId: "default_project",
@@ -55,8 +63,14 @@ describe("KnowledgeQueryService", () => {
           release: { status: "passed", componentCount: expect.any(Number) },
           trust: { averageScore: expect.any(Number), lowTrustCount: expect.any(Number) },
           governance: { blockingTasks: expect.any(Number), pendingCorrections: expect.any(Number) },
+          corrections: {
+            pendingReviewCount: 1,
+            pendingReviewSample: [expect.objectContaining({ correctionId, componentId: fixture.pageComponentId })],
+          },
         },
-        recommendations: expect.any(Array),
+        recommendations: expect.arrayContaining([
+          expect.objectContaining({ tool: "kb_apply_correction", payload: { correctionId } }),
+        ]),
       });
       expect(health.result.reasons).toEqual(expect.any(Array));
       const { rows: healthEvents } = await fixture.db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = 'knowledge_lint.health_checked'");

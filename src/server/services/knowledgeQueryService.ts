@@ -221,6 +221,17 @@ interface HealthComponentSummary {
   lastTrustedAuditAt: string | null;
 }
 
+interface HealthCorrectionSummary {
+  correctionId: string;
+  state: string;
+  componentId: string;
+  packageId: string;
+  sourcePath: string;
+  ruleId: string;
+  factKey: string | null;
+  updatedAt: string;
+}
+
 export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
   return new KnowledgeQueryService(db, dataDir, diagnostics);
 }
@@ -1430,8 +1441,10 @@ export class KnowledgeQueryService {
     const staleAudit = trust.components
       .filter((component) => auditIsStale(component.trust?.lastTrustedAuditAt ?? null, maxAuditAgeDays))
       .map((component) => healthComponent(component));
-    const pendingCorrections = corrections.filter((item) => item.state === "pending_review").length;
-    const activeCorrections = corrections.filter((item) => item.state === "active").length;
+    const pendingCorrectionSamples = corrections.filter((item) => item.state === "pending_review").map(healthCorrection);
+    const activeCorrectionSamples = corrections.filter((item) => item.state === "active").map(healthCorrection);
+    const pendingCorrections = pendingCorrectionSamples.length;
+    const activeCorrections = activeCorrectionSamples.length;
     const lintIssues = lintSummary.failed + lintSummary.needsHuman + lintSummary.pending;
     const blockingReasons = healthBlockingReasons({
       blockingTasks,
@@ -1486,9 +1499,21 @@ export class KnowledgeQueryService {
           activeCorrections,
           negativeFeedback,
         },
+        corrections: {
+          status: pendingCorrections > 0 ? "failed" : activeCorrections > 0 ? "warning" : "passed",
+          pendingReviewCount: pendingCorrections,
+          activeCount: activeCorrections,
+          pendingReviewSample: pendingCorrectionSamples.slice(0, 10),
+          activeSample: activeCorrectionSamples.slice(0, 10),
+        },
       },
       reasons,
-      recommendations: healthRecommendations(blockingReasons, warningReasons),
+      recommendations: healthRecommendations(blockingReasons, warningReasons, {
+        pendingCorrections: pendingCorrectionSamples,
+        activeCorrections: activeCorrectionSamples,
+        lowTrust,
+        staleAudit,
+      }),
     };
     await emitKnowledgeEvent(this.db, {
       eventType: "knowledge_lint.health_checked",
@@ -2694,17 +2719,47 @@ function healthSummary(status: string, version: string, blockingCount: number, w
   return `发布 ${version} 可消费，但存在 ${warningCount} 类风险，建议 Agent 按推荐动作继续治理。`;
 }
 
-function healthRecommendations(blockingReasons: string[], warningReasons: string[]): Array<{ action: string; tool: string; reason: string }> {
+function healthRecommendations(
+  blockingReasons: string[],
+  warningReasons: string[],
+  samples: {
+    pendingCorrections: HealthCorrectionSummary[];
+    activeCorrections: HealthCorrectionSummary[];
+    lowTrust: HealthComponentSummary[];
+    staleAudit: HealthComponentSummary[];
+  } = { pendingCorrections: [], activeCorrections: [], lowTrust: [], staleAudit: [] },
+): Array<{ action: string; tool: string; reason: string; payload?: Record<string, unknown> }> {
   const reasons = new Set([...blockingReasons, ...warningReasons]);
-  const out: Array<{ action: string; tool: string; reason: string }> = [];
-  if (reasons.has("pending_corrections") || reasons.has("active_corrections_waiting_rebuild")) {
-    out.push({ action: "run_incremental_check", tool: "kb_start_incremental_check", reason: "存在待应用或已激活修正，需要 scoped rebuild/check 后才能进入发布判断。" });
+  const out: Array<{ action: string; tool: string; reason: string; payload?: Record<string, unknown> }> = [];
+  const pending = samples.pendingCorrections[0];
+  if (reasons.has("pending_corrections") && pending) {
+    out.push({
+      action: "apply_correction",
+      tool: "kb_apply_correction",
+      reason: "存在待应用修正；先激活确定性覆盖，再触发 scoped rebuild/check。",
+      payload: { correctionId: pending.correctionId },
+    });
+  }
+  const active = samples.activeCorrections[0];
+  if (reasons.has("active_corrections_waiting_rebuild") && active) {
+    out.push({
+      action: "run_incremental_check",
+      tool: "kb_start_incremental_check",
+      reason: "存在已激活修正，需要 scoped rebuild/check 后才能进入发布判断。",
+      payload: { correctionId: active.correctionId, componentId: active.componentId || undefined },
+    });
   }
   if (reasons.has("lint_failed") || reasons.has("lint_needs_human")) {
     out.push({ action: "inspect_exceptions", tool: "kb_get_flywheel_status", reason: "Knowledge Lint 治理项需要先处理，自动发布门禁不会绕过。" });
   }
+  const weak = samples.lowTrust[0] ?? samples.staleAudit[0];
   if (reasons.has("low_trust_components") || reasons.has("stale_audit_components") || reasons.has("negative_feedback")) {
-    out.push({ action: "submit_correction_or_feedback", tool: "kb_govern_flywheel", reason: "低可信、审计过期或负反馈应由 Agent 提交修正并触发增量检查。" });
+    out.push({
+      action: "submit_correction_or_feedback",
+      tool: "kb_govern_flywheel",
+      reason: "低可信、审计过期或负反馈应由 Agent 提交修正并触发增量检查。",
+      ...(weak ? { payload: { componentId: weak.componentId } } : {}),
+    });
   }
   if (out.length === 0) out.push({ action: "publish_if_ready", tool: "kb_publish_if_ready", reason: "未发现阻断项，可请求系统按门禁判断是否发布修订。" });
   return out;
@@ -2719,6 +2774,19 @@ function healthComponent(component: { componentId: string; artifactId: string; t
     score: component.trust?.score ?? null,
     status: component.trust?.status ?? "unknown",
     lastTrustedAuditAt: component.trust?.lastTrustedAuditAt ?? null,
+  };
+}
+
+function healthCorrection(correction: SourceCorrectionView): HealthCorrectionSummary {
+  return {
+    correctionId: correction.correctionId,
+    state: correction.state,
+    componentId: correction.componentId ?? "",
+    packageId: correction.packageId ?? "",
+    sourcePath: correction.sourcePath,
+    ruleId: correction.ruleId,
+    factKey: correction.factKey,
+    updatedAt: correction.updatedAt,
   };
 }
 
