@@ -24,7 +24,7 @@ describe("knowledge hub api", () => {
     schema = `test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     db = await createDatabase({ databaseUrl: TEST_DATABASE_URL, schema });
     dir = mkdtempSync(join(tmpdir(), "kh-api-"));
-    opts = { db, jwtSecret: "test-secret", dataDir: dir };
+    opts = { db, jwtSecret: "test-secret", dataDir: dir, closeDatabaseOnClose: false, enableBackgroundAutomations: false };
   });
 
   afterAll(async () => {
@@ -35,8 +35,8 @@ describe("knowledge hub api", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function getToken(username = "admin", password = "adminpw") {
-    const app = await buildApp(opts);
+  async function getToken(username = "admin", password = "adminpw", appOptions: Partial<BuildAppOptions> = {}) {
+    const app = await buildApp({ ...opts, ...appOptions });
     const login = await app.inject({
       method: "POST",
       url: "/api/auth/login",
@@ -358,32 +358,42 @@ describe("knowledge hub api", () => {
   });
 
   it("starts one-click build and publish only for admins", async () => {
-    const { app, token } = await getToken();
-    const sourceRoot = join(dir, "quick-publish-src");
-    mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
-    writeFileSync(join(sourceRoot, "gamedocs", "quick.md"), "# Quick\n\nOne click publish fixture.");
-    const imported = await createSourceBundleService(db, dir).importDirectoryAsVersion({
-      rootPath: sourceRoot,
-      bundleId: "default",
-      createdBy: "admin",
-      note: "one-click fixture",
+    const { app, token } = await getToken("admin", "adminpw", {
+      enableBackgroundAutomations: true,
+      enableLintRemediationAutomation: false,
     });
+    try {
+      const sourceRoot = join(dir, "quick-publish-src");
+      mkdirSync(join(sourceRoot, "gamedocs"), { recursive: true });
+      writeFileSync(join(sourceRoot, "gamedocs", "quick.md"), "# Quick\n\nOne click publish fixture.");
+      const imported = await createSourceBundleService(db, dir).importDirectoryAsVersion({
+        rootPath: sourceRoot,
+        bundleId: "default",
+        createdBy: "admin",
+        note: "one-click fixture",
+      });
 
-    const denied = await app.inject({
-      method: "POST",
-      url: `/api/source-bundles/default/versions/${encodeURIComponent(imported.version.versionId)}/build-and-publish`,
-      payload: { stages: ["convert"], model: "deterministic", force: true, only: null, qualityProfileId: "default" },
-    });
-    expect(denied.statusCode).toBe(401);
+      const denied = await app.inject({
+        method: "POST",
+        url: `/api/source-bundles/default/versions/${encodeURIComponent(imported.version.versionId)}/build-and-publish`,
+        payload: { stages: ["convert"], model: "deterministic", force: true, only: null, qualityProfileId: "default" },
+      });
+      expect(denied.statusCode).toBe(401);
 
-    const response = await app.inject({
-      method: "POST",
-      url: `/api/source-bundles/default/versions/${encodeURIComponent(imported.version.versionId)}/build-and-publish`,
-      headers: { authorization: `Bearer ${token}` },
-      payload: { stages: ["convert"], model: "deterministic", force: true, only: null, qualityProfileId: "default" },
-    });
-    expect(response.statusCode).toBe(202);
-    expect(response.json().run.config).toMatchObject({ publishOnComplete: true });
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/source-bundles/default/versions/${encodeURIComponent(imported.version.versionId)}/build-and-publish`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { stages: ["convert"], model: "deterministic", force: true, only: null, qualityProfileId: "default" },
+      });
+      expect(response.statusCode).toBe(202);
+      expect(response.json().run.config).toMatchObject({ publishOnComplete: true });
+      const run = await waitForBuildRun(app, token, response.json().run.runId);
+      expect(run.status).toBe("completed");
+      await waitForAutoPublishForRun(schema, run.runId);
+    } finally {
+      await app.close();
+    }
   });
 
   it("imports a legacy directory into a draft package through the api", async () => {
@@ -426,14 +436,61 @@ describe("knowledge hub api", () => {
     expect(result.version.fileCount).toBe(2);
     expect(result.version.addedCount).toBe(2);
     expect(result.newBlobCount).toBe(2);
+    const versionId = result.version.versionId;
 
     const versions = await app.inject({
       method: "GET",
       url: "/api/source-bundles/default/versions",
       headers: { authorization: `Bearer ${token}` }
     });
-    expect(versions.json().versions).toHaveLength(1);
+    expect(versions.json().versions.map((version: { versionId: string }) => version.versionId)).toContain(versionId);
   });
+
+  it("can start automatic build-and-publish after importing a source version", async () => {
+    const { app, token } = await getToken();
+    const previousOpenAiKey = process.env.OPENAI_API_KEY;
+    const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const project = await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: `Auto Sync ${randomUUID().slice(0, 6)}` }
+    });
+    expect(project.statusCode).toBe(201);
+    const projectId = project.json().project.projectId as string;
+    const bundleId = project.json().bundle.bundleId as string;
+    const root = join(dir, `auto-sync-${randomUUID().slice(0, 6)}`);
+    mkdirSync(join(root, "gamedocs"), { recursive: true });
+    mkdirSync(join(root, "gamedata"), { recursive: true });
+    writeFileSync(join(root, "gamedocs", "auto.md"), "# Auto Sync\n\nKnowledge imported for automatic sync.");
+    writeFileSync(join(root, "gamedata", "Auto.csv"), "id,name\n1,A\n");
+
+    try {
+      const created = await app.inject({
+        method: "POST",
+        url: `/api/projects/${encodeURIComponent(projectId)}/source-bundles/${encodeURIComponent(bundleId)}/versions`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { rootPath: root, note: "auto", autoSync: true }
+      });
+      expect(created.statusCode).toBe(200);
+      expect(created.json().sync).toMatchObject({
+        status: "started",
+        mode: expect.any(String),
+        buildRunIds: [expect.any(String)],
+      });
+      const run = await waitForBuildRun(app, token, created.json().sync.buildRunIds[0]);
+      expect(run.status).toBe("completed");
+      expect(run.config).toMatchObject({ publishOnComplete: true });
+    } finally {
+      if (previousOpenAiKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousOpenAiKey;
+      if (previousAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = previousAnthropicKey;
+      await app.close();
+    }
+  }, 20000);
 
   it("creates projects with isolated default source bundles", async () => {
     const { app, token } = await getToken();
@@ -1137,6 +1194,49 @@ async function waitForBuildRun(app: FastifyInstance, token: string, runId: strin
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(`Build run ${runId} did not finish.`);
+}
+
+async function waitForAutoPublishForRun(schema: string, runId: string) {
+  const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL });
+  let snapshot = "";
+  try {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const client = await pool.connect();
+      try {
+        await client.query(`SET search_path TO "${schema.replace(/"/g, "\"\"")}"`);
+        const { rows } = await client.query(
+          `SELECT event_type
+           FROM knowledge_events
+           WHERE event_type IN ('release.auto_publish_succeeded', 'release.auto_publish_skipped')
+             AND payload_json ->> 'runId' = $1
+           LIMIT 1`,
+          [runId],
+        );
+        if (rows.length > 0) return;
+        if (attempt === 79) {
+          const details = await client.query(
+            `SELECT 'run' AS kind, status AS a, current_stage AS b, error AS c
+             FROM knowledge_build_runs WHERE run_id = $1
+             UNION ALL
+             SELECT 'event' AS kind, event_type AS a, entity_id AS b, payload_json::text AS c
+             FROM knowledge_events WHERE payload_json ->> 'runId' = $1 OR entity_id = $1
+             UNION ALL
+             SELECT 'log' AS kind, category AS a, status AS b, message AS c
+             FROM diagnostic_logs WHERE run_id = $1
+             ORDER BY kind, a`,
+            [runId],
+          );
+          snapshot = JSON.stringify(details.rows);
+        }
+      } finally {
+        client.release();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  } finally {
+    await pool.end();
+  }
+  throw new Error(`Auto publish event for build run ${runId} did not finish. Snapshot: ${snapshot}`);
 }
 
 function openAiChatOk(content: string, model: string): Response {

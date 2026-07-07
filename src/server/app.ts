@@ -54,6 +54,9 @@ export interface BuildAppOptions {
   jwtSecret: string;
   dataDir?: string;
   diagnosticLogger?: DiagnosticLogger;
+  closeDatabaseOnClose?: boolean;
+  enableBackgroundAutomations?: boolean;
+  enableLintRemediationAutomation?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -106,29 +109,38 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       logRetentionDays: config.logRetentionDays
     })
   };
-  const unsubscribeFeedbackAutomation = registerFeedbackAutomation({
-    db: options.db,
-    kbBuilderService: ctx.kbBuilderService,
-    diagnostics,
-  });
-  const unsubscribeAnnotationWritebackAutomation = registerAnnotationWritebackAutomation({
-    db: options.db,
-    kbBuilderService: ctx.kbBuilderService,
-    diagnostics,
-  });
-  const unsubscribeLintRemediationAutomation = registerLintRemediationAutomation({
-    db: options.db,
-    lintRemediationService: ctx.lintRemediationService,
-    kbBuilderService: ctx.kbBuilderService,
-    requestedBy: "system",
-  });
-  const unsubscribeReleaseAutomation = registerReleaseAutomation({
-    db: options.db,
-    releaseService: ctx.releaseService,
-    diagnostics,
-    autoPublishRevisions: config.autoPublishRevisions,
-  });
-  const unsubscribeAutoRemediation = config.autoRemediationEnabled
+  const backgroundAutomationsEnabled = options.enableBackgroundAutomations !== false;
+  const unsubscribeFeedbackAutomation = backgroundAutomationsEnabled
+    ? registerFeedbackAutomation({
+        db: options.db,
+        kbBuilderService: ctx.kbBuilderService,
+        diagnostics,
+      })
+    : () => {};
+  const unsubscribeAnnotationWritebackAutomation = backgroundAutomationsEnabled
+    ? registerAnnotationWritebackAutomation({
+        db: options.db,
+        kbBuilderService: ctx.kbBuilderService,
+        diagnostics,
+      })
+    : () => {};
+  const unsubscribeLintRemediationAutomation = !backgroundAutomationsEnabled || options.enableLintRemediationAutomation === false
+    ? () => {}
+    : registerLintRemediationAutomation({
+        db: options.db,
+        lintRemediationService: ctx.lintRemediationService,
+        kbBuilderService: ctx.kbBuilderService,
+        requestedBy: "system",
+      });
+  const unsubscribeReleaseAutomation = backgroundAutomationsEnabled
+    ? registerReleaseAutomation({
+        db: options.db,
+        releaseService: ctx.releaseService,
+        diagnostics,
+        autoPublishRevisions: config.autoPublishRevisions,
+      })
+    : () => {};
+  const unsubscribeAutoRemediation = backgroundAutomationsEnabled && config.autoRemediationEnabled
     ? registerAutoRemediation({
         db: options.db,
         knowledgeService: ctx.service,
@@ -179,7 +191,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     unsubscribeAnnotationWritebackAutomation();
     unsubscribeLintRemediationAutomation();
     unsubscribeAutoRemediation();
-    await options.db.close();
+    if (options.closeDatabaseOnClose !== false) await options.db.close();
   });
   return app;
 }

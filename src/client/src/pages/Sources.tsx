@@ -106,11 +106,14 @@ export function Sources() {
   });
   const importUploadedFiles = async () => {
     if (selectedFiles.length === 0) throw new Error("请选择文件或目录。");
-    return uploadSourceBundle(bundleId, selectedFiles, note.trim() || undefined, currentProjectId);
+    return uploadSourceBundle(bundleId, selectedFiles, note.trim() || undefined, currentProjectId, true);
   };
   const handleImportResult = async (result: Awaited<ReturnType<typeof importSourceBundle>>) => {
+    const syncText = result.sync
+      ? ` 已自动启动${result.sync.mode === "incremental" ? "增量" : "全量"}构建并发布：${result.sync.message}`
+      : "";
     setMessage(
-      `已生成版本 ${result.version.label}：新增 ${result.version.addedCount}，修改 ${result.version.modifiedCount}，删除 ${result.version.removedCount}，未变 ${result.version.unchangedCount}（新增 blob ${result.newBlobCount}）。`
+      `已生成版本 ${result.version.label}：新增 ${result.version.addedCount}，修改 ${result.version.modifiedCount}，删除 ${result.version.removedCount}，未变 ${result.version.unchangedCount}（新增 blob ${result.newBlobCount}）。${syncText}`
     );
     setSelectedVersion(result.version.versionId);
     setSelectedPath(result.changes.find((change) => change.kind !== "removed")?.logicalPath ?? "");
@@ -273,7 +276,7 @@ export function Sources() {
                     setMessage("");
                     setError("");
                     try {
-                      const result = await importSourceBundle(bundleId, rootPath.trim(), note.trim() || undefined, currentProjectId);
+                      const result = await importSourceBundle(bundleId, rootPath.trim(), note.trim() || undefined, currentProjectId, true);
                       await handleImportResult(result);
                     } catch (err) {
                       setError(err instanceof Error ? err.message : "导入失败。");

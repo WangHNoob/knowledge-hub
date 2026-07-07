@@ -95,6 +95,7 @@ export interface ImportBundleResult {
   version: SourceBundleVersion;
   changes: SourceFileChange[];
   newBlobCount: number;
+  sync?: FlywheelSyncResult;
 }
 
 export interface AssetPackage {

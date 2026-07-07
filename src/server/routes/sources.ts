@@ -124,13 +124,14 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
         return reply.code(404).send({ error: "未找到该资料库。" });
       }
       try {
-        return await ctx.bundleService.importDirectoryAsVersion({
+        const result = await ctx.bundleService.importDirectoryAsVersion({
           rootPath: parsed.data.rootPath,
           bundleId: parsed.data.bundleId ?? request.params.bundleId,
           projectId: request.params.projectId,
           note: parsed.data.note,
           createdBy: request.user.username
         });
+        return await withAutoSync({ ctx, request, projectId: request.params.projectId, result, autoSync: parsed.data.autoSync === true });
       } catch (error) {
         return reply.code(400).send({ error: error instanceof Error ? error.message : "导入失败。" });
       }
@@ -224,7 +225,7 @@ export function registerSourceRoutes(app: FastifyInstance, ctx: RouteContext) {
           fileCount: result.version.fileCount,
           totalBytes: result.version.totalBytes
         });
-        return result;
+        return await withAutoSync({ ctx, request, projectId: "default_project", result, autoSync: parsed.data.autoSync === true });
       } catch (error) {
         await span.fail(error);
         return reply.code(400).send({ error: error instanceof Error ? error.message : "导入失败。" });
@@ -260,11 +261,13 @@ async function handleUpload(input: {
     context: { projectId, bundleId, uploadRoot }
   });
   let note = "";
+  let autoSync = false;
   let fileCount = 0;
   try {
     for await (const part of request.parts()) {
       if (part.type === "field") {
         if (part.fieldname === "note") note = String(part.value ?? "");
+        if (part.fieldname === "autoSync") autoSync = parseBooleanField(part.value);
         continue;
       }
       const relativePath = safeUploadPath(part.filename);
@@ -286,11 +289,33 @@ async function handleUpload(input: {
       createdBy: request.user.username
     });
     await span.complete({ fileCount, versionId: result.version.versionId, totalBytes: result.version.totalBytes });
-    return result;
+    return await withAutoSync({ ctx, request, projectId, result, autoSync });
   } catch (error) {
     await span.fail(error, { fileCount });
     return reply.code(400).send({ error: describeUploadError(error) });
   }
+}
+
+function parseBooleanField(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return false;
+  return ["true", "1", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+async function withAutoSync(input: {
+  ctx: RouteContext;
+  request: any;
+  projectId: string;
+  result: any;
+  autoSync: boolean;
+}) {
+  if (!input.autoSync) return input.result;
+  const sync = await input.ctx.flywheelService.sync({
+    projectId: input.projectId,
+    requestedBy: input.request.user.username,
+    traceId: input.request.traceId,
+  });
+  return { ...input.result, sync };
 }
 
 async function requireProjectVersion(

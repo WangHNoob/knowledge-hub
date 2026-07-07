@@ -67,11 +67,12 @@ export async function importSourceBundle(
   bundleId: string,
   rootPath: string,
   note?: string,
-  projectId?: string
+  projectId?: string,
+  autoSync = false
 ): Promise<ImportBundleResult> {
   return postJson<ImportBundleResult>(
     `${sourcePrefix(bundleId, projectId)}/versions`,
-    { rootPath, note }
+    { rootPath, note, autoSync }
   );
 }
 
@@ -79,10 +80,12 @@ export async function uploadSourceBundle(
   bundleId: string,
   files: File[],
   note?: string,
-  projectId?: string
+  projectId?: string,
+  autoSync = false
 ): Promise<ImportBundleResult> {
   const form = new FormData();
   if (note) form.set("note", note);
+  if (autoSync) form.set("autoSync", "true");
   for (const file of files) {
     const relativePath = webkitRelativePath(file) || file.name;
     form.append("files", file, relativePath);

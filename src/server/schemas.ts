@@ -54,7 +54,8 @@ export const updateProjectSchema = z.object({
 export const importBundleSchema = z.object({
   rootPath: z.string().min(1),
   bundleId: z.string().min(1).optional(),
-  note: z.string().max(1024).optional()
+  note: z.string().max(1024).optional(),
+  autoSync: z.boolean().optional()
 });
 
 export const pipelineStageSchema = z.enum(["convert", "extract", "tables", "graph", "viz"]);
