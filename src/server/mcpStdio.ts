@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { config } from "./config";
 import { createDatabase } from "./db";
 import { createKnowledgeMcpServer } from "./mcpTools";
+import { createGovernanceProfileService } from "./services/governanceProfileService";
 import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 
 const root = process.cwd();
@@ -12,7 +13,12 @@ const dataDir = isAbsolute(config.dataDir) ? config.dataDir : resolve(root, conf
 const db = await createDatabase({
   databaseUrl: config.databaseUrl,
 });
-const queryService = createKnowledgeQueryService(db, dataDir);
+const governanceProfileService = createGovernanceProfileService(db, {
+  autoPublishRevisions: config.autoPublishRevisions,
+  lintAutoGovernanceEnabled: config.autoRemediationEnabled,
+  lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
+});
+const queryService = createKnowledgeQueryService(db, dataDir, undefined, governanceProfileService);
 
 const server = createKnowledgeMcpServer(queryService, {
   sessionId: "mcp-stdio",

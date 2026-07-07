@@ -11,7 +11,7 @@ import { createFeedbackService, type FeedbackService, type FeedbackType } from "
 import { AutoPublishEligibilityError, createReleaseService, type AutoPublishCheck } from "./releaseService";
 import { createKbBuilderPipelineService } from "./kbBuilderService";
 import { createLintRemediationService } from "./lintRemediationService";
-import { createGovernanceProfileService } from "./governanceProfileService";
+import { createGovernanceProfileService, type GovernanceProfileService } from "./governanceProfileService";
 import { emitKnowledgeEvent } from "./eventService";
 import { createSourceBundleService } from "./sourceBundleService";
 import { createProjectService } from "./projectService";
@@ -233,8 +233,8 @@ interface HealthCorrectionSummary {
   updatedAt: string;
 }
 
-export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
-  return new KnowledgeQueryService(db, dataDir, diagnostics);
+export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger, governanceProfileService?: GovernanceProfileService) {
+  return new KnowledgeQueryService(db, dataDir, diagnostics, governanceProfileService);
 }
 
 export class KnowledgeQueryService {
@@ -246,14 +246,19 @@ export class KnowledgeQueryService {
   private readonly lintRemediationService;
   private readonly governanceProfileService;
 
-  constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
+  constructor(
+    private readonly db: DatabaseHandle,
+    private readonly dataDir: string,
+    private readonly diagnostics?: DiagnosticLogger,
+    governanceProfileService?: GovernanceProfileService,
+  ) {
     this.adapter = db.adapter;
     this.releaseService = createReleaseService(db, dataDir, diagnostics);
     this.sourceService = createSourceBundleService(db, dataDir);
     this.feedback = createFeedbackService(db);
     this.builderService = createKbBuilderPipelineService(db, dataDir, diagnostics);
     this.lintRemediationService = createLintRemediationService(db);
-    this.governanceProfileService = createGovernanceProfileService(db);
+    this.governanceProfileService = governanceProfileService ?? createGovernanceProfileService(db);
   }
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {

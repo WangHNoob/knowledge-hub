@@ -7,6 +7,7 @@ import xlsx from "xlsx";
 import { createKnowledgeQueryService } from "../src/server/services/knowledgeQueryService";
 import { createKnowledgeService } from "../src/server/services/knowledgeService";
 import { createKbBuilderPipelineService } from "../src/server/services/kbBuilderService";
+import { createGovernanceProfileService } from "../src/server/services/governanceProfileService";
 import { registerFeedbackAutomation } from "../src/server/services/feedbackAutomationService";
 import { createReleaseService } from "../src/server/services/releaseService";
 import { createSourceBundleService } from "../src/server/services/sourceBundleService";
@@ -28,6 +29,17 @@ describe("KnowledgeQueryService", () => {
           release: { autoPublishRevisions: true },
           lint: { autoGovernanceEnabled: true },
         },
+      });
+      const customGovernance = createGovernanceProfileService(db, {
+        autoPublishRevisions: false,
+        lintAutoGovernanceEnabled: false,
+        lintAutoEligibleThreshold: 0.42,
+      });
+      const customService = createKnowledgeQueryService(db, dataDir, undefined, customGovernance);
+      const customHealth = await customService.runTool("kb_run_health_check", {}, { sessionId: "test", agentRole: "planner" });
+      expect(customHealth.result.policy).toMatchObject({
+        release: { autoPublishRevisions: false },
+        lint: { autoGovernanceEnabled: false, autoEligibleThreshold: 0.42 },
       });
       await expect(service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" }))
         .rejects.toThrow(/No current published release/i);

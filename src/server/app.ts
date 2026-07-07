@@ -100,7 +100,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     releaseService,
     lintRemediationService,
     governanceProfileService,
-    queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
+    queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics, governanceProfileService),
     legislationService: createLegislationService(options.db),
     attributionAuditService: createAttributionAuditService(options.db),
     projectService,
