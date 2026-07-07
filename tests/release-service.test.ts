@@ -394,10 +394,14 @@ describe("ReleaseService", () => {
   it("auto publishes eligible revision drafts when release automation is enabled", async () => {
     const fixture = await setupReleaseFixture({ packageId: "pkg_event_auto" });
     const service = createReleaseService(fixture.db, fixture.dataDir);
+    const policyProjects: string[] = [];
     const unsubscribe = registerReleaseAutomation({
       db: fixture.db,
       releaseService: service,
-      autoPublishRevisions: true,
+      autoPublishRevisions: async (projectId) => {
+        policyProjects.push(projectId);
+        return true;
+      },
     });
 
     try {
@@ -422,6 +426,7 @@ describe("ReleaseService", () => {
       expect(published.status).toBe("published");
       expect(published.parent_release_id).toBe(current.releaseId);
       expect((await service.getCurrent())?.releaseId).toBe(published.release_id);
+      expect(policyProjects).toContain("default_project");
       const event = await waitForKnowledgeEvent(fixture.db, "release.auto_publish_succeeded", String(published.release_id));
       expect(event.payload_json).toMatchObject({ releaseId: published.release_id, runId: "run_event_auto" });
     } finally {

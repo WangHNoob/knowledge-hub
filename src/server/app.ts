@@ -137,7 +137,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         db: options.db,
         releaseService: ctx.releaseService,
         diagnostics,
-        autoPublishRevisions: config.autoPublishRevisions,
+        autoPublishRevisions: async (projectId) => (await ctx.governanceProfileService.resolve(projectId)).release.autoPublishRevisions,
       })
     : () => {};
   const unsubscribeAutoRemediation = backgroundAutomationsEnabled && config.autoRemediationEnabled

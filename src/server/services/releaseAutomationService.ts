@@ -7,7 +7,7 @@ export function registerReleaseAutomation(options: {
   db: DatabaseHandle;
   releaseService: ReleaseService;
   diagnostics?: DiagnosticLogger;
-  autoPublishRevisions?: boolean;
+  autoPublishRevisions?: boolean | ((projectId: string) => boolean | Promise<boolean>);
 }): () => void {
   return onKnowledgeEvent("build.completed", (event) => {
     void (async () => {
@@ -55,7 +55,7 @@ export function registerReleaseAutomation(options: {
           context: { packageId, only },
         });
       }
-      if (options.autoPublishRevisions && result.release) {
+      if (result.release && await shouldAutoPublishRevisions(options.autoPublishRevisions, projectId)) {
         await tryAutoPublishRevision({
           db: options.db,
           releaseService: options.releaseService,
@@ -82,6 +82,13 @@ export function registerReleaseAutomation(options: {
       });
     });
   });
+}
+
+async function shouldAutoPublishRevisions(
+  policy: boolean | ((projectId: string) => boolean | Promise<boolean>) | undefined,
+  projectId: string,
+): Promise<boolean> {
+  return typeof policy === "function" ? Boolean(await policy(projectId)) : Boolean(policy);
 }
 
 async function publishCompletedBuild(options: {
