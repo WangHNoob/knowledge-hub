@@ -23,7 +23,7 @@ describe("review task transitions", () => {
     schema = `test_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     db = await createDatabase({ databaseUrl: TEST_DATABASE_URL, schema });
     dir = mkdtempSync(join(tmpdir(), "kh-review-"));
-    app = await buildApp({ db, jwtSecret: "test-secret", dataDir: dir });
+    app = await buildApp({ db, jwtSecret: "test-secret", dataDir: dir, enableBackgroundAutomations: false });
     const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { username: "admin", password: "adminpw" } });
     auth = { authorization: `Bearer ${login.json<{ token: string }>().token}` };
 

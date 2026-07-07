@@ -43,6 +43,8 @@ type ExtractOptions = {
   frozenPages?: FrozenExtractPage[];
   pendingUnfrozenCorrections?: PendingUnfrozenCorrection[];
   onProgress?: (info: { message: string; index: number; total: number }) => void;
+  /** 协作式中断：每个文档抽取前调用；若构建已被停止（DB 状态非 running）应抛错，使 extract 中途即可退出。 */
+  checkActive?: () => Promise<void>;
 };
 
 export interface PromptAnnotationExample {
@@ -117,6 +119,7 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
   const frozenBySourcePath = frozenPagesBySourcePath(options.frozenPages ?? []);
   const pendingUnfrozenBySourcePath = pendingUnfrozenBySourcePathMap(options.pendingUnfrozenCorrections ?? []);
   for (let index = 0; index < files.length; index += 1) {
+    if (options.checkActive) await options.checkActive();
     const absolute = files[index];
     const rel = relative(parsedDir, absolute).replace(/\\/g, "/");
 

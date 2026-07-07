@@ -1,4 +1,4 @@
-import { ArrowRight, EyeOff, RefreshCw, RotateCcw, ShieldAlert, Sparkles, Workflow } from "lucide-react";
+import { ArrowRight, EyeOff, RefreshCw, RotateCcw, ShieldAlert, Sparkles, Square, Workflow } from "lucide-react";
 import { useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -8,6 +8,7 @@ import {
   getFlywheelStatus,
   listDismissedExceptions,
   restoreException,
+  stopFlywheelBuilds,
   syncFlywheel,
   type DismissedException,
   type FlywheelAutomationItem,
@@ -46,6 +47,14 @@ export function Dashboard() {
 
   const syncMutation = useMutation({
     mutationFn: () => syncFlywheel(currentProjectId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", currentProjectId] });
+    },
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: () => stopFlywheelBuilds(currentProjectId),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard", currentProjectId] });
@@ -133,16 +142,33 @@ export function Dashboard() {
               {syncMutation.error instanceof Error ? syncMutation.error.message : "同步失败，请重试。"}
             </p>
           )}
+          {stopMutation.data && (
+            <p className="command-note">已请求停止 {stopMutation.data.stopped} 个构建；正在跑的会在当前文档/超时后退出。</p>
+          )}
         </div>
-        <button
-          className="primary-action"
-          type="button"
-          disabled={status.primaryAction.action === "sync_and_publish" && isSyncing}
-          onClick={() => runPrimaryAction(status.primaryAction)}
-        >
-          {status.primaryAction.action === "sync_and_publish" && isSyncing ? "正在同步…" : status.primaryAction.label}
-          {status.primaryAction.action === "sync_and_publish" ? <RefreshCw size={16} /> : <ArrowRight size={16} />}
-        </button>
+        <div className="command-actions">
+          <button
+            className="primary-action"
+            type="button"
+            disabled={status.primaryAction.action === "sync_and_publish" && isSyncing}
+            onClick={() => runPrimaryAction(status.primaryAction)}
+          >
+            {status.primaryAction.action === "sync_and_publish" && isSyncing ? "正在同步…" : status.primaryAction.label}
+            {status.primaryAction.action === "sync_and_publish" ? <RefreshCw size={16} /> : <ArrowRight size={16} />}
+          </button>
+          {status.metrics.runningBuilds > 0 && (
+            <button
+              className="secondary-action danger"
+              type="button"
+              disabled={stopMutation.isPending}
+              onClick={() => stopMutation.mutate()}
+              title="停止该项目当前所有正在运行的构建"
+            >
+              <Square size={15} />
+              {stopMutation.isPending ? "停止中…" : `停止构建（${status.metrics.runningBuilds}）`}
+            </button>
+          )}
+        </div>
       </section>
 
       <div className="metrics workbench-metrics">

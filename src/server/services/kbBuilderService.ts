@@ -258,6 +258,7 @@ export class KbBuilderPipelineService {
             context: { stage: "extract", index: info.index, total: info.total },
           });
         },
+        checkActive: () => this.ensureRunActive(runId),
       }));
       await this.ensureRunActive(runId);
       if (stages.includes("tables")) await this.withStage(runId, options, "tables", async () => runTableStage({
@@ -503,6 +504,18 @@ export class KbBuilderPipelineService {
     const { rowCount } = await this.adapter.query(
       "UPDATE knowledge_build_runs SET status = 'failed', finished_at = $1, error = $2 WHERE status = 'running'",
       [new Date().toISOString(), reason],
+    );
+    return rowCount ?? 0;
+  }
+
+  /**
+   * 停止某项目当前所有 running 构建（把 DB 行置为 failed）。配合 extract 的协作式中断
+   * (checkActive) 与 LLM 请求超时，正在跑的构建会在下一个文档/超时后退出。返回停止数量。
+   */
+  async stopRunningBuilds(projectId: string, requestedBy: string): Promise<number> {
+    const { rowCount } = await this.adapter.query(
+      "UPDATE knowledge_build_runs SET status = 'failed', finished_at = $2, error = $3 WHERE project_id = $1 AND status = 'running'",
+      [projectId, new Date().toISOString(), `Stopped by ${requestedBy}`],
     );
     return rowCount ?? 0;
   }

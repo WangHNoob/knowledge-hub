@@ -1768,6 +1768,13 @@ button.writeback-step:disabled {
   box-shadow: var(--shadow);
 }
 
+.command-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+}
+
 .flywheel-command.attention {
   border-color: rgba(201, 162, 39, 0.36);
 }

@@ -2,6 +2,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { APICallError, generateText, jsonSchema, NoObjectGeneratedError, Output, type LanguageModel } from "ai";
 import type { PipelineModelConfig } from "./modelConfig";
+import { probeTimeoutMs, requestTimeoutMs } from "./modelConfig";
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -85,7 +86,7 @@ class AiSdkLlmClient implements LlmClient {
     let level = this.desiredLevel(request);
     while (true) {
       try {
-        return await this.generate(request, level);
+        return await this.generate(request, level, requestTimeoutMs());
       } catch (error) {
         if (level > 0 && isStructuredOutputFailure(error)) {
           level = (level - 1) as JsonLevel;
@@ -99,9 +100,14 @@ class AiSdkLlmClient implements LlmClient {
 
   async ping(request: LlmCompletionRequest): Promise<void> {
     try {
-      await this.generate(request, 0);
+      await this.generate(request, 0, probeTimeoutMs());
     } catch (error) {
-      throw toLlmError(this.model, error, endpointForError(this.config));
+      const llmError = toLlmError(this.model, error, endpointForError(this.config));
+      // 2xx 表示端点 / 鉴权 / 模型都已就绪——探针目的就是验证这三者。推理模型在极小
+      // max_tokens 下可能只产出 thinking、没有 text 内容而被 SDK 判为错误，但 HTTP 状态仍是
+      // 200，连接其实是成功的。只有非 2xx（4xx/5xx）或网络错误才算连接失败。
+      if (llmError.status != null && llmError.status >= 200 && llmError.status < 300) return;
+      throw llmError;
     }
   }
 
@@ -130,13 +136,14 @@ class AiSdkLlmClient implements LlmClient {
     return provider(this.model);
   }
 
-  private async generate(request: LlmCompletionRequest, level: JsonLevel): Promise<LlmCompletionResult> {
+  private async generate(request: LlmCompletionRequest, level: JsonLevel, timeoutMs: number): Promise<LlmCompletionResult> {
     const base = {
       model: this.languageModel(level),
       system: request.system,
       prompt: request.user,
       maxOutputTokens: request.maxTokens,
       maxRetries: 0,
+      abortSignal: AbortSignal.timeout(timeoutMs),
     };
 
     if (level === 2 && request.jsonSchema) {
@@ -199,11 +206,21 @@ export function extractErrorMessage(body: string, fallback: string): string {
 
 function toLlmError(model: string, error: unknown, endpoint?: string): LlmError {
   if (error instanceof LlmError) return error;
+  if (isTimeoutError(error)) {
+    const where = endpoint ? `（请求地址：${endpoint}）` : "";
+    return new LlmError(`${model} request timed out${where}：供应商在超时时间内未响应，请检查 Base URL / 网络，或调大 KH_LLM_REQUEST_TIMEOUT_MS。`);
+  }
   if (NoObjectGeneratedError.isInstance(error) && error.text) return new LlmError(error.message, { body: error.text });
   if (APICallError.isInstance(error)) {
     return httpError(model, error.statusCode ?? 0, statusText(error), error.responseBody ?? error.message, endpoint ?? error.url);
   }
   return new LlmError(error instanceof Error ? error.message : String(error));
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const name = (error as { name?: unknown }).name;
+  return name === "TimeoutError" || name === "AbortError";
 }
 
 function isStructuredOutputFailure(error: unknown): boolean {

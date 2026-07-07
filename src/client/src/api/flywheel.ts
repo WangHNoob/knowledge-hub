@@ -82,3 +82,7 @@ export async function rebuildComponent(componentId: string, projectId?: string):
 export async function rebuildGraph(projectId?: string): Promise<FlywheelSyncResult> {
   return postJson<FlywheelSyncResult>(`${flywheelBase(projectId)}/graph/rebuild`, {});
 }
+
+export async function stopFlywheelBuilds(projectId?: string): Promise<{ stopped: number }> {
+  return postJson<{ stopped: number }>(`${flywheelBase(projectId)}/builds/stop`, {});
+}

@@ -66,6 +66,18 @@ export function registerFlywheelRoutes(app: FastifyInstance, ctx: RouteContext) 
     async (request, reply) => runGraphRebuild(ctx, reply, request, request.params.projectId),
   );
 
+  // 停止该项目当前所有 running 构建（一键同步/自动流水线的紧急刹车）。
+  app.post(
+    "/api/flywheel/builds/stop",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request) => ({ stopped: await ctx.kbBuilderService.stopRunningBuilds("default_project", request.user.username) }),
+  );
+  app.post<{ Params: { projectId: string } }>(
+    "/api/projects/:projectId/flywheel/builds/stop",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request) => ({ stopped: await ctx.kbBuilderService.stopRunningBuilds(request.params.projectId, request.user.username) }),
+  );
+
   app.get<{ Querystring: { releaseId?: string } }>(
     "/api/flywheel/remediations",
     { preHandler: app.authenticate },
