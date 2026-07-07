@@ -1,5 +1,6 @@
-// 一次性脚本：清空飞轮产生的所有数据（DB + 磁盘工作区），保留账号 / 原始资料 /
-// 翻译表 / 策划立法规则 / 质量门禁 Profile。DB 删除包在单个事务里，任一步失败即回滚。
+// 一次性脚本：清空飞轮产生的所有数据（DB + 磁盘工作区），包括例外收件箱 / 阻断类治理
+// 记录（lint 治理队列、例外软忽略、源侧纠正建议）。保留账号 / 原始资料 / 翻译表 /
+// 策划立法规则 / 质量门禁 Profile / 治理 Profile。DB 删除包在单个事务里，任一步失败即回滚。
 //
 // 用法：
 //   node scripts/reset-flywheel.mjs            # 清 DB + 磁盘工作区
@@ -27,6 +28,11 @@ const TARGETS = [
   "releases",
   "knowledge_build_runs",
   "asset_packages",        // 级联：asset_components / evidence_records / review_tasks / annotation_examples / rule_dismissals
+  // 以下均为飞轮产生的独立表（无 asset_packages/releases 外键级联，必须显式清），
+  // 承载「例外收件箱 / 阻断」等治理内容：
+  "knowledge_lint_remediations",  // OKF lint 治理队列（blocking/needs_human/failed 例外源）
+  "exception_dismissals",         // 例外软忽略记录
+  "source_corrections",           // 反馈派生的源侧纠正建议队列
   "knowledge_events",
   "agent_events",
   "mcp_audit",
@@ -49,6 +55,7 @@ const KEEP = [
   "table_aliases",
   "knowledge_rule_profiles",
   "quality_gate_profiles",
+  "knowledge_governance_profiles",
 ];
 
 // 磁盘上要清空内容（但保留目录本身）的飞轮工作区。
