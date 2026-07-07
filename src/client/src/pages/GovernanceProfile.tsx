@@ -29,9 +29,12 @@ export function GovernanceProfile() {
 
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ["governance-profile", currentProjectId] });
-    // 治理规则会影响飞轮例外与反馈聚合阈值，一并刷新。
+    // 治理规则会影响飞轮例外、Agent 聚合和 MCP 状态输出，一并刷新。
     await queryClient.invalidateQueries({ queryKey: ["flywheel-status", currentProjectId] });
     await queryClient.invalidateQueries({ queryKey: ["agent-feedback-clusters", currentProjectId] });
+    await queryClient.invalidateQueries({ queryKey: ["agent-flywheel-events", currentProjectId] });
+    await queryClient.invalidateQueries({ queryKey: ["agent-flywheel-convergence", currentProjectId] });
+    await queryClient.invalidateQueries({ queryKey: ["mcp-connect", currentProjectId] });
   };
 
   const saveMutation = useMutation({
