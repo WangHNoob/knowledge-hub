@@ -902,7 +902,7 @@ describe("knowledge hub api", () => {
       method: "POST",
       url: "/api/mcp/query",
       headers: { authorization: `Bearer ${token}` },
-      payload: { toolName: "kb_get_release", payload: {} }
+      payload: { toolName: "kb_get_release", payload: { projectId: "default_project" } }
     });
 
     expect(queried.statusCode).toBe(200);
