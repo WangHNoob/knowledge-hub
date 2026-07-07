@@ -1461,6 +1461,12 @@ export class KnowledgeQueryService {
     const reasons = [...blockingReasons, ...warningReasons];
     const status = blockingReasons.length > 0 ? "needs_attention" : warningReasons.length > 0 ? "warning" : "passed";
     const consumption = status === "needs_attention" ? "use_with_care" : "ready";
+    const recommendations = healthRecommendations(blockingReasons, warningReasons, {
+      pendingCorrections: pendingCorrectionSamples,
+      activeCorrections: activeCorrectionSamples,
+      lowTrust,
+      staleAudit,
+    });
     const result = {
       projectId,
       checkedAt: new Date().toISOString(),
@@ -1508,12 +1514,7 @@ export class KnowledgeQueryService {
         },
       },
       reasons,
-      recommendations: healthRecommendations(blockingReasons, warningReasons, {
-        pendingCorrections: pendingCorrectionSamples,
-        activeCorrections: activeCorrectionSamples,
-        lowTrust,
-        staleAudit,
-      }),
+      recommendations,
     };
     await emitKnowledgeEvent(this.db, {
       eventType: "knowledge_lint.health_checked",
@@ -1526,6 +1527,11 @@ export class KnowledgeQueryService {
         consumption,
         thresholds: { minTrustScore: trustThreshold, maxAuditAgeDays },
         reasons,
+        recommendations: recommendations.map((item) => ({
+          action: item.action,
+          tool: item.tool,
+          payload: item.payload ?? {},
+        })),
         actor: context.sessionId ?? "mcp-agent",
       },
     });

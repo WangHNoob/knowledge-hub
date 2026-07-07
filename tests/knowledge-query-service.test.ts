@@ -76,6 +76,10 @@ describe("KnowledgeQueryService", () => {
       const { rows: healthEvents } = await fixture.db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = 'knowledge_lint.health_checked'");
       expect(healthEvents).toHaveLength(1);
       expect(healthEvents[0].entity_id).toBe(fixture.releaseId);
+      const healthPayload = typeof healthEvents[0].payload_json === "string" ? JSON.parse(healthEvents[0].payload_json) : healthEvents[0].payload_json;
+      expect(healthPayload.recommendations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ tool: "kb_govern_flywheel", payload: { correctionId } }),
+      ]));
 
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
       expect(search.result.items[0].title).toBe("Battle System");
