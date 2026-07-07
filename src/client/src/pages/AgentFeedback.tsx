@@ -15,7 +15,7 @@ import { useProject } from "../ui/projectContext";
 // 每个工具的参数表单描述：与 src/server/mcpTools.ts 的 zod inputSchema 对齐，
 // 只暴露规范参数名（忽略 q/topK/tableName 等别名）。这样模拟查询时由表单按工具
 // 渲染对应字段，使用者无需手写 JSON payload。
-type McpFieldType = "text" | "number" | "textarea" | "kv";
+type McpFieldType = "text" | "number" | "textarea" | "kv" | "boolean";
 
 interface McpField {
   name: string;
@@ -120,7 +120,7 @@ const MCP_TOOL_SPECS: McpToolSpec[] = [
     { name: "correctionId", label: "修正 ID", type: "text", placeholder: "优先填写 correctionId" },
     { name: "componentId", label: "组件 ID", type: "text", placeholder: "没有 correctionId 时填写 componentId" },
     { name: "sourcePath", label: "来源路径", type: "text" },
-    { name: "runPendingLintRemediations", label: "执行待治理 Lint", type: "text", placeholder: "填 true 则执行 pending Knowledge Lint 治理队列" },
+    { name: "runPendingLintRemediations", label: "执行待治理 Lint", type: "boolean", hint: "勾选后执行 pending Knowledge Lint 治理队列" },
     { name: "limit", label: "治理数量上限", type: "number", placeholder: "默认 10，最高 50" },
   ] },
   { name: "kb_publish_if_ready", title: "门禁通过则发布", fields: [
@@ -166,6 +166,8 @@ function buildPayload(spec: McpToolSpec, form: Record<string, string>, whereRows
     if (field.type === "number") {
       const parsed = Number(raw);
       if (!Number.isNaN(parsed)) payload[field.name] = parsed;
+    } else if (field.type === "boolean") {
+      payload[field.name] = raw === "true";
     } else if (field.name === "suggestion") {
       try {
         payload[field.name] = JSON.parse(raw);
@@ -348,6 +350,15 @@ export function AgentFeedback() {
                         rows={3}
                         onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))}
                       />
+                    ) : field.type === "boolean" ? (
+                      <span className="switch-row">
+                        <input
+                          type="checkbox"
+                          checked={(form[field.name] ?? "") === "true"}
+                          onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.checked ? "true" : "" }))}
+                        />
+                        <span>{field.placeholder ?? "启用"}</span>
+                      </span>
                     ) : (
                       <input
                         type={field.type === "number" ? "number" : "text"}
