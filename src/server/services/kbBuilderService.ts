@@ -177,6 +177,7 @@ export class KbBuilderPipelineService {
         mergeIntoPackageId: options.mergeIntoPackageId,
         publishOnComplete: Boolean(options.publishOnComplete),
         releaseVersion: options.releaseVersion,
+        scopedStage: options.scopedStage,
         modelConfig: redactModelConfig(modelConfig),
         incremental: incrementalConfig(version.parentVersionId, sourceChanges),
         ruleProfile: {
@@ -287,7 +288,9 @@ export class KbBuilderPipelineService {
       const pkg = await this.withStage(runId, options, "persist", async () => {
         const sourceRefs = workspace.files.map((file) => file.logicalPath);
         const persistedArtifacts = options.mergeIntoPackageId
-          ? selectScopedArtifacts(artifacts, sourceRefs, options.only)
+          ? (options.scopedStage
+            ? selectStageArtifacts(artifacts, options.scopedStage)
+            : selectScopedArtifacts(artifacts, sourceRefs, options.only))
           : artifacts;
         const inserted = options.mergeIntoPackageId
           ? await this.upsertScopedPackageArtifacts(packageId, runId, options.versionId, sourceRefs, persistedArtifacts, quality, ruleProfile, flywheelSummary)
@@ -310,7 +313,7 @@ export class KbBuilderPipelineService {
           packageId,
           sourceVersionId: options.versionId,
           requestedBy: options.requestedBy,
-          only: options.only,
+          only: options.only || (options.scopedStage ? SCOPED_STAGE_MARKER[options.scopedStage] : ""),
           overallScore: quality.overallScore,
           blockingCount: quality.blockingCount,
           warningCount: quality.warningCount,
@@ -542,6 +545,9 @@ export class KbBuilderPipelineService {
     traceId?: string;
     rebuildTaskId?: string;
     sourcePath?: string;
+    modelConfig?: PipelineModelConfig;
+    publishOnComplete?: boolean;
+    releaseVersion?: string;
   }): Promise<KnowledgeBuildRun> {
     if (input.rebuildTaskId) {
       const existing = await this.findExistingRebuildRun(input.rebuildTaskId);
@@ -560,13 +566,14 @@ export class KbBuilderPipelineService {
         + `请先补齐组件 source_refs，或手动发起全量构建。`,
       );
     }
+    const modelConfig: PipelineModelConfig = input.modelConfig ?? { provider: "deterministic", model: "deterministic" };
     const run = await this.startBuild({
       bundleId: version.bundleId,
       versionId,
       requestedBy: input.requestedBy,
       stages: STAGE_ORDER,
-      model: "deterministic",
-      modelConfig: { provider: "deterministic", model: "deterministic" },
+      model: modelName(modelConfig),
+      modelConfig,
       force: true,
       only,
       qualityProfileId: "default",
@@ -574,8 +581,72 @@ export class KbBuilderPipelineService {
       rebuildTaskId: input.rebuildTaskId,
       mergeIntoPackageId: target.packageId,
       generateAliases: false,
+      publishOnComplete: input.publishOnComplete,
+      releaseVersion: input.releaseVersion,
     });
     return run;
+  }
+
+  /**
+   * 图谱阶段级重建：对当前发布中图谱所属的包做一次全量流水线（重建派生图谱所需的 _meta），
+   * 但只把 graph 阶段产出的组件（graph_snapshot/graph_view/topic_index）合并回该包，
+   * 其余组件不动；随后作为当前发布的修订发布（不影响未受影响的部分）。
+   *
+   * 权衡：因为没有跨运行的 extract 缓存，本次会重新运行抽取阶段（有模型开销），
+   * 以换取健壮性——避免从散落在各 run 工作区的存量组件文件里还原 _meta 时的路径解析问题。
+   */
+  async startGraphRebuild(input: {
+    projectId: string;
+    requestedBy: string;
+    traceId?: string;
+    modelConfig?: PipelineModelConfig;
+    publishOnComplete?: boolean;
+    releaseVersion?: string;
+  }): Promise<KnowledgeBuildRun> {
+    const target = await this.findGraphRebuildTarget(input.projectId);
+    if (!target) {
+      throw new Error("当前发布中找不到知识图谱组件，无法单独重建。请先完成一次全量构建并发布。");
+    }
+    const version = await createSourceBundleService(this.db, this.dataDir).getVersion(target.versionId);
+    if (!version) throw new Error(`Unknown source version: ${target.versionId}`);
+    const modelConfig: PipelineModelConfig = input.modelConfig ?? { provider: "deterministic", model: "deterministic" };
+    return this.startBuild({
+      bundleId: version.bundleId,
+      versionId: target.versionId,
+      projectId: input.projectId,
+      requestedBy: input.requestedBy,
+      stages: STAGE_ORDER,
+      model: modelName(modelConfig),
+      modelConfig,
+      force: false,
+      only: null,
+      qualityProfileId: "default",
+      traceId: input.traceId,
+      mergeIntoPackageId: target.packageId,
+      generateAliases: false,
+      scopedStage: "graph",
+      publishOnComplete: input.publishOnComplete,
+      releaseVersion: input.releaseVersion,
+    });
+  }
+
+  private async findGraphRebuildTarget(projectId: string): Promise<{ packageId: string; versionId: string } | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT c.package_id, p.source_version_ids
+       FROM release_channels ch
+       JOIN releases r ON r.release_id = ch.current_release_id
+       JOIN asset_components c
+         ON c.kind = 'graph_snapshot'
+        AND c.package_id IN (SELECT jsonb_array_elements_text(r.package_ids))
+       JOIN asset_packages p ON p.package_id = c.package_id
+       WHERE ch.channel_id = $1 AND ch.project_id = $2
+       LIMIT 1`,
+      [`project:${projectId}:default`, projectId],
+    );
+    if (rows.length === 0) return null;
+    const versionId = jsonValue<string[]>(rows[0].source_version_ids, [])[0];
+    if (!versionId) return null;
+    return { packageId: String(rows[0].package_id), versionId };
   }
 
   private async findScopedRebuildTarget(componentId: string): Promise<ScopedRebuildTarget> {
@@ -1282,6 +1353,20 @@ function mergeQualityRules(profile: QualityGateConfig, rules: KnowledgeRuleConfi
       ...rules.qualityRules,
     },
   };
+}
+
+const SCOPED_STAGE_MARKER: Record<NonNullable<BuildPipelineOptions["scopedStage"]>, string> = {
+  graph: "wiki/graph.json",
+};
+
+const SCOPED_STAGE_KINDS: Record<NonNullable<BuildPipelineOptions["scopedStage"]>, ReadonlySet<string>> = {
+  graph: new Set(["graph_snapshot", "graph_view", "topic_index"]),
+};
+
+/** 阶段级选择：只保留指定阶段产出的组件（其余组件不合并回包，从而只 patch 该阶段）。 */
+function selectStageArtifacts(artifacts: CollectedArtifact[], scopedStage: NonNullable<BuildPipelineOptions["scopedStage"]>): CollectedArtifact[] {
+  const kinds = SCOPED_STAGE_KINDS[scopedStage];
+  return artifacts.filter((artifact) => kinds.has(artifact.kind));
 }
 
 function selectScopedArtifacts(artifacts: CollectedArtifact[], sourceRefs: string[], only: string | null): CollectedArtifact[] {

@@ -1,11 +1,15 @@
-import { ArrowRight, RefreshCw, ShieldAlert, Sparkles, Workflow } from "lucide-react";
+import { ArrowRight, EyeOff, RefreshCw, RotateCcw, ShieldAlert, Sparkles, Workflow } from "lucide-react";
 import { useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  dismissException,
   getDashboard,
   getFlywheelStatus,
+  listDismissedExceptions,
+  restoreException,
   syncFlywheel,
+  type DismissedException,
   type FlywheelAutomationItem,
   type FlywheelPrimaryAction,
   type FlywheelStatus,
@@ -47,6 +51,36 @@ export function Dashboard() {
       void queryClient.invalidateQueries({ queryKey: ["dashboard", currentProjectId] });
     },
   });
+
+  const dismissedQuery = useQuery({
+    queryKey: ["flywheel", "dismissed", currentProjectId],
+    queryFn: () => listDismissedExceptions(currentProjectId),
+  });
+
+  const invalidateExceptions = () => {
+    void queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
+    void queryClient.invalidateQueries({ queryKey: ["flywheel", "dismissed", currentProjectId] });
+  };
+
+  const dismissMutation = useMutation({
+    mutationFn: (input: { item: HumanException; reason: string }) =>
+      dismissException(
+        { key: input.item.id, exceptionType: input.item.type, title: input.item.title, reason: input.reason },
+        currentProjectId,
+      ),
+    onSettled: invalidateExceptions,
+  });
+
+  const restoreMutation = useMutation({
+    mutationFn: (key: string) => restoreException(key, currentProjectId),
+    onSettled: invalidateExceptions,
+  });
+
+  const handleDismiss = (item: HumanException) => {
+    const reason = window.prompt(`忽略「${item.title}」的原因（可选，仅用于留痕）：`, "");
+    if (reason === null) return; // 用户取消
+    dismissMutation.mutate({ item, reason: reason.trim() });
+  };
 
   const status = statusQuery.data;
 
@@ -134,10 +168,21 @@ export function Dashboard() {
               <p className="lane-empty">没有需要人工处理的例外，飞轮在自动运转。</p>
             ) : (
               status.attentionItems.map((item) => (
-                <ExceptionCard key={item.id} item={item} onOpen={() => openException(navigate, item)} />
+                <ExceptionCard
+                  key={item.id}
+                  item={item}
+                  onOpen={() => openException(navigate, item)}
+                  onDismiss={() => handleDismiss(item)}
+                  dismissing={dismissMutation.isPending}
+                />
               ))
             )}
           </div>
+          <DismissedExceptions
+            items={dismissedQuery.data ?? []}
+            onRestore={(key) => restoreMutation.mutate(key)}
+            restoring={restoreMutation.isPending}
+          />
         </section>
 
         <section className="workbench-lane">
@@ -177,7 +222,17 @@ export function Dashboard() {
   );
 }
 
-function ExceptionCard({ item, onOpen }: { item: HumanException; onOpen: () => void }) {
+function ExceptionCard({
+  item,
+  onOpen,
+  onDismiss,
+  dismissing,
+}: {
+  item: HumanException;
+  onOpen: () => void;
+  onDismiss: () => void;
+  dismissing: boolean;
+}) {
   return (
     <article className="workbench-card risk">
       <div className="card-row">
@@ -190,9 +245,54 @@ function ExceptionCard({ item, onOpen }: { item: HumanException; onOpen: () => v
       <p className="exception-fix"><b>建议：</b>{item.recommendedAction}</p>
       <div className="card-row">
         <button className="secondary-action" type="button" onClick={onOpen}>{item.primaryAction.label}</button>
+        <button className="ghost-action" type="button" onClick={onDismiss} disabled={dismissing} title="从收件箱隐藏，可在下方“已忽略”里恢复">
+          <EyeOff size={14} />
+          忽略
+        </button>
         <ExceptionTechIds ids={item.technicalIds} />
       </div>
     </article>
+  );
+}
+
+/**
+ * 已忽略的例外：软忽略后从上方收件箱隐藏，但保留可审计痕迹，可随时恢复。
+ * 恢复后若底层问题仍在，例外会重新出现在收件箱。
+ */
+function DismissedExceptions({
+  items,
+  onRestore,
+  restoring,
+}: {
+  items: DismissedException[];
+  onRestore: (key: string) => void;
+  restoring: boolean;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <details className="dismissed-exceptions">
+      <summary>已忽略（{items.length}）</summary>
+      <div className="lane-list">
+        {items.map((item) => (
+          <article className="workbench-card muted" key={item.dismissalId}>
+            <div className="card-row">
+              <strong>{item.title || item.dedupKey}</strong>
+              <span>{formatTime(item.dismissedAt)}</span>
+            </div>
+            <p className="exception-fix">
+              <b>忽略人：</b>{item.dismissedBy || "—"}
+              {item.reason ? <> · <b>原因：</b>{item.reason}</> : null}
+            </p>
+            <div className="card-row">
+              <button className="ghost-action" type="button" onClick={() => onRestore(item.dedupKey)} disabled={restoring}>
+                <RotateCcw size={14} />
+                恢复
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </details>
   );
 }
 

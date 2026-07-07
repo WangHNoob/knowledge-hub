@@ -277,6 +277,25 @@ export class SourceBundleService {
 
     const version = (await this.getVersion(versionId))!;
     const changes = await this.diff(versionId);
+    // 上传即触发：广播「新资料版本已导入」，由 registerSourceIngestAutomation 决定是否
+    // 自动增量构建 → lint → 发布。仅当相对上一版本确有变更（changes 非空）才值得构建；
+    // 相同内容重导（幂等）不产生变更，订阅者会跳过。
+    await emitKnowledgeEvent(this.db, {
+      eventType: "source.version_imported",
+      entityType: "source_version",
+      entityId: version.versionId,
+      payload: {
+        projectId,
+        bundleId,
+        versionId: version.versionId,
+        parentVersionId: parent?.versionId ?? "",
+        changedFileCount: changes.length,
+        addedCount: added,
+        modifiedCount: modified,
+        newBlobCount,
+        actor: options.createdBy,
+      },
+    });
     return { bundle, version, changes, newBlobCount };
   }
 

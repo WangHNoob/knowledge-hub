@@ -31,6 +31,13 @@ export interface BuildPipelineOptions {
   /** One-click mode: create and publish a release automatically after this build completes. */
   publishOnComplete?: boolean;
   releaseVersion?: string;
+  /**
+   * 阶段级局部重建：只把指定阶段产出的组件（如 graph → graph_snapshot/graph_view/topic_index）
+   * 合并回 mergeIntoPackageId，其余组件不动。用于"只重建图谱并作为修订发布"。
+   * 与 only（来源级过滤）互斥：scopedStage 下 pipeline 全量跑（重建派生所需的 _meta），
+   * 仅在 persist 阶段做组件选择。
+   */
+  scopedStage?: "graph";
 }
 
 export interface StageResult {

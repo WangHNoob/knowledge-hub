@@ -502,6 +502,23 @@ export interface FlywheelAutomationItem {
   createdAt: string;
 }
 
+/**
+ * 一条被人工忽略的例外记录（软忽略：从收件箱隐藏但保留可审计痕迹，可恢复）。
+ * dedupKey 取例外的稳定 id；restoredAt 为空表示忽略仍然生效。
+ */
+export interface DismissedException {
+  dismissalId: string;
+  projectId: string;
+  dedupKey: string;
+  exceptionType: string;
+  title: string;
+  reason: string;
+  dismissedBy: string;
+  dismissedAt: string;
+  restoredBy: string;
+  restoredAt: string | null;
+}
+
 export interface FlywheelStatus {
   state: FlywheelState;
   headline: string;

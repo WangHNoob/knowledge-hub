@@ -45,6 +45,8 @@ export const config = {
   uploadMaxFields: positiveInt("KH_UPLOAD_MAX_FIELDS", 200),
   uploadMaxParts: positiveInt("KH_UPLOAD_MAX_PARTS", 20200),
   autoPublishRevisions: flag("KH_AUTO_PUBLISH_REVISIONS", true),
+  autoBuildOnUpload: flag("KH_AUTO_BUILD_ON_UPLOAD", true),
+  healthSweepIntervalHours: Number(optional("KH_HEALTH_SWEEP_INTERVAL_HOURS", "24")),
   generateBuildReviewTasks: flag("KH_GENERATE_BUILD_REVIEW_TASKS", false),
   autoRemediationEnabled: flag("KH_AUTO_REMEDIATION_ENABLED", true),
   autoRemediationConfidenceThreshold: Number(optional("KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD", "0.85")),

@@ -1588,6 +1588,20 @@ export class KnowledgeQueryService {
     };
   }
 
+  /**
+   * 供后台周期调度器（registerHealthSweepScheduler）调用的知识健康巡检入口。
+   * 对某项目运行一次 lint / trust / 过期审计（auditIsStale 是时间相关的，只有定期触发才能
+   * 及时发现「知识过期」）检查，结果落 knowledge_lint.health_checked 事件进入自动化历史，可审阅。
+   * 复用 kbRunHealthCheck 的全部逻辑与事件发射，仅在 actor 与调用场景上区别于 MCP 手动调用。
+   */
+  async runScheduledHealthCheck(projectId: string, actor = "health-sweep-scheduler"): Promise<{ projectId: string; status: string }> {
+    const outcome = await this.kbRunHealthCheck(projectId, {}, { sessionId: actor });
+    const status = typeof (outcome.result as { status?: unknown })?.status === "string"
+      ? String((outcome.result as { status?: unknown }).status)
+      : "unknown";
+    return { projectId, status };
+  }
+
   private async kbSubmitCorrection(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
     const target = await this.resolveCorrectionTarget(projectId, payload);
     if (!target) throw new Error("kb_submit_correction requires componentId, knowledgePath, or an unambiguous sourcePath that resolves to a staged asset component.");

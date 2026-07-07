@@ -12,7 +12,13 @@ const dataDir = isAbsolute(config.dataDir) ? config.dataDir : resolve(root, conf
 
 const db = await createDatabase({ databaseUrl: config.databaseUrl });
 
-const app = await buildApp({ db, jwtSecret: config.jwtSecret, dataDir });
+const app = await buildApp({
+  db,
+  jwtSecret: config.jwtSecret,
+  dataDir,
+  enableSourceIngestAutomation: config.autoBuildOnUpload,
+  enableHealthSweep: true,
+});
 
 const clientDist = join(root, "dist", "client");
 if (existsSync(clientDist)) {

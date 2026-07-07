@@ -296,6 +296,20 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}exception_dismissals (
+      dismissal_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'default_project',
+      dedup_key TEXT NOT NULL,
+      exception_type TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL DEFAULT '',
+      dismissed_by TEXT NOT NULL DEFAULT '',
+      dismissed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      restored_by TEXT NOT NULL DEFAULT '',
+      restored_at TIMESTAMPTZ,
+      UNIQUE (project_id, dedup_key)
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}table_aliases (
       canonical TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default_project',
@@ -406,6 +420,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_rule_dismissals_component ON ${p}rule_dismissals(component_id, active);
     CREATE INDEX IF NOT EXISTS idx_knowledge_events_type_created ON ${p}knowledge_events(event_type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_lint_remediations_project_status ON ${p}knowledge_lint_remediations(project_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_exception_dismissals_active ON ${p}exception_dismissals(project_id, restored_at);
   `);
 
   await adapter.exec(`

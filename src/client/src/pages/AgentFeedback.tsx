@@ -735,6 +735,19 @@ function applyAutomationEvent(chain: AutomationChain, event: FlywheelEvent, payl
     chain.status = "skipped";
     chain.statusText = "等待人工确认";
   }
+  if (event.eventType === "source.version_imported") {
+    const changed = Number(payload.changedFileCount) || 0;
+    const versionId = stringField(payload.versionId) || event.entityId;
+    chain.title = "上传即流转";
+    chain.status = changed > 0 ? "running" : "skipped";
+    chain.statusText = changed > 0 ? "已触发自动构建" : "无变更，未触发";
+    chain.reason = changed > 0 ? "" : "本次导入相对上一版本无内容变更，已跳过构建。";
+    chain.steps = [
+      { key: "ingest-upload", label: "上传资料版本", status: "done", detail: versionId, at: event.createdAt },
+      { key: "ingest-diff", label: "变更检测", status: "done", detail: `${changed} 个文件变更`, at: event.createdAt },
+      { key: "ingest-build", label: "自动构建/发布", status: changed > 0 ? "current" : "blocked", detail: changed > 0 ? "已触发增量构建 → lint → 发布" : "无变更，跳过", at: event.createdAt },
+    ];
+  }
   if (event.eventType === "knowledge_lint.health_checked") {
     const healthStatus = stringField(payload.status) || "unknown";
     const consumption = stringField(payload.consumption) || "unknown";
@@ -756,6 +769,7 @@ function applyAutomationEvent(chain: AutomationChain, event: FlywheelEvent, payl
 
 function chainKey(event: FlywheelEvent, chains: Map<string, AutomationChain>): string {
   if (event.eventType === "knowledge_lint.health_checked") return `health:${event.eventId}`;
+  if (event.eventType === "source.version_imported") return `ingest:${event.eventId}`;
   const payload = event.payload ?? {};
   const ids = [
     stringField(payload.taskId),

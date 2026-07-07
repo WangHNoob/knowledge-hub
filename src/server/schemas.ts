@@ -13,6 +13,17 @@ export const flywheelSyncSchema = z.object({
   mode: z.enum(["incremental", "full"]).optional()
 });
 
+export const exceptionDismissSchema = z.object({
+  key: z.string().min(1, "缺少例外标识 key。"),
+  exceptionType: z.string().max(40).optional(),
+  title: z.string().max(300).optional(),
+  reason: z.string().max(1000).optional()
+});
+
+export const exceptionRestoreSchema = z.object({
+  key: z.string().min(1, "缺少例外标识 key。")
+});
+
 export const governanceProfileUpdateSchema = z.object({
   trust: z.object({
     minAutoPublishScore: z.number().min(0).max(1).optional(),

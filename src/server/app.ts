@@ -18,6 +18,8 @@ import { registerAnnotationWritebackAutomation } from "./services/annotationWrit
 import { registerAutoRemediation } from "./services/autoRemediationService";
 import { registerFeedbackAutomation } from "./services/feedbackAutomationService";
 import { registerReleaseAutomation } from "./services/releaseAutomationService";
+import { registerSourceIngestAutomation } from "./services/sourceIngestAutomationService";
+import { registerHealthSweepScheduler } from "./services/healthSweepScheduler";
 import { createSourceBundleService } from "./services/sourceBundleService";
 import { createStorageMaintenanceService } from "./services/storageMaintenanceService";
 import { createProjectService } from "./services/projectService";
@@ -57,6 +59,16 @@ export interface BuildAppOptions {
   closeDatabaseOnClose?: boolean;
   enableBackgroundAutomations?: boolean;
   enableLintRemediationAutomation?: boolean;
+  /**
+   * 上传即自动构建/发布（registerSourceIngestAutomation）。默认关闭，由生产入口 index.ts
+   * 依据 config.autoBuildOnUpload 显式开启；测试默认不触发后台构建，避免污染断言。
+   */
+  enableSourceIngestAutomation?: boolean;
+  /**
+   * 周期性知识健康巡检调度器（registerHealthSweepScheduler）。默认关闭，由生产入口 index.ts
+   * 依据 config.healthSweepIntervalHours 显式开启；测试默认不启动定时器。
+   */
+  enableHealthSweep?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
@@ -147,6 +159,21 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         diagnostics,
       })
     : () => {};
+  const unsubscribeSourceIngestAutomation = backgroundAutomationsEnabled && options.enableSourceIngestAutomation === true
+    ? registerSourceIngestAutomation({
+        db: options.db,
+        flywheelService: ctx.flywheelService,
+        diagnostics,
+      })
+    : () => {};
+  const unsubscribeHealthSweep = backgroundAutomationsEnabled && options.enableHealthSweep === true && config.healthSweepIntervalHours > 0
+    ? registerHealthSweepScheduler({
+        projectService: ctx.projectService,
+        queryService: ctx.queryService,
+        diagnostics,
+        intervalMs: config.healthSweepIntervalHours * 60 * 60 * 1000,
+      })
+    : () => {};
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -191,6 +218,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     unsubscribeAnnotationWritebackAutomation();
     unsubscribeLintRemediationAutomation();
     unsubscribeAutoRemediation();
+    unsubscribeSourceIngestAutomation();
+    unsubscribeHealthSweep();
     if (options.closeDatabaseOnClose !== false) await options.db.close();
   });
   return app;

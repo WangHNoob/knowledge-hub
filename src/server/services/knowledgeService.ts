@@ -1554,6 +1554,7 @@ export class KnowledgeService {
        FROM knowledge_events
        WHERE project_id = $1
          AND event_type IN (
+         'source.version_imported',
          'agent.feedback.rebuild_proposed',
          'agent.feedback.rebuild_started',
          'annotation.writeback_requested',

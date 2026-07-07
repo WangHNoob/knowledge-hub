@@ -1,9 +1,10 @@
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import type { JSX } from "react";
-import { Trash2 } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { deletePackage, getComponentContent, getComponentOwner, getPackage, listPackages, updatePackage, type AssetPackage } from "../api";
+import { deletePackage, getComponentContent, getComponentOwner, getPackage, listPackages, rebuildComponent, updatePackage, type AssetPackage } from "../api";
+import { currentRole } from "../api/http";
 import { Badge, Metric, Page } from "../components/Atoms";
 import { InlineEditor } from "../components/InlineEditor";
 import { formatPercent } from "../utils/format";
@@ -124,6 +125,16 @@ export function Assets() {
     queryFn: () => getComponentContent(effectiveSelected, openFile!.componentId),
     enabled: Boolean(effectiveSelected && openFile),
   });
+  const [rebuildMsg, setRebuildMsg] = useState("");
+  const rebuildMutation = useMutation({
+    mutationFn: (componentId: string) => rebuildComponent(componentId, currentProjectId),
+    onSuccess: (result) => {
+      setRebuildMsg(result.message);
+      void queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
+    },
+    onError: (error) => setRebuildMsg(error instanceof Error ? error.message : "重建失败。"),
+  });
+  const canRebuild = currentRole() !== "viewer";
   const tree = useMemo(() => buildTree(detail.data?.components ?? []), [detail.data]);
   const allDirPaths = useMemo(() => collectDirPaths(tree), [tree]);
 
@@ -134,6 +145,7 @@ export function Assets() {
 
   // Reveal a file that was navigated to (search / agent feedback) by expanding its ancestors.
   useEffect(() => {
+    setRebuildMsg("");
     if (!openFile || !detail.data) return;
     const target = detail.data.components.find((c) => c.componentId === openFile.componentId);
     if (!target) return;
@@ -297,7 +309,20 @@ export function Assets() {
                       <div className="viewer-head">
                         <code>{fileContent.data.legacyPath}</code>
                         <span>{fileContent.data.kind}{fileContent.data.truncated ? " · 已截断" : ""}</span>
+                        {canRebuild && openFile && isRebuildableKind(fileContent.data.kind) && (
+                          <button
+                            className="secondary-action"
+                            type="button"
+                            disabled={rebuildMutation.isPending}
+                            title="仅重建此组件并作为当前发布的修订发布，不影响其他组件"
+                            onClick={() => rebuildMutation.mutate(openFile.componentId)}
+                          >
+                            <RefreshCw size={14} />
+                            {rebuildMutation.isPending ? "重建中…" : "重建并发布修订"}
+                          </button>
+                        )}
                       </div>
+                      {rebuildMsg && <p className="notice">{rebuildMsg}</p>}
                       {selectedComponent && (
                         <div className="asset-trust-detail">
                           <div>
@@ -330,4 +355,12 @@ export function Assets() {
       </div>
     </Page>
   );
+}
+
+/**
+ * 可单独重建的组件类型：源级 wiki 页 / 表说明页（走来源级 scoped rebuild），
+ * 以及图谱组件（走阶段级重建）。证据、原始元数据等派生物不单独重建。
+ */
+function isRebuildableKind(kind: string): boolean {
+  return ["wiki_page", "table_wiki_page", "graph_snapshot", "graph_view", "topic_index"].includes(kind);
 }

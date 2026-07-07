@@ -19,6 +19,9 @@ npm run test:watch       # vitest 监听模式
 npm run typecheck        # 仅类型检查（tsc --noEmit）
 npm run mcp:stdio        # 启动 MCP stdio 服务器（src/server/mcpStdio.ts）
 npm run okf:scan         # OKF markdown 一致性扫描 CLI
+npm run db:up            # docker compose 起本地 PostgreSQL
+npm run db:down          # 停本地 PostgreSQL
+npm run db:restore       # node scripts/restore-seed.mjs 恢复种子数据
 ```
 
 运行单个测试文件 / 单个用例：
@@ -34,7 +37,8 @@ npx vitest run -t "renames a source bundle"
 - **环境变量**（模板见 `.env.example`，通过 `src/server/config.ts` 读取，缺必填项会启动即抛错）：
   - 必填：`KH_JWT_SECRET`、`DATABASE_URL`（PostgreSQL 连接串）。
   - 测试必填：`KH_TEST_DATABASE_URL` —— **单元测试始终连真实 PostgreSQL**，每个用例建独立 schema 实现隔离。没有它 `npm test` 直接报错。
-  - 可选：`PORT`(4174)、`HOST`(0.0.0.0)、`KH_DATA_DIR`(`./data`，存上传 blobs 与 kb-build-runs 工作区)、`KH_LOG_*`、`KH_WEBIMPORT_RETENTION_HOURS`、`KH_KB_EXTRACT_MAX_TOKENS`、`OPENAI_*` 兜底。
+  - 可选：`PORT`(4174)、`HOST`(0.0.0.0)、`KH_DATA_DIR`(`./data`，存上传 blobs 与 kb-build-runs 工作区)、`KH_PUBLIC_BASE_URL`、`KH_LOG_*`、`KH_WEBIMPORT_RETENTION_HOURS`、`KH_UPLOAD_MAX_*`（上传大小/数量上限）。
+  - **自动化开关**（`config.ts`，控制事件驱动的自动化子系统，见下）：`KH_AUTO_PUBLISH_REVISIONS`(false，反馈驱动的修订版是否自动发布)、`KH_AUTO_BUILD_ON_UPLOAD`(true，上传新资料版本即自动增量构建→lint→发布)、`KH_HEALTH_SWEEP_INTERVAL_HOURS`(24，周期性知识健康巡检间隔小时；0 关闭)、`KH_GENERATE_BUILD_REVIEW_TASKS`(false)、`KH_AUTO_REMEDIATION_ENABLED`(true，lint 自动修复)、`KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD`(0.85)、`KH_AUTO_REMEDIATION_LLM_*`（自动修复用的 LLM provider/baseUrl/model/apiKey）。这些是全局默认值，可被项目级治理 Profile 覆盖（见「治理 Profile」）。
 - **首次启动**会在 PostgreSQL 中建/迁移 schema、seed 三个演示用户（admin/dev/viewer）、默认资料集、默认质量门禁 Profile 和默认策划立法规则 Profile（详见 `db.ts`）。
 - 生产模式下若存在 `dist/client/`，`index.ts` 注册 `@fastify/static` 并对非 `/api/` 路径回退 `index.html`，所以发布前需先 `npm run build`。
 
@@ -77,9 +81,39 @@ attributionAuditService.ts Agent 输出归因审计
 diagnosticService.ts       结构化日志 + trace/span（写文件和/或 DB）
 storageMaintenanceService.ts 存储扫描与回收
 tableAliasService.ts       表名别名
-okf/                        Open Knowledge Format 导出与一致性校验（发布时把资产导出为标准 bundle）
+projectService.ts          多项目：createProject 建项目 + 默认资料库；子域按 projectId 隔离
+feedbackService.ts         Agent 反馈落库 + 聚类为 human exception / feedback cluster
+flywheelService.ts         「知识运营台」聚合编排层（见「飞轮与事件驱动自动化」）
+governanceProfileService.ts 项目级治理规则覆盖层（见「治理 Profile」）
+lintRemediationService.ts  OKF lint 发现 → 自动/人工修复（scoped rebuild）
+trustScore.ts              组件可信度评分（feed 治理与飞轮）
+eventService.ts            进程内知识事件总线 + knowledge_events 表（见下）
+sse.ts                     Server-Sent Events 帧格式化（构建日志/诊断流）
+okf/                        Open Knowledge Format 导出与一致性校验（发布时把资产导出为标准 bundle）；含 lintService
 kbBuilder/                  流水线各阶段实现（见下）
 ```
+
+**`register*` 自动化订阅者**（不是 service，是 `app.ts` 里挂到事件总线的订阅函数，返回 unsubscribe，在 `onClose` 注销）：`registerFeedbackAutomation`、`registerAnnotationWritebackAutomation`、`registerLintRemediationAutomation`、`registerReleaseAutomation`、`registerAutoRemediation`（仅 `KH_AUTO_REMEDIATION_ENABLED` 时挂）、`registerSourceIngestAutomation`（**上传即流转**：监听 `source.version_imported`，仅当相对上一版本确有变更时自动调 `flywheelService.sync` 走增量构建→lint→发布；仅 `KH_AUTO_BUILD_ON_UPLOAD` 且生产入口 `index.ts` 通过 `enableSourceIngestAutomation` 显式开启时挂，测试默认不挂以免后台构建污染断言）。
+
+**时间驱动调度器**（非事件订阅者）：`registerHealthSweepScheduler`（`healthSweepScheduler.ts`）—— 每 `KH_HEALTH_SWEEP_INTERVAL_HOURS` 小时对每个项目跑一次 `KnowledgeQueryService.runScheduledHealthCheck`（lint/trust/**过期审计**巡检）。「知识过期」是时间相关的（组件超 `maxAuditAgeDays` 未复审即过期），只有周期触发才能及时发现，事件驱动结构上无法覆盖。结果落 `knowledge_lint.health_checked` 事件进入自动化历史。定时器 unref + 重叠保护；仅生产入口经 `enableHealthSweep` 开启，测试默认不启动（用 `runHealthSweepOnce` 单跑一次做断言）。
+
+### 飞轮与事件驱动自动化（阶段7 核心）
+
+系统在确定性的「路由 → Service → DB」之上叠了一层**事件驱动的知识运营飞轮**：
+
+- **事件总线**（`eventService.ts`）：`emitKnowledgeEvent` 同时写 `knowledge_events` 表**并**通过进程内 `EventEmitter` 广播；`onKnowledgeEvent(type, listener)` 订阅。事件类型是联合类型（`build.completed`/`agent.feedback.received`/`release.published`/`knowledge_lint.remediations_recorded` 等），改动时同步更新该联合。事件带 `projectId`（缺省 `default_project`）。
+- **自动化订阅者**：`app.ts` 启动时挂上述 `register*Automation`，把「构建完成 → 记录 lint 修复 → 执行修复 → 发布」串成链。写路径仍走既有确定性服务；订阅者只做**编排触发**，不绕过 service。
+- **FlywheelService**（`flywheelService.ts`）：只读聚合 + 一键编排层，把构建/治理/发布/反馈收敛成「一句话状态 + 一个主动作」。三个入口：`getStatus`（状态 + metrics + 例外 + 自动化）、`listExceptions`（必须人工处理的项）、`sync`（一键构建 + 治理 + 自动发布）。路由 `routes/flywheel.ts`，每入口都有 `default_project` 与显式 `:projectId` 两条路径。
+  - **例外软忽略**：`dismissException`/`restoreException`/`listDismissedExceptions` 落 `exception_dismissals` 表；`listExceptions` 过滤掉仍生效的忽略项（`getStatus` 的 pendingExceptions 也随之不计）。前端在知识运营台例外卡上「忽略」（填原因），并有「已忽略」折叠区可恢复。denyRole viewer。
+  - **单组件重建 → 修订发布**：`rebuildComponent(componentId)` 按组件类型分流——源级 wiki 页/表说明页走 `builder.startScopedRebuildForComponent`（`only=<源文件>` + `mergeIntoPackageId`）；图谱组件走 `rebuildGraph` → `builder.startGraphRebuild`（**阶段级**：全量跑流水线重建派生所需 `_meta`，但只把 graph 阶段组件 `graph_snapshot/graph_view/topic_index` 合并回原包，`scopedStage:"graph"`）。两者都 `publishOnComplete`，经 `releaseAutomationService` 作为**当前发布的修订**发布（继承父发布、只 patch 变更组件，不动未受影响部分）。前端在资产组件详情（Assets 页 viewer-head）提供「重建并发布修订」。图谱因无跨运行 extract 缓存，会重新运行抽取（有模型开销），换取健壮性。
+
+### 治理 Profile（阶段7）
+
+`governanceProfileService.ts` 是**项目级治理规则覆盖层**：`config.ts` 的自动化开关是全局默认（`DEFAULT_GOVERNANCE_DEFAULTS`），`resolve(projectId)` 合并「默认 + 项目级 JSONB 覆盖」返回完整 profile，`update(projectId, patch)`（仅 admin）落覆盖。发布自动化、反馈聚类等消费方一律通过 `resolve` 拿确定数值，**不再散读 config 常量**。路由 `routes/governance.ts`（GET 只读 / PUT admin 覆盖 / POST reset 清覆盖）。
+
+### 多项目
+
+`projects` 表是所有子域的隔离维度，`projectService.createProject` 建项目时连带建默认资料库。API 普遍成对存在：`/api/flywheel/...`（隐式 `default_project`）与 `/api/projects/:projectId/...`（显式）。新增按项目隔离的读写接口时保留这套双路径。
 
 ### 知识构建流水线（`services/kbBuilder*`）
 
@@ -94,6 +128,7 @@ convert → extract → tables → graph → viz
 ### 核心数据模型（均在 `db.ts:migrate()` 定义，PostgreSQL）
 
 ```
+projects                   多项目隔离维度；所有子域按 project_id 归属，缺省 default_project
 users                      本地账号（bcrypt），role: admin/developer/viewer
 source_blobs               按 content_hash 去重的不可变文件内容
 source_bundles             资料库（name/description 可改）
@@ -108,6 +143,13 @@ evidence_records           组件 ↔ source version 的引用证据
 review_tasks               质量发现衍生的人工任务（severity: blocking/warning/info）
 releases                   面向 Agent 的不可变发布（version/note 可改；manifest_json 冻结快照）
 release_channels           当前发布指针（default channel 指向 current release）
+annotation_examples        标注示例（few-shot / 人工纠正样本）
+source_corrections         源侧纠正建议（状态机：pending_review → confirmed/retired）
+rule_dismissals            被忽略的规则命中
+knowledge_events           事件总线持久化（event_type/entity/payload_json/project_id）
+knowledge_lint_remediations OKF lint 自动/人工修复记录（状态机）
+knowledge_governance_profiles 项目级治理规则覆盖（单行 JSONB / 项目）
+exception_dismissals        例外收件箱的软忽略记录（dedup_key = 例外稳定 id；restored_at 为空=忽略生效，可恢复、留痕）
 agent_events / mcp_audit   Agent 调用反馈与 MCP 审计
 attribution_audits         Agent 输出归因
 diagnostic_logs            结构化日志（trace_id/span_id）
@@ -130,19 +172,21 @@ JSONB 列（`source_version_ids`、`quality_summary`、`package_ids`、`manifest
 
 `app.ts:registerTracing` 给每个请求挂 traceId/span：`onRequest` 生成或透传 `x-trace-id`，`preHandler` 起 span，`onSend`/错误处理收尾。各 service 写入时也起子 span。日志由 `diagnosticService` 落到文件和/或 `diagnostic_logs` 表，前端 Diagnostics 页可按 trace 查看。
 
-### 前端（`src/client/`）
+### 前端（`src/client/src/`，注意是 `client/src/` 两层）
 
 ```
-src/main.tsx        React 19 + BrowserRouter + QueryClientProvider 挂载点
-src/api/            按子域拆分的 fetch 封装 + 类型（types.ts）；http.ts 提供 getJson/postJson/patchJson 等
-                    + token 持久化；index.ts 统一 re-export。组件不直接 fetch
-src/pages/          各业务页面（Sources/Assets/Review/Release/AgentFeedback/Diagnostics/...）
-src/components/     复用组件（Atoms、BuildRunCard、InlineEditor 等）
-src/ui/             App 外壳与导航
-src/utils/format.ts 展示格式化：formatTime/formatClock 统一按 Asia/Shanghai（东八区）渲染时间
+main.tsx          React 19 + BrowserRouter + QueryClientProvider 挂载点
+api/              按子域拆分的 fetch 封装 + 类型（types.ts）；http.ts 提供 getJson/postJson/patchJson 等
+                  + token 持久化；index.ts 统一 re-export。组件不直接 fetch
+pages/            各业务页面（Sources/Assets/Review/Release/AgentFeedback/Diagnostics/
+                  Dashboard/System/GovernanceProfile/Rules/Legislation/Storage/Maintenance/TableAliases/...）
+components/       复用组件（Atoms、BuildRunCard、InlineEditor、LintRemediationPanel、
+                  BuildLogConsole、WorkbenchStrip、WritebackSteps 等）
+ui/               App 外壳、navigation.tsx 导航、projectContext.tsx 当前项目上下文
+utils/format.ts   展示格式化：formatTime/formatClock 统一按 Asia/Shanghai（东八区）渲染时间
 ```
 
-数据请求统一走 `src/api/` 的函数 + `@tanstack/react-query`。Vite dev 端口 5174 代理 `/api → 127.0.0.1:4174`，前后端可同时跑。
+数据请求统一走 `src/api/` 的函数 + `@tanstack/react-query`。多项目通过 `ui/projectContext.tsx` 提供当前 projectId。Vite dev 端口 5174 代理 `/api → 127.0.0.1:4174`，前后端可同时跑。构建日志/诊断走 SSE（`services/sse.ts` 帧格式，`routes/builder.ts` 等推流）。
 
 ### 测试（`tests/`）
 

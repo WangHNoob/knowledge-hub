@@ -813,6 +813,19 @@ export interface FlywheelAutomationItem {
   createdAt: string;
 }
 
+export interface DismissedException {
+  dismissalId: string;
+  projectId: string;
+  dedupKey: string;
+  exceptionType: string;
+  title: string;
+  reason: string;
+  dismissedBy: string;
+  dismissedAt: string;
+  restoredBy: string;
+  restoredAt: string | null;
+}
+
 export type LintRemediationActionType = "auto_remediation" | "rebuild" | "manual_review" | "monitor";
 export type LintRemediationStatus = "pending" | "running" | "completed" | "failed" | "needs_human";
 

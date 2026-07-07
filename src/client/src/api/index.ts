@@ -3,7 +3,7 @@ export { getToken, setToken, currentRole } from "./http";
 export { login } from "./auth";
 export { createProject, listProjects, selectProject, updateProject } from "./projects";
 export { getDashboard, getFlywheelWorkbench } from "./dashboard";
-export { getFlywheelStatus, listFlywheelExceptions, syncFlywheel, listFlywheelRemediations, retryFlywheelRemediation, listFeedbackClusters } from "./flywheel";
+export { getFlywheelStatus, listFlywheelExceptions, syncFlywheel, listFlywheelRemediations, retryFlywheelRemediation, listFeedbackClusters, listDismissedExceptions, dismissException, restoreException, rebuildComponent, rebuildGraph } from "./flywheel";
 export { getGovernanceProfile, updateGovernanceProfile, resetGovernanceProfile } from "./governance";
 export {
   browseLocalFiles,

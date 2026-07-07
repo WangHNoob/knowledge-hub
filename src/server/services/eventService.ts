@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import type { DatabaseHandle } from "../types";
 
 export type KnowledgeEventType =
+  | "source.version_imported"
   | "build.completed"
   | "build.failed"
   | "build.quality_fail"

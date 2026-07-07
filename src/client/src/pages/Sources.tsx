@@ -1,13 +1,12 @@
-import { File, GitBranch, History, Server, Upload, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Circle, File, GitBranch, History, Loader2, Server, Upload, UploadCloud } from "lucide-react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
 import {
   browseLocalFiles,
-  buildAndPublishKnowledge,
-  buildKnowledgePackage,
   getBundleBuildPlan,
   getBundleVersion,
+  getFlywheelStatus,
   getSourceFilePreview,
   getSourceVersionPreview,
   importSourceBundle,
@@ -16,6 +15,7 @@ import {
   updateBundleVersion,
   updateSourceBundle,
   uploadSourceBundle,
+  type FlywheelStatus,
   type SourceBundleVersion,
   type SourceBuildPlan,
   type SourceFileChange,
@@ -110,8 +110,8 @@ export function Sources() {
   };
   const handleImportResult = async (result: Awaited<ReturnType<typeof importSourceBundle>>) => {
     const syncText = result.sync
-      ? ` 已自动启动${result.sync.mode === "incremental" ? "增量" : "全量"}构建并发布：${result.sync.message}`
-      : "";
+      ? `已自动启动${result.sync.mode === "incremental" ? "增量" : "全量"}构建，完成后会自动治理并发布——进度见下方流水线状态。`
+      : "已导入新版本。未开启自动构建，请联系管理员或在系统设置中开启。";
     setMessage(
       `已生成版本 ${result.version.label}：新增 ${result.version.addedCount}，修改 ${result.version.modifiedCount}，删除 ${result.version.removedCount}，未变 ${result.version.unchangedCount}（新增 blob ${result.newBlobCount}）。${syncText}`
     );
@@ -124,6 +124,7 @@ export function Sources() {
     await queryClient.invalidateQueries({ queryKey: ["bundle-preview", currentProjectId, bundleId, result.version.versionId] });
     await queryClient.invalidateQueries({ queryKey: ["bundle-build-plan", currentProjectId, bundleId, result.version.versionId] });
     await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    await queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
   };
   const versionCount = (versions.data ?? []).length;
   const tabs: ReadonlyArray<TabItem<SourceTab>> = [
@@ -166,6 +167,8 @@ export function Sources() {
           {error && <p className="error">{error}</p>}
         </div>
       )}
+
+      {bundle && <PipelineStatusStrip projectId={currentProjectId} />}
 
       <div className="tab-panel" key={tab}>
         {tab === "upload" && (
@@ -312,49 +315,7 @@ export function Sources() {
                     <Metric label="修改" value={preview.data.version.modifiedCount} hint="内容变化" />
                     <Metric label="删除" value={preview.data.version.removedCount} hint="需要确认" />
                   </div>
-                  <BuildPlanPanel
-                    plan={buildPlan.data}
-                    busy={busy}
-                    onIncremental={async () => {
-                      if (!buildPlan.data?.targets[0] || !selectedVersion) return;
-                      setBusy(true);
-                      setError("");
-                      try {
-                        await buildAndPublishKnowledge(bundleId, selectedVersion, defaultBuildPayload(buildPlan.data.targets[0]), currentProjectId);
-                        setMessage(`已启动增量构建并发布：${buildPlan.data.targets[0]}`);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "启动增量构建并发布失败。");
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                    onFull={async () => {
-                      if (!selectedVersion) return;
-                      setBusy(true);
-                      setError("");
-                      try {
-                        await buildAndPublishKnowledge(bundleId, selectedVersion, defaultBuildPayload(null), currentProjectId);
-                        setMessage("已启动全量构建并发布。");
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "启动全量构建并发布失败。");
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                    onBuildOnly={async () => {
-                      if (!buildPlan.data?.targets[0] || !selectedVersion) return;
-                      setBusy(true);
-                      setError("");
-                      try {
-                        await buildKnowledgePackage(bundleId, selectedVersion, defaultBuildPayload(buildPlan.data.targets[0]), currentProjectId);
-                        setMessage(`已启动增量构建：${buildPlan.data.targets[0]}`);
-                      } catch (err) {
-                        setError(err instanceof Error ? err.message : "启动增量构建失败。");
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  />
+                  <BuildPlanHint plan={buildPlan.data} />
                   <div className="source-tree">
                     {preview.data.tree.map((node) => (
                       <SourceTreeNode key={node.path} node={node} selectedPath={selectedPath} onSelect={setSelectedPath} />
@@ -475,36 +436,12 @@ async function loadDefaultBundle(projectId: string) {
   return bundles[0] ?? null;
 }
 
-function defaultBuildPayload(only: string | null) {
-  return {
-    stages: ["convert", "extract", "tables", "graph", "viz"],
-    model: "deterministic",
-    modelConfig: { provider: "deterministic" as const, model: "deterministic" as const },
-    force: false,
-    only,
-    qualityProfileId: "default",
-    generateAliases: false,
-  };
-}
-
-function BuildPlanPanel({
-  plan,
-  busy,
-  onIncremental,
-  onFull,
-  onBuildOnly,
-}: {
-  plan?: SourceBuildPlan;
-  busy: boolean;
-  onIncremental(): Promise<void>;
-  onFull(): Promise<void>;
-  onBuildOnly(): Promise<void>;
-}) {
-  if (!plan) return <Loading title="生成构建建议" />;
-  const canIncremental = plan.recommendedMode === "incremental" && plan.targets.length > 0;
+function BuildPlanHint({ plan }: { plan?: SourceBuildPlan }) {
+  if (!plan) return null;
+  const incremental = plan.recommendedMode === "incremental" && plan.targets.length > 0;
   return (
-    <div className="build-plan-panel">
-      <strong>{plan.recommendedMode === "incremental" ? "建议增量构建" : "建议全量构建"}</strong>
+    <div className="build-plan-panel readonly">
+      <strong>{incremental ? `增量构建：仅重建 ${plan.targets.length} 处变更` : "全量构建"}</strong>
       <p>{plan.reason}</p>
       {plan.warnings.map((warning) => <small key={warning}>{warning}</small>)}
       {plan.affectedKnowledge.length > 0 && (
@@ -514,13 +451,107 @@ function BuildPlanPanel({
           ))}
         </div>
       )}
-      <div className="detail-actions">
-        <button disabled={!canIncremental || busy} onClick={() => { void onBuildOnly(); }}>只构建这些变更</button>
-        <button className="primary-action" disabled={!canIncremental || busy} onClick={() => { void onIncremental(); }}>增量构建并发布</button>
-        <button disabled={busy} onClick={() => { void onFull(); }}>改为全量构建并发布</button>
-      </div>
+      <small className="build-plan-auto">上传后系统已自动按此方案构建、治理并发布，无需手动操作。</small>
     </div>
   );
+}
+
+interface PipelineStep {
+  key: string;
+  label: string;
+  state: "done" | "active" | "pending" | "blocked";
+}
+
+/**
+ * 上传后的实时流水线状态条：把飞轮的粗粒度状态映射成
+ * 「构建 → 治理 → 发布」三步的可视进度，构建中自动轮询。
+ */
+function PipelineStatusStrip({ projectId }: { projectId: string }) {
+  const statusQuery = useQuery({
+    queryKey: ["flywheel", "status", projectId],
+    queryFn: () => getFlywheelStatus(projectId),
+    refetchInterval: (query) => {
+      const state = query.state.data?.state;
+      return state === "building" || state === "source_changed" ? 3000 : false;
+    },
+  });
+  const status = statusQuery.data;
+  if (!status) return null;
+
+  const steps = derivePipelineSteps(status);
+  const building = status.state === "building" || status.metrics.runningBuilds > 0;
+  const version = status.metrics.currentReleaseVersion;
+
+  return (
+    <section className={`pipeline-strip ${status.state}`}>
+      <div className="pipeline-strip-head">
+        {building ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+        <div>
+          <strong>{status.headline}</strong>
+          <p>{status.summary}</p>
+        </div>
+        {version && <span className="pipeline-strip-version">当前发布 {version}</span>}
+      </div>
+      <ol className="pipeline-steps">
+        {steps.map((step) => (
+          <li key={step.key} className={`pipeline-step ${step.state}`}>
+            <PipelineStepIcon state={step.state} />
+            <span>{step.label}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function PipelineStepIcon({ state }: { state: PipelineStep["state"] }) {
+  if (state === "done") return <CheckCircle2 size={14} />;
+  if (state === "active") return <Loader2 size={14} className="spin" />;
+  if (state === "blocked") return <AlertTriangle size={14} />;
+  return <Circle size={14} />;
+}
+
+function derivePipelineSteps(status: FlywheelStatus): PipelineStep[] {
+  const label = { build: "构建知识", govern: "治理 Lint", publish: "发布版本" };
+  switch (status.state) {
+    case "building":
+      return [
+        { key: "build", label: label.build, state: "active" },
+        { key: "govern", label: label.govern, state: "active" },
+        { key: "publish", label: label.publish, state: "pending" },
+      ];
+    case "ready_to_publish":
+      return [
+        { key: "build", label: label.build, state: "done" },
+        { key: "govern", label: label.govern, state: "done" },
+        { key: "publish", label: label.publish, state: "active" },
+      ];
+    case "needs_attention":
+      return [
+        { key: "build", label: label.build, state: "done" },
+        { key: "govern", label: label.govern, state: "done" },
+        { key: "publish", label: label.publish, state: "blocked" },
+      ];
+    case "source_changed":
+      return [
+        { key: "build", label: label.build, state: "active" },
+        { key: "govern", label: label.govern, state: "pending" },
+        { key: "publish", label: label.publish, state: "pending" },
+      ];
+    case "published":
+      return [
+        { key: "build", label: label.build, state: "done" },
+        { key: "govern", label: label.govern, state: "done" },
+        { key: "publish", label: label.publish, state: "done" },
+      ];
+    case "idle":
+    default:
+      return [
+        { key: "build", label: label.build, state: "pending" },
+        { key: "govern", label: label.govern, state: "pending" },
+        { key: "publish", label: label.publish, state: "pending" },
+      ];
+  }
 }
 
 function SourceTreeNode({ node, selectedPath, onSelect }: { node: SourcePreviewNode; selectedPath: string; onSelect(path: string): void }) {

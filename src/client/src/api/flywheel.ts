@@ -1,6 +1,7 @@
 import { getJson, postJson } from "./http";
 import type {
   AgentFeedbackCluster,
+  DismissedException,
   FlywheelStatus,
   FlywheelSyncResult,
   HumanException,
@@ -51,4 +52,33 @@ export async function listFeedbackClusters(projectId?: string): Promise<AgentFee
     projectId ? `/api/projects/${encodeURIComponent(projectId)}/flywheel/feedback-clusters` : "/api/flywheel/feedback-clusters",
   );
   return res.clusters;
+}
+
+function flywheelBase(projectId?: string): string {
+  return projectId ? `/api/projects/${encodeURIComponent(projectId)}/flywheel` : "/api/flywheel";
+}
+
+export async function listDismissedExceptions(projectId?: string): Promise<DismissedException[]> {
+  const res = await getJson<{ dismissed: DismissedException[] }>(`${flywheelBase(projectId)}/exceptions/dismissed`);
+  return res.dismissed;
+}
+
+export async function dismissException(
+  input: { key: string; exceptionType?: string; title?: string; reason?: string },
+  projectId?: string,
+): Promise<DismissedException> {
+  const res = await postJson<{ dismissed: DismissedException }>(`${flywheelBase(projectId)}/exceptions/dismiss`, input);
+  return res.dismissed;
+}
+
+export async function restoreException(key: string, projectId?: string): Promise<void> {
+  await postJson<Record<string, never>>(`${flywheelBase(projectId)}/exceptions/restore`, { key });
+}
+
+export async function rebuildComponent(componentId: string, projectId?: string): Promise<FlywheelSyncResult> {
+  return postJson<FlywheelSyncResult>(`${flywheelBase(projectId)}/components/${encodeURIComponent(componentId)}/rebuild`, {});
+}
+
+export async function rebuildGraph(projectId?: string): Promise<FlywheelSyncResult> {
+  return postJson<FlywheelSyncResult>(`${flywheelBase(projectId)}/graph/rebuild`, {});
 }

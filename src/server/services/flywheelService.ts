@@ -13,6 +13,7 @@ import type {
   AgentEvent,
   AgentFeedbackCluster,
   DatabaseHandle,
+  DismissedException,
   FeedbackClusterType,
   FlywheelAutomationItem,
   FlywheelMetrics,
@@ -123,13 +124,14 @@ export class FlywheelService {
    * 不能自动治理的 lint 治理项）。普通 warning、已自动治理、纯观察项不进入此列表。
    */
   async listExceptions(projectId = "default_project"): Promise<HumanException[]> {
-    const [tasks, events, skips, needsHumanRemediations, failedRemediations, profile] = await Promise.all([
+    const [tasks, events, skips, needsHumanRemediations, failedRemediations, profile, dismissedKeys] = await Promise.all([
       this.knowledge.listReviewTasks({ status: "open", projectId }),
       this.knowledge.listAgentEvents(projectId),
       this.listPendingPublishSkips(projectId),
       this.remediations.listRemediations({ projectId, status: "needs_human" }),
       this.remediations.listRemediations({ projectId, status: "failed" }),
       this.governance.resolve(projectId),
+      this.activeDismissedKeys(projectId),
     ]);
 
     const out: HumanException[] = [];
@@ -141,7 +143,72 @@ export class FlywheelService {
     for (const cluster of clusterNegativeFeedback(events, profile.feedback.highFrequencyThreshold)) out.push(cluster);
     for (const remediation of [...needsHumanRemediations, ...failedRemediations]) out.push(exceptionFromRemediation(remediation));
 
-    return out.sort((a, b) => attentionRank(a) - attentionRank(b) || b.createdAt.localeCompare(a.createdAt));
+    return out
+      .filter((exception) => !dismissedKeys.has(exception.id))
+      .sort((a, b) => attentionRank(a) - attentionRank(b) || b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /**
+   * 软忽略一个例外：从收件箱隐藏，但保留可审计痕迹，可恢复。dedupKey 取例外的稳定 id。
+   * 已存在（含此前被恢复）的记录会被复用为一次新的忽略（清空 restored_at）。
+   */
+  async dismissException(input: {
+    projectId?: string;
+    key: string;
+    exceptionType?: string;
+    title?: string;
+    reason?: string;
+    dismissedBy: string;
+  }): Promise<DismissedException> {
+    const projectId = input.projectId ?? "default_project";
+    const now = new Date().toISOString();
+    const dismissalId = `exdis_${nanoid(10)}`;
+    const { rows } = await this.adapter.query(
+      `INSERT INTO exception_dismissals
+         (dismissal_id, project_id, dedup_key, exception_type, title, reason, dismissed_by, dismissed_at, restored_by, restored_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', NULL)
+       ON CONFLICT (project_id, dedup_key) DO UPDATE SET
+         exception_type = EXCLUDED.exception_type,
+         title = EXCLUDED.title,
+         reason = EXCLUDED.reason,
+         dismissed_by = EXCLUDED.dismissed_by,
+         dismissed_at = EXCLUDED.dismissed_at,
+         restored_by = '',
+         restored_at = NULL
+       RETURNING *`,
+      [dismissalId, projectId, input.key, input.exceptionType ?? "", input.title ?? "", input.reason ?? "", input.dismissedBy, now],
+    );
+    return mapDismissal(rows[0]);
+  }
+
+  /** 恢复一个此前被软忽略的例外，使其重新进入收件箱（若底层问题仍存在）。 */
+  async restoreException(input: { projectId?: string; key: string; restoredBy: string }): Promise<void> {
+    const projectId = input.projectId ?? "default_project";
+    await this.adapter.query(
+      `UPDATE exception_dismissals
+       SET restored_by = $3, restored_at = $4
+       WHERE project_id = $1 AND dedup_key = $2 AND restored_at IS NULL`,
+      [projectId, input.key, input.restoredBy, new Date().toISOString()],
+    );
+  }
+
+  /** 当前仍生效（未恢复）的软忽略记录，供「已忽略」面板展示。 */
+  async listDismissedExceptions(projectId = "default_project"): Promise<DismissedException[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT * FROM exception_dismissals
+       WHERE project_id = $1 AND restored_at IS NULL
+       ORDER BY dismissed_at DESC`,
+      [projectId],
+    );
+    return rows.map(mapDismissal);
+  }
+
+  private async activeDismissedKeys(projectId: string): Promise<Set<string>> {
+    const { rows } = await this.adapter.query(
+      "SELECT dedup_key FROM exception_dismissals WHERE project_id = $1 AND restored_at IS NULL",
+      [projectId],
+    );
+    return new Set(rows.map((row) => String(row.dedup_key)));
   }
 
   /**
@@ -216,8 +283,11 @@ export class FlywheelService {
     if (!latest) return needsAttention(syncId, "该项目还没有任何资料版本，请先导入资料再同步。");
 
     const plan = await this.bundles.buildPlan(latest.versionId, projectId);
-    // 单一文件变更且推荐增量时才走增量（builder 的 only 只支持单一路径）；否则全量。
-    const canIncremental = plan.recommendedMode === "incremental" && plan.targets.length === 1;
+    // 增量发布是对 current release 的 revision，必须有可继承的基线发布；首次发布（无 current
+    // release）必须走全量，否则构建出的是无法发布的 partial revision。
+    const hasBaseRelease = Boolean(await this.releases.getCurrent(projectId));
+    // 单一文件变更且推荐增量、且已有基线发布时才走增量（builder 的 only 只支持单一路径）；否则全量。
+    const canIncremental = hasBaseRelease && plan.recommendedMode === "incremental" && plan.targets.length === 1;
     const mode: "incremental" | "full" = input.mode === "incremental" && canIncremental ? "incremental" : input.mode ?? (canIncremental ? "incremental" : "full");
     const effectiveMode: "incremental" | "full" = mode === "incremental" && canIncremental ? "incremental" : "full";
     const only = effectiveMode === "incremental" ? plan.targets[0] ?? null : null;
@@ -295,9 +365,142 @@ export class FlywheelService {
     };
   }
 
-  // ---- 聚合辅助 ----
+  /**
+   * 手动重建单个组件，并作为当前发布的**修订**发布（继承父发布、只 patch 该组件，
+   * 未受影响的部分原样保留）。源级组件（wiki 页 / 表说明页）走来源级 scoped rebuild；
+   * 图谱等派生组件走阶段级重建（见 rebuildGraph）。
+   */
+  async rebuildComponent(input: {
+    projectId?: string;
+    componentId: string;
+    requestedBy: string;
+    traceId?: string;
+  }): Promise<FlywheelSyncResult> {
+    const projectId = input.projectId ?? "default_project";
+    const syncId = `rebuild_${Date.now()}_${nanoid(6)}`;
+    const kind = await this.componentKind(input.componentId);
+    if (!kind) return needsAttention(syncId, "找不到该组件，可能已被删除。");
+    if (kind === "graph_snapshot" || kind === "graph_view" || kind === "topic_index") {
+      return this.rebuildGraph({ projectId, requestedBy: input.requestedBy, traceId: input.traceId });
+    }
 
-  /** 最新资料版本若尚未构建成资产，则统计其相对上一版本的变更文件数；否则 0。 */
+    if (!(await this.releases.getCurrent(projectId))) {
+      return needsAttention(syncId, "当前项目还没有已发布版本，无法作为修订发布。请先完成一次全量构建并发布。");
+    }
+    const modelConfig = await this.resolveBuildModelConfig(projectId);
+    const releaseVersion = await this.nextReleaseVersion(projectId);
+    try {
+      const run = await this.builder.startScopedRebuildForComponent({
+        componentId: input.componentId,
+        requestedBy: input.requestedBy,
+        traceId: input.traceId,
+        modelConfig,
+        publishOnComplete: true,
+        releaseVersion,
+      });
+      await this.diagnostics?.write({
+        traceId: input.traceId ?? "",
+        level: "info",
+        category: "flywheel",
+        message: "flywheel component rebuild started",
+        status: "event",
+        actor: input.requestedBy,
+        entityType: "build_run",
+        entityId: run.runId,
+        runId: run.runId,
+        context: { projectId, syncId, componentId: input.componentId, kind, releaseVersion },
+      });
+      return {
+        syncId,
+        status: "started",
+        buildRunIds: [run.runId],
+        packageIds: [],
+        published: false,
+        mode: "incremental",
+        message: `已启动组件重建，完成后将作为修订发布 ${releaseVersion}（不影响其他组件）。`,
+        attentionItems: [],
+        automationEvents: [run.runId],
+      };
+    } catch (error) {
+      return {
+        syncId,
+        status: "failed",
+        buildRunIds: [],
+        packageIds: [],
+        published: false,
+        mode: "incremental",
+        message: error instanceof Error ? error.message : "启动组件重建失败。",
+        attentionItems: [],
+        automationEvents: [],
+      };
+    }
+  }
+
+  private async componentKind(componentId: string): Promise<string | null> {
+    const { rows } = await this.adapter.query("SELECT kind FROM asset_components WHERE component_id = $1", [componentId]);
+    return rows.length ? String(rows[0].kind) : null;
+  }
+
+  /**
+   * 图谱阶段级重建：只重建当前发布的知识图谱并作为修订发布，不动其他组件。
+   * 底层走 builder.startGraphRebuild（全量跑流水线以重建派生所需 _meta，仅合并 graph 组件回包）。
+   */
+  async rebuildGraph(input: { projectId?: string; requestedBy: string; traceId?: string }): Promise<FlywheelSyncResult> {
+    const projectId = input.projectId ?? "default_project";
+    const syncId = `graph_rebuild_${Date.now()}_${nanoid(6)}`;
+    if (!(await this.releases.getCurrent(projectId))) {
+      return needsAttention(syncId, "当前项目还没有已发布版本，无法单独重建图谱。请先完成一次全量构建并发布。");
+    }
+    const modelConfig = await this.resolveBuildModelConfig(projectId);
+    const releaseVersion = await this.nextReleaseVersion(projectId);
+    try {
+      const run = await this.builder.startGraphRebuild({
+        projectId,
+        requestedBy: input.requestedBy,
+        traceId: input.traceId,
+        modelConfig,
+        publishOnComplete: true,
+        releaseVersion,
+      });
+      await this.diagnostics?.write({
+        traceId: input.traceId ?? "",
+        level: "info",
+        category: "flywheel",
+        message: "flywheel graph rebuild started",
+        status: "event",
+        actor: input.requestedBy,
+        entityType: "build_run",
+        entityId: run.runId,
+        runId: run.runId,
+        context: { projectId, syncId, releaseVersion, scopedStage: "graph" },
+      });
+      return {
+        syncId,
+        status: "started",
+        buildRunIds: [run.runId],
+        packageIds: [],
+        published: false,
+        mode: "incremental",
+        message: `已启动图谱重建，完成后将作为修订发布 ${releaseVersion}（仅更新知识图谱）。`,
+        attentionItems: [],
+        automationEvents: [run.runId],
+      };
+    } catch (error) {
+      return {
+        syncId,
+        status: "failed",
+        buildRunIds: [],
+        packageIds: [],
+        published: false,
+        mode: "incremental",
+        message: error instanceof Error ? error.message : "启动图谱重建失败。",
+        attentionItems: [],
+        automationEvents: [],
+      };
+    }
+  }
+
+  // ---- 聚合辅助 ----
   private async countUnbuiltSourceChanges(projectId: string): Promise<number> {
     const bundle = await this.projects.getDefaultBundle(projectId);
     if (!bundle) return 0;
@@ -454,6 +657,21 @@ export class FlywheelService {
 }
 
 // ---- 纯函数：状态机与例外派生 ----
+
+function mapDismissal(row: Record<string, unknown>): DismissedException {
+  return {
+    dismissalId: String(row.dismissal_id),
+    projectId: String(row.project_id ?? "default_project"),
+    dedupKey: String(row.dedup_key ?? ""),
+    exceptionType: String(row.exception_type ?? ""),
+    title: String(row.title ?? ""),
+    reason: String(row.reason ?? ""),
+    dismissedBy: String(row.dismissed_by ?? ""),
+    dismissedAt: String(row.dismissed_at ?? ""),
+    restoredBy: String(row.restored_by ?? ""),
+    restoredAt: row.restored_at ? String(row.restored_at) : null,
+  };
+}
 
 function resolveState(input: {
   runningBuilds: number;
