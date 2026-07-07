@@ -144,6 +144,9 @@ export class LintRemediationService {
     limit?: number;
   }): Promise<KnowledgeLintRemediation[]> {
     const pending = (await this.listRemediations({ projectId: input.projectId, releaseId: input.releaseId, status: "pending" }))
+      // table_dependencies 由 lintAutoRemediation（LLM 补别名 + 重建）专属处理：单纯 scoped rebuild
+      // 用同样的源再跑一遍并不能把中文表名解析到 canonical table，会空转甚至与别名修复重复发布。
+      .filter((item) => item.domain !== "table_dependencies")
       .slice(0, input.limit ?? 10);
     const out: KnowledgeLintRemediation[] = [];
     for (const item of pending) {
@@ -388,6 +391,11 @@ export class LintRemediationService {
 }
 
 function loadLintReport(dataDir: string, releaseId: string): KnowledgeLintReport | null {
+  return readLintReport(dataDir, releaseId);
+}
+
+/** 从发布目录读取 knowledge_lint.json；供 lint 治理与自动别名修复共用。缺失或损坏时返回 null。 */
+export function readLintReport(dataDir: string, releaseId: string): KnowledgeLintReport | null {
   const path = join(dataDir, "releases", releaseId, "knowledge_lint.json");
   if (!existsSync(path)) return null;
   try {

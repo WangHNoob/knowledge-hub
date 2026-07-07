@@ -86,6 +86,7 @@ feedbackService.ts         Agent 反馈落库 + 聚类为 human exception / feed
 flywheelService.ts         「知识运营台」聚合编排层（见「飞轮与事件驱动自动化」）
 governanceProfileService.ts 项目级治理规则覆盖层（见「治理 Profile」）
 lintRemediationService.ts  OKF lint 发现 → 自动/人工修复（scoped rebuild）
+lintAutoRemediation.ts     lint 别名自动修复：中文表名解析失败 → LLM 映射 canonical → 写翻译表 → 全量重建发布
 trustScore.ts              组件可信度评分（feed 治理与飞轮）
 eventService.ts            进程内知识事件总线 + knowledge_events 表（见下）
 sse.ts                     Server-Sent Events 帧格式化（构建日志/诊断流）
@@ -93,7 +94,7 @@ okf/                        Open Knowledge Format 导出与一致性校验（发
 kbBuilder/                  流水线各阶段实现（见下）
 ```
 
-**`register*` 自动化订阅者**（不是 service，是 `app.ts` 里挂到事件总线的订阅函数，返回 unsubscribe，在 `onClose` 注销）：`registerFeedbackAutomation`、`registerAnnotationWritebackAutomation`、`registerLintRemediationAutomation`、`registerReleaseAutomation`、`registerAutoRemediation`（仅 `KH_AUTO_REMEDIATION_ENABLED` 时挂）、`registerSourceIngestAutomation`（**上传即流转**：监听 `source.version_imported`，仅当相对上一版本确有变更时自动调 `flywheelService.sync` 走增量构建→lint→发布；仅 `KH_AUTO_BUILD_ON_UPLOAD` 且生产入口 `index.ts` 通过 `enableSourceIngestAutomation` 显式开启时挂，测试默认不挂以免后台构建污染断言）。
+**`register*` 自动化订阅者**（不是 service，是 `app.ts` 里挂到事件总线的订阅函数，返回 unsubscribe，在 `onClose` 注销）：`registerFeedbackAutomation`、`registerAnnotationWritebackAutomation`、`registerLintRemediationAutomation`、`registerReleaseAutomation`、`registerAutoRemediation`（仅 `KH_AUTO_REMEDIATION_ENABLED` 时挂）、`registerLintAutoRemediation`（**lint 别名自动修复**：仅 `KH_AUTO_ALIAS_REMEDIATION_ENABLED` 时挂，见下）、`registerSourceIngestAutomation`（**上传即流转**：监听 `source.version_imported`，仅当相对上一版本确有变更时自动调 `flywheelService.sync` 走增量构建→lint→发布；仅 `KH_AUTO_BUILD_ON_UPLOAD` 且生产入口 `index.ts` 通过 `enableSourceIngestAutomation` 显式开启时挂，测试默认不挂以免后台构建污染断言）。
 
 **时间驱动调度器**（非事件订阅者）：`registerHealthSweepScheduler`（`healthSweepScheduler.ts`）—— 每 `KH_HEALTH_SWEEP_INTERVAL_HOURS` 小时对每个项目跑一次 `KnowledgeQueryService.runScheduledHealthCheck`（lint/trust/**过期审计**巡检）。「知识过期」是时间相关的（组件超 `maxAuditAgeDays` 未复审即过期），只有周期触发才能及时发现，事件驱动结构上无法覆盖。结果落 `knowledge_lint.health_checked` 事件进入自动化历史。定时器 unref + 重叠保护；仅生产入口经 `enableHealthSweep` 开启，测试默认不启动（用 `runHealthSweepOnce` 单跑一次做断言）。
 
@@ -103,6 +104,7 @@ kbBuilder/                  流水线各阶段实现（见下）
 
 - **事件总线**（`eventService.ts`）：`emitKnowledgeEvent` 同时写 `knowledge_events` 表**并**通过进程内 `EventEmitter` 广播；`onKnowledgeEvent(type, listener)` 订阅。事件类型是联合类型（`build.completed`/`agent.feedback.received`/`release.published`/`knowledge_lint.remediations_recorded` 等），改动时同步更新该联合。事件带 `projectId`（缺省 `default_project`）。
 - **自动化订阅者**：`app.ts` 启动时挂上述 `register*Automation`，把「构建完成 → 记录 lint 修复 → 执行修复 → 发布」串成链。写路径仍走既有确定性服务；订阅者只做**编排触发**，不绕过 service。
+- **lint 别名自动修复**（`lintAutoRemediation.ts` / `registerLintAutoRemediation`）：`table_dependencies` 未解析、`graph` 的 `configured_in` 悬空边——本质都是正文/关系里的（多为中文）表名解析不到 canonical table，**单纯重建修不好**（同样的源再跑一遍还是解析不到），过去只能进例外中心等人补别名。执行器监听 `knowledge_lint.remediations_recorded`，读该发布的 lint 报告 + `search/index.json`（取 Data Dependencies 原文）+ `tables/schemas.json`（canonical 表名），调 LLM 从**封闭动作集**把未解析术语映射到**真实存在的** canonical（`canonical` 必须命中已知表名集合，否则拒绝，不凭空造表名），写入持久化 `table_aliases`（翻译表），再触发一次 `flywheelService.sync({mode:"full"})`——别名改了但源没变，必须全量重建才能让 extract 重新套用别名（extract 在 `extractStage.ts` 里对关系 source/target 与正文依赖都走 `tableAliases.resolve/resolveMany`，构建时 `writeAliasFile(exportRows())` 把 DB 别名写进工作区，每次构建重套 → 修复持久）。**收敛保证**：只有本轮确实新增别名（按 `aliasKey` 归一化去重）才 sync，否则 `no_action`，避免「重建→lint→再重建」死循环；无 LLM / 无报告 / 非表类悬空边一律安全跳过或留人。开关 `KH_AUTO_ALIAS_REMEDIATION_ENABLED`（默认 true），复用 `KH_AUTO_REMEDIATION_LLM_*` 与置信阈值。`lintRemediationService.executePending` 因此**跳过 `table_dependencies` 域**（交由本执行器专属处理，避免空转与重复发布）。发布可回滚是安全网。
 - **FlywheelService**（`flywheelService.ts`）：只读聚合 + 一键编排层，把构建/治理/发布/反馈收敛成「一句话状态 + 一个主动作」。三个入口：`getStatus`（状态 + metrics + 例外 + 自动化）、`listExceptions`（必须人工处理的项）、`sync`（一键构建 + 治理 + 自动发布）。路由 `routes/flywheel.ts`，每入口都有 `default_project` 与显式 `:projectId` 两条路径。
   - **例外软忽略**：`dismissException`/`restoreException`/`listDismissedExceptions` 落 `exception_dismissals` 表；`listExceptions` 过滤掉仍生效的忽略项（`getStatus` 的 pendingExceptions 也随之不计）。前端在知识运营台例外卡上「忽略」（填原因），并有「已忽略」折叠区可恢复。denyRole viewer。
   - **单组件重建 → 修订发布**：`rebuildComponent(componentId)` 按组件类型分流——源级 wiki 页/表说明页走 `builder.startScopedRebuildForComponent`（`only=<源文件>` + `mergeIntoPackageId`）；图谱组件走 `rebuildGraph` → `builder.startGraphRebuild`（**阶段级**：全量跑流水线重建派生所需 `_meta`，但只把 graph 阶段组件 `graph_snapshot/graph_view/topic_index` 合并回原包，`scopedStage:"graph"`）。两者都 `publishOnComplete`，经 `releaseAutomationService` 作为**当前发布的修订**发布（继承父发布、只 patch 变更组件，不动未受影响部分）。前端在资产组件详情（Assets 页 viewer-head）提供「重建并发布修订」。图谱因无跨运行 extract 缓存，会重新运行抽取（有模型开销），换取健壮性。

@@ -71,6 +71,7 @@ okf_bundle/
 Lint issue 会进入可追踪治理队列：
 
 - 可定位到组件的问题会自动触发 scoped rebuild。
+- **表名解析类问题自动补别名修复**：`Data Dependencies 未解析到结构化表`、图谱 `configured_in` 悬空边，本质是（多为中文的）表名解析不到 canonical table，单纯重建修不好。系统会用 LLM 把未解析表名映射到**真实存在的** canonical 表名（映射不到真实表名就拒绝，不凭空造），写入持久化翻译表，再全量重建并自动发布；发布可回滚兜底。
 - 构建成功后治理项标记为 `completed`。
 - 构建失败后治理项标记为 `failed`，进入例外中心，可一键重试。
 - 无法安全自动处理的项标记为 `needs_human`，进入审核中心。

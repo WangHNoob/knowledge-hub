@@ -16,6 +16,8 @@ import { createAttributionAuditService } from "./services/attributionAuditServic
 import { createReleaseService } from "./services/releaseService";
 import { registerAnnotationWritebackAutomation } from "./services/annotationWritebackAutomationService";
 import { registerAutoRemediation } from "./services/autoRemediationService";
+import { registerLintAutoRemediation } from "./services/lintAutoRemediation";
+import { createTableAliasService } from "./services/tableAliasService";
 import { registerFeedbackAutomation } from "./services/feedbackAutomationService";
 import { registerReleaseAutomation } from "./services/releaseAutomationService";
 import { registerSourceIngestAutomation } from "./services/sourceIngestAutomationService";
@@ -159,6 +161,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         diagnostics,
       })
     : () => {};
+  const unsubscribeLintAutoRemediation = backgroundAutomationsEnabled && config.autoAliasRemediationEnabled
+    ? registerLintAutoRemediation({
+        db: options.db,
+        tableAliases: createTableAliasService(options.db),
+        flywheel: ctx.flywheelService,
+        dataDir: ctx.dataDir,
+        diagnostics,
+      })
+    : () => {};
   const unsubscribeSourceIngestAutomation = backgroundAutomationsEnabled && options.enableSourceIngestAutomation === true
     ? registerSourceIngestAutomation({
         db: options.db,
@@ -218,6 +229,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     unsubscribeAnnotationWritebackAutomation();
     unsubscribeLintRemediationAutomation();
     unsubscribeAutoRemediation();
+    unsubscribeLintAutoRemediation();
     unsubscribeSourceIngestAutomation();
     unsubscribeHealthSweep();
     if (options.closeDatabaseOnClose !== false) await options.db.close();

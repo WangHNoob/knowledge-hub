@@ -275,6 +275,10 @@ function validateCorrectValue(componentKind: string, value: Record<string, unkno
  *   3. OPENAI_API_KEY env fallback (openai-compatible).
  *   4. Deterministic (no-op).
  */
+export async function resolveAutoRemediationModelConfig(db: DatabaseHandle): Promise<PipelineModelConfig> {
+  return resolveModelConfig(db);
+}
+
 async function resolveModelConfig(db: DatabaseHandle): Promise<PipelineModelConfig> {
   const provider = config.autoRemediationLlmProvider;
   if (provider === "anthropic" || provider === "openai-compatible") {

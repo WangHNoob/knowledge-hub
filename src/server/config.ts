@@ -49,6 +49,7 @@ export const config = {
   healthSweepIntervalHours: Number(optional("KH_HEALTH_SWEEP_INTERVAL_HOURS", "24")),
   generateBuildReviewTasks: flag("KH_GENERATE_BUILD_REVIEW_TASKS", false),
   autoRemediationEnabled: flag("KH_AUTO_REMEDIATION_ENABLED", true),
+  autoAliasRemediationEnabled: flag("KH_AUTO_ALIAS_REMEDIATION_ENABLED", true),
   autoRemediationConfidenceThreshold: Number(optional("KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD", "0.85")),
   autoRemediationLlmProvider: optional("KH_AUTO_REMEDIATION_LLM_PROVIDER", ""),
   autoRemediationLlmBaseUrl: optional("KH_AUTO_REMEDIATION_LLM_BASE_URL", ""),

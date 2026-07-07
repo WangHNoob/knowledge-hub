@@ -34,7 +34,8 @@ export type KnowledgeEventType =
   | "knowledge_lint.health_checked"
   | "knowledge_lint.remediation_started"
   | "knowledge_lint.remediation_completed"
-  | "knowledge_lint.remediation_failed";
+  | "knowledge_lint.remediation_failed"
+  | "knowledge_lint.alias_remediated";
 
 export interface KnowledgeEvent {
   eventId: string;
