@@ -214,8 +214,16 @@ export const knowledgeMcpTools: Array<{
   {
     name: "kb_start_incremental_check",
     title: "Start Incremental Check",
-    description: "Run a scoped rebuild/check for the affected component so correction, lint, evidence, dependencies, and trust can be re-evaluated.",
-    inputSchema: z.object({ ...contextFields, correctionId: z.string().optional(), componentId: componentIdField.optional(), sourcePath: z.string().optional() }).passthrough(),
+    description: "Run a scoped rebuild/check for the affected component, or execute pending Knowledge Lint remediation queue, so correction, lint, evidence, dependencies, and trust can be re-evaluated.",
+    inputSchema: z.object({
+      ...contextFields,
+      correctionId: z.string().optional(),
+      componentId: componentIdField.optional(),
+      sourcePath: z.string().optional(),
+      runPendingLintRemediations: z.boolean().optional().describe("When true, execute the pending Knowledge Lint remediation queue for the current project/release."),
+      releaseId: z.string().optional(),
+      limit: z.number().int().positive().max(50).optional(),
+    }).passthrough(),
     readOnly: false,
   },
   {

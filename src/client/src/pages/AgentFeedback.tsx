@@ -120,6 +120,8 @@ const MCP_TOOL_SPECS: McpToolSpec[] = [
     { name: "correctionId", label: "修正 ID", type: "text", placeholder: "优先填写 correctionId" },
     { name: "componentId", label: "组件 ID", type: "text", placeholder: "没有 correctionId 时填写 componentId" },
     { name: "sourcePath", label: "来源路径", type: "text" },
+    { name: "runPendingLintRemediations", label: "执行待治理 Lint", type: "text", placeholder: "填 true 则执行 pending Knowledge Lint 治理队列" },
+    { name: "limit", label: "治理数量上限", type: "number", placeholder: "默认 10，最高 50" },
   ] },
   { name: "kb_publish_if_ready", title: "门禁通过则发布", fields: [
     { name: "packageId", label: "资产包 ID", type: "text", placeholder: "可选，默认最新完成构建" },

@@ -54,6 +54,19 @@ describe("KnowledgeQueryService", () => {
         confidence: 0.9,
       }, { sessionId: "test", agentRole: "planner" });
       const correctionId = String(submittedCorrection.result.correctionId);
+      const emptyLintRun = await service.runTool("kb_start_incremental_check", {
+        runPendingLintRemediations: true,
+        releaseId: "rel_no_pending_lint",
+      }, { sessionId: "test", agentRole: "planner" });
+      expect(emptyLintRun.result).toMatchObject({ status: "empty", mode: "pending_lint_remediations", count: 0 });
+      await fixture.db.adapter.query(
+        `INSERT INTO knowledge_lint_remediations
+           (remediation_id, project_id, release_id, issue_id, domain, severity, action_type, confidence,
+            auto_eligible, status, title, diagnosis, remediation, target_component_id, target_okf_path, run_id, created_at)
+         VALUES ($1,'default_project',$2,'lint-pending-1','trust','warning','scoped_rebuild',0.92,
+            true,'pending','Pending trust remediation','Needs scoped lint remediation','Rebuild affected component',$3,'gamedocs/battle.md','',$4)`,
+        ["lrm_pending_health", fixture.releaseId, fixture.pageComponentId, new Date().toISOString()],
+      );
 
       const health = await service.runTool("kb_run_health_check", { maxAuditAgeDays: 3650 }, { sessionId: "test", agentRole: "planner" });
       expect(health.result).toMatchObject({
@@ -70,15 +83,17 @@ describe("KnowledgeQueryService", () => {
         },
         recommendations: expect.arrayContaining([
           expect.objectContaining({ tool: "kb_govern_flywheel", payload: { projectId: "default_project", correctionId } }),
+          expect.objectContaining({ tool: "kb_start_incremental_check", payload: { projectId: "default_project", runPendingLintRemediations: true } }),
         ]),
       });
-      expect(health.result.reasons).toEqual(expect.any(Array));
+      expect(health.result.reasons).toEqual(expect.arrayContaining(["lint_pending"]));
       const { rows: healthEvents } = await fixture.db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = 'knowledge_lint.health_checked'");
       expect(healthEvents).toHaveLength(1);
       expect(healthEvents[0].entity_id).toBe(fixture.releaseId);
       const healthPayload = typeof healthEvents[0].payload_json === "string" ? JSON.parse(healthEvents[0].payload_json) : healthEvents[0].payload_json;
       expect(healthPayload.recommendations).toEqual(expect.arrayContaining([
         expect.objectContaining({ tool: "kb_govern_flywheel", payload: { projectId: "default_project", correctionId } }),
+        expect.objectContaining({ tool: "kb_start_incremental_check", payload: { projectId: "default_project", runPendingLintRemediations: true } }),
       ]));
 
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });

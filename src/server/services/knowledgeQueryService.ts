@@ -1457,6 +1457,7 @@ export class KnowledgeQueryService {
       lowTrustCount: lowTrust.length,
       staleAuditCount: staleAudit.length,
       activeCorrections,
+      lintSummary,
     });
     const reasons = [...blockingReasons, ...warningReasons];
     const status = blockingReasons.length > 0 ? "needs_attention" : warningReasons.length > 0 ? "warning" : "passed";
@@ -1659,6 +1660,45 @@ export class KnowledgeQueryService {
   }
 
   private async kbStartIncrementalCheck(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    if (booleanArg(payload, false, "runPendingLintRemediations", "pendingLint", "lintPending")) {
+      const releaseId = optionalString(payload, "releaseId") || (await this.releaseService.getCurrent(projectId))?.releaseId;
+      const remediations = await this.lintRemediationService.executePending({
+        projectId,
+        releaseId,
+        requestedBy: context.sessionId ?? "mcp-agent",
+        kbBuilderService: this.builderService,
+        limit: boundedLimitArg(numberArg(payload, 10, "limit"), 10, 50),
+      });
+      const componentIds = uniqueSorted(remediations.map((item) => item.targetComponentId).filter(Boolean));
+      await emitKnowledgeEvent(this.db, {
+        eventType: "lint.checked",
+        entityType: "project",
+        entityId: projectId,
+        payload: {
+          projectId,
+          releaseId: releaseId ?? "",
+          mode: "pending_lint_remediations",
+          count: remediations.length,
+          componentIds,
+          status: remediations.length > 0 ? "started" : "empty",
+          actor: context.sessionId ?? "mcp-agent",
+        },
+      });
+      return {
+        result: {
+          status: remediations.length > 0 ? "started" : "empty",
+          mode: "pending_lint_remediations",
+          releaseId: releaseId ?? "",
+          remediations,
+          count: remediations.length,
+          message: remediations.length > 0
+            ? "已启动 pending Knowledge Lint 自动治理队列；每个可治理项会触发 scoped rebuild 并重新计算证据、依赖和 trust。"
+            : "当前没有 pending Knowledge Lint 自动治理项。",
+        },
+        componentIds,
+        forceHit: true,
+      };
+    }
     const correctionId = optionalString(payload, "correctionId");
     const correction = correctionId ? await this.getCorrection(projectId, correctionId) : null;
     const componentId = correction?.componentId || optionalString(payload, "componentId");
@@ -2709,6 +2749,7 @@ function healthWarningReasons(input: {
   lowTrustCount: number;
   staleAuditCount: number;
   activeCorrections: number;
+  lintSummary: { pending: number; failed: number; needsHuman: number };
 }): string[] {
   const reasons: string[] = [];
   if (input.pendingReviewTasks > 0) reasons.push("pending_review_tasks");
@@ -2716,6 +2757,7 @@ function healthWarningReasons(input: {
   if (input.lowTrustCount > 0) reasons.push("low_trust_components");
   if (input.staleAuditCount > 0) reasons.push("stale_audit_components");
   if (input.activeCorrections > 0) reasons.push("active_corrections_waiting_rebuild");
+  if (input.lintSummary.pending > 0) reasons.push("lint_pending");
   return reasons;
 }
 
@@ -2754,6 +2796,14 @@ function healthRecommendations(
       tool: "kb_govern_flywheel",
       reason: "存在已激活修正；跳过重复应用，继续 scoped rebuild/check 与发布门禁判断。",
       payload: { projectId, correctionId: active.correctionId, apply: false, componentId: active.componentId || undefined },
+    });
+  }
+  if (reasons.has("lint_pending")) {
+    out.push({
+      action: "run_pending_lint_remediations",
+      tool: "kb_start_incremental_check",
+      reason: "存在待自动治理的 Knowledge Lint 项；让服务端按治理队列启动 scoped rebuild。",
+      payload: { projectId, runPendingLintRemediations: true },
     });
   }
   if (reasons.has("lint_failed") || reasons.has("lint_needs_human")) {
