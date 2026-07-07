@@ -21,7 +21,7 @@ Knowledge Hub 是一个 TypeScript 全栈应用，面向游戏策划知识库管
 - 上传 `knowledge/`、`gamedata/`、`gamedocs/` 等资料目录。
 - 原始文件按内容哈希去重，源版本不可变。
 - 资料版本支持文件树预览、文件内容摘要、变更统计和增量构建建议。
-- 新增/修改/删除文件会生成 build plan，提示适合增量还是全量构建。
+- **上传即自动流转**：上传新版本且相对上一版本确有变更时，自动触发增量构建 → Knowledge Lint 治理 → 发布，无需手动点构建。资料库页顶部有实时流水线进度条（构建 → 治理 → 发布），全程可见。
 
 ### 2. 知识资产构建
 
@@ -34,6 +34,7 @@ convert → extract → tables → graph → viz
 - `extract` 阶段使用 AI SDK 6 兼容模型配置，支持 OpenAI-compatible / Anthropic / deterministic。
 - 构建产出知识资产包、wiki 组件、表依赖、图谱、证据记录和可信度信息。
 - 支持 scoped rebuild，单个组件修复时不必全量重建。
+- **单组件 / 图谱重建并发布修订**：在资产组件详情可对存在问题的组件「重建并发布修订」——源级 wiki 页 / 表说明页走来源级 scoped rebuild；知识图谱走阶段级重建（重跑抽取但只把图谱阶段组件合并回原包）。两者都作为当前发布的修订发布，未受影响的部分保持不动。
 - 标注样例与确定性覆盖会在后续构建中注入，降低重复人工处理。
 
 ### 3. OKF 发布
@@ -82,6 +83,7 @@ Lint issue 会进入可追踪治理队列：
 - 首页展示当前项目状态、主动作和例外项。
 - 资料变更后可以一键同步、构建、治理、发布。
 - 审核中心只保留必须人工判断的任务。
+- **例外可软忽略**：例外收件箱中的项可填原因手动忽略——从收件箱隐藏但保留底层记录、留痕可审计、随时可恢复；若底层问题仍在则恢复后会重新出现。
 - 构建页和审核中心都能看到 Knowledge Lint 自动治理链路。
 - Agent 反馈会聚合成业务化问题簇，而不是裸 `cmp_pkg...` 技术 ID。
 
@@ -203,6 +205,7 @@ agent_events
 mcp_audit
 knowledge_events
 knowledge_lint_remediations
+exception_dismissals
 quality_gate_profiles
 knowledge_rule_profiles
 table_aliases
@@ -350,11 +353,10 @@ POSTGRES_PASSWORD=...
 ### 日常资料更新
 
 1. 策划上传新表或新文档。
-2. 系统生成 build plan。
-3. 优先走增量构建并发布。
-4. Knowledge Lint 自动治理可定位问题。
-5. Agent 反馈持续回流。
-6. 只处理例外中心中确实需要人工判断的项。
+2. 系统检测到相对上一版本有变更，自动走增量构建 → 治理 → 发布，进度条实时可见。
+3. Knowledge Lint 自动治理可定位问题；存在问题的单个组件（含知识图谱）可「重建并发布修订」。
+4. Agent 反馈持续回流。
+5. 只处理例外中心中确实需要人工判断的项，其余可软忽略（留痕可恢复）。
 
 ---
 
