@@ -11,6 +11,7 @@ import { createFeedbackService, type FeedbackService, type FeedbackType } from "
 import { AutoPublishEligibilityError, createReleaseService, type AutoPublishCheck } from "./releaseService";
 import { createKbBuilderPipelineService } from "./kbBuilderService";
 import { createLintRemediationService } from "./lintRemediationService";
+import { createGovernanceProfileService } from "./governanceProfileService";
 import { emitKnowledgeEvent } from "./eventService";
 import { createSourceBundleService } from "./sourceBundleService";
 import { createProjectService } from "./projectService";
@@ -243,6 +244,7 @@ export class KnowledgeQueryService {
   private readonly feedback: FeedbackService;
   private readonly builderService;
   private readonly lintRemediationService;
+  private readonly governanceProfileService;
 
   constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
     this.adapter = db.adapter;
@@ -251,6 +253,7 @@ export class KnowledgeQueryService {
     this.feedback = createFeedbackService(db);
     this.builderService = createKbBuilderPipelineService(db, dataDir, diagnostics);
     this.lintRemediationService = createLintRemediationService(db);
+    this.governanceProfileService = createGovernanceProfileService(db);
   }
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {
@@ -1335,7 +1338,7 @@ export class KnowledgeQueryService {
   }
 
   private async kbGetFlywheelStatus(projectId: string): Promise<ToolResult> {
-    const [release, latestBuild, corrections, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, latestFeedback, latestPublishSkip] = await Promise.all([
+    const [release, latestBuild, corrections, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, latestFeedback, latestPublishSkip, governanceProfile] = await Promise.all([
       this.releaseService.getCurrent(projectId),
       this.latestBuild(projectId),
       this.listCorrections(projectId, 10),
@@ -1345,6 +1348,7 @@ export class KnowledgeQueryService {
       this.lintRemediationService.summary(projectId),
       this.latestAgentFeedback(projectId),
       this.latestKnowledgeEvent(projectId, "publish.skipped"),
+      this.governanceProfileService.resolve(projectId),
     ]);
     const pendingCorrections = corrections.filter((item) => item.state === "pending_review").length;
     const failedLintRemediations = lintSummary.failed + lintSummary.needsHuman;
@@ -1390,6 +1394,12 @@ export class KnowledgeQueryService {
           negativeFeedback,
           pendingCorrections,
           lintRemediation: lintSummary,
+          policy: {
+            source: governanceProfile.source,
+            release: governanceProfile.release,
+            lint: governanceProfile.lint,
+            trust: governanceProfile.trust,
+          },
           canAttemptPublish,
           reasons: gateReasons,
         },
@@ -1402,7 +1412,7 @@ export class KnowledgeQueryService {
   private async kbRunHealthCheck(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
     const maxAuditAgeDays = boundedLimitArg(numberArg(payload, 180, "maxAuditAgeDays", "auditHalfLifeDays"), 180, 3650);
     const trustThreshold = boundedScoreArg(payload, 0.7, "minTrustScore", "trustThreshold");
-    const [release, latestBuild, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, corrections] = await Promise.all([
+    const [release, latestBuild, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, corrections, governanceProfile] = await Promise.all([
       this.releaseService.getCurrent(projectId),
       this.latestBuild(projectId),
       this.countOpenBlockingTasks(projectId),
@@ -1410,6 +1420,7 @@ export class KnowledgeQueryService {
       this.countNegativeFeedback(projectId),
       this.lintRemediationService.summary(projectId),
       this.listCorrections(projectId, 50),
+      this.governanceProfileService.resolve(projectId),
     ]);
     if (!release) {
       const result = {
@@ -1420,6 +1431,12 @@ export class KnowledgeQueryService {
         checks: {
           release: { status: "failed", reason: "no_current_release" },
         },
+        policy: {
+          source: governanceProfile.source,
+          release: governanceProfile.release,
+          lint: governanceProfile.lint,
+          trust: governanceProfile.trust,
+        },
         recommendations: [
           { action: "upload_or_build", tool: "kb_get_flywheel_status", reason: "先确认资料库、构建和发布状态。", payload: { projectId } },
         ],
@@ -1428,7 +1445,18 @@ export class KnowledgeQueryService {
         eventType: "knowledge_lint.health_checked",
         entityType: "project",
         entityId: projectId,
-        payload: { projectId, status: result.status, consumption: result.consumption, actor: context.sessionId ?? "mcp-agent" },
+        payload: {
+          projectId,
+          status: result.status,
+          consumption: result.consumption,
+          policy: {
+            source: governanceProfile.source,
+            autoPublishRevisions: governanceProfile.release.autoPublishRevisions,
+            lintAutoGovernanceEnabled: governanceProfile.lint.autoGovernanceEnabled,
+            minAutoPublishScore: governanceProfile.trust.minAutoPublishScore,
+          },
+          actor: context.sessionId ?? "mcp-agent",
+        },
       });
       return { result, componentIds: [], forceHit: true };
     }
@@ -1480,6 +1508,12 @@ export class KnowledgeQueryService {
       },
       release: releaseEnvelope(release),
       latestBuild,
+      policy: {
+        source: governanceProfile.source,
+        release: governanceProfile.release,
+        lint: governanceProfile.lint,
+        trust: governanceProfile.trust,
+      },
       checks: {
         release: { status: "passed", componentCount: componentIds.length },
         lint: {
@@ -1527,6 +1561,12 @@ export class KnowledgeQueryService {
         status,
         consumption,
         thresholds: { minTrustScore: trustThreshold, maxAuditAgeDays },
+        policy: {
+          source: governanceProfile.source,
+          autoPublishRevisions: governanceProfile.release.autoPublishRevisions,
+          lintAutoGovernanceEnabled: governanceProfile.lint.autoGovernanceEnabled,
+          minAutoPublishScore: governanceProfile.trust.minAutoPublishScore,
+        },
         reasons,
         recommendations: recommendations.map((item) => ({
           action: item.action,

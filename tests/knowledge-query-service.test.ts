@@ -21,6 +21,14 @@ describe("KnowledgeQueryService", () => {
       const projects = await service.runTool("kb_list_projects", {}, { sessionId: "test", agentRole: "planner" });
       expect(projects.result.currentProjectId).toBe("default_project");
       expect(projects.result.projects.some((project: { projectId: string }) => project.projectId === "default_project")).toBe(true);
+      const health = await service.runTool("kb_run_health_check", {}, { sessionId: "test", agentRole: "planner" });
+      expect(health.result).toMatchObject({
+        status: "needs_attention",
+        policy: {
+          release: { autoPublishRevisions: true },
+          lint: { autoGovernanceEnabled: true },
+        },
+      });
       await expect(service.runTool("kb_get_release", {}, { sessionId: "test", agentRole: "planner" }))
         .rejects.toThrow(/No current published release/i);
     } finally {
@@ -46,6 +54,12 @@ describe("KnowledgeQueryService", () => {
       expect(releaseWithManifest.result.manifest.components).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
       expect(releaseWithManifest.result.manifest.revision.diff.componentIds.added).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
       expect(releaseWithManifest.result.manifest.autoPublish.changedComponents).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
+      const flywheelStatus = await service.runTool("kb_get_flywheel_status", {}, { sessionId: "test", agentRole: "planner" });
+      expect(flywheelStatus.result.gates.policy).toMatchObject({
+        release: { autoPublishRevisions: true },
+        lint: { autoGovernanceEnabled: true },
+        trust: { minAutoPublishScore: expect.any(Number) },
+      });
 
       const submittedCorrection = await service.runTool("kb_submit_correction", {
         componentId: fixture.pageComponentId,
@@ -72,6 +86,10 @@ describe("KnowledgeQueryService", () => {
       expect(health.result).toMatchObject({
         projectId: "default_project",
         release: { releaseId: fixture.releaseId },
+        policy: {
+          release: { autoPublishRevisions: true },
+          lint: { autoGovernanceEnabled: true },
+        },
         checks: {
           release: { status: "passed", componentCount: expect.any(Number) },
           trust: { averageScore: expect.any(Number), lowTrustCount: expect.any(Number) },
@@ -95,6 +113,7 @@ describe("KnowledgeQueryService", () => {
         expect.objectContaining({ tool: "kb_govern_flywheel", payload: { projectId: "default_project", correctionId } }),
         expect.objectContaining({ tool: "kb_start_incremental_check", payload: { projectId: "default_project", runPendingLintRemediations: true } }),
       ]));
+      expect(healthPayload.policy).toMatchObject({ autoPublishRevisions: true, lintAutoGovernanceEnabled: true });
 
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
       expect(search.result.items[0].title).toBe("Battle System");
