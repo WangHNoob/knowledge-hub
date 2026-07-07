@@ -24,6 +24,7 @@ const REPORT_TOOLS = new Set(["kb_report_gap", "kb_report_bad_hit", "kb_report_s
 const GOVERNANCE_TOOLS = new Set([
   "kb_list_projects",
   "kb_get_flywheel_status",
+  "kb_run_health_check",
   "kb_submit_correction",
   "kb_apply_correction",
   "kb_start_incremental_check",
@@ -210,6 +211,16 @@ interface PublishTarget {
   componentIds: string[];
 }
 
+interface HealthComponentSummary {
+  componentId: string;
+  artifactId: string;
+  title: string;
+  kind: string;
+  score: number | null;
+  status: string;
+  lastTrustedAuditAt: string | null;
+}
+
 export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
   return new KnowledgeQueryService(db, dataDir, diagnostics);
 }
@@ -377,6 +388,8 @@ export class KnowledgeQueryService {
         return this.kbListProjects(projectId);
       case "kb_get_flywheel_status":
         return this.kbGetFlywheelStatus(projectId);
+      case "kb_run_health_check":
+        return this.kbRunHealthCheck(projectId, payload, context);
       case "kb_submit_correction":
         return this.kbSubmitCorrection(projectId, payload, context);
       case "kb_apply_correction":
@@ -1371,6 +1384,129 @@ export class KnowledgeQueryService {
         },
       },
       componentIds: corrections.map((item) => item.componentId).filter(Boolean) as string[],
+      forceHit: true,
+    };
+  }
+
+  private async kbRunHealthCheck(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    const maxAuditAgeDays = boundedLimitArg(numberArg(payload, 180, "maxAuditAgeDays", "auditHalfLifeDays"), 180, 3650);
+    const trustThreshold = boundedScoreArg(payload, 0.7, "minTrustScore", "trustThreshold");
+    const [release, latestBuild, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, corrections] = await Promise.all([
+      this.releaseService.getCurrent(projectId),
+      this.latestBuild(projectId),
+      this.countOpenBlockingTasks(projectId),
+      this.countOpenReviewTasks(projectId),
+      this.countNegativeFeedback(projectId),
+      this.lintRemediationService.summary(projectId),
+      this.listCorrections(projectId, 50),
+    ]);
+    if (!release) {
+      const result = {
+        projectId,
+        status: "needs_attention",
+        consumption: "blocked",
+        summary: "当前项目没有已发布知识，Agent 暂无可消费版本。",
+        checks: {
+          release: { status: "failed", reason: "no_current_release" },
+        },
+        recommendations: [
+          { action: "upload_or_build", tool: "kb_get_flywheel_status", reason: "先确认资料库、构建和发布状态。" },
+        ],
+      };
+      await emitKnowledgeEvent(this.db, {
+        eventType: "knowledge_lint.health_checked",
+        entityType: "project",
+        entityId: projectId,
+        payload: { projectId, status: result.status, consumption: result.consumption, actor: context.sessionId ?? "mcp-agent" },
+      });
+      return { result, componentIds: [], forceHit: true };
+    }
+
+    const componentIds = manifestComponentIds(release);
+    const trust = await this.trustSummaryForComponents(release, componentIds);
+    const lowTrust = trust.components
+      .filter((component) => typeof component.trust?.score === "number" && component.trust.score < trustThreshold)
+      .map((component) => healthComponent(component));
+    const staleAudit = trust.components
+      .filter((component) => auditIsStale(component.trust?.lastTrustedAuditAt ?? null, maxAuditAgeDays))
+      .map((component) => healthComponent(component));
+    const pendingCorrections = corrections.filter((item) => item.state === "pending_review").length;
+    const activeCorrections = corrections.filter((item) => item.state === "active").length;
+    const lintIssues = lintSummary.failed + lintSummary.needsHuman + lintSummary.pending;
+    const blockingReasons = healthBlockingReasons({
+      blockingTasks,
+      pendingCorrections,
+      lintSummary,
+    });
+    const warningReasons = healthWarningReasons({
+      pendingReviewTasks,
+      negativeFeedback,
+      lowTrustCount: lowTrust.length,
+      staleAuditCount: staleAudit.length,
+      activeCorrections,
+    });
+    const reasons = [...blockingReasons, ...warningReasons];
+    const status = blockingReasons.length > 0 ? "needs_attention" : warningReasons.length > 0 ? "warning" : "passed";
+    const consumption = status === "needs_attention" ? "use_with_care" : "ready";
+    const result = {
+      projectId,
+      checkedAt: new Date().toISOString(),
+      status,
+      consumption,
+      summary: healthSummary(status, release.version, blockingReasons.length, warningReasons.length),
+      thresholds: {
+        minTrustScore: trustThreshold,
+        maxAuditAgeDays,
+      },
+      release: releaseEnvelope(release),
+      latestBuild,
+      checks: {
+        release: { status: "passed", componentCount: componentIds.length },
+        lint: {
+          status: lintIssues > 0 ? "warning" : "passed",
+          remediation: lintSummary,
+        },
+        trust: {
+          status: lowTrust.length > 0 ? "warning" : "passed",
+          averageScore: trust.averageScore,
+          minScore: trust.minScore,
+          lowTrustCount: lowTrust.length,
+          lowTrustSample: lowTrust.slice(0, 10),
+        },
+        auditFreshness: {
+          status: staleAudit.length > 0 ? "warning" : "passed",
+          staleCount: staleAudit.length,
+          staleSample: staleAudit.slice(0, 10),
+        },
+        governance: {
+          status: blockingReasons.length > 0 ? "failed" : warningReasons.length > 0 ? "warning" : "passed",
+          blockingTasks,
+          pendingReviewTasks,
+          pendingCorrections,
+          activeCorrections,
+          negativeFeedback,
+        },
+      },
+      reasons,
+      recommendations: healthRecommendations(blockingReasons, warningReasons),
+    };
+    await emitKnowledgeEvent(this.db, {
+      eventType: "knowledge_lint.health_checked",
+      entityType: "release",
+      entityId: release.releaseId,
+      payload: {
+        projectId,
+        releaseId: release.releaseId,
+        status,
+        consumption,
+        thresholds: { minTrustScore: trustThreshold, maxAuditAgeDays },
+        reasons,
+        actor: context.sessionId ?? "mcp-agent",
+      },
+    });
+    return {
+      result,
+      componentIds: uniqueSorted([...lowTrust.map((item) => item.componentId), ...staleAudit.map((item) => item.componentId)]),
       forceHit: true,
     };
   }
@@ -2523,6 +2659,76 @@ function flywheelGateReasons(input: {
   return reasons;
 }
 
+function healthBlockingReasons(input: {
+  blockingTasks: number;
+  pendingCorrections: number;
+  lintSummary: { pending: number; failed: number; needsHuman: number };
+}): string[] {
+  const reasons: string[] = [];
+  if (input.blockingTasks > 0) reasons.push("blocking_tasks");
+  if (input.pendingCorrections > 0) reasons.push("pending_corrections");
+  if (input.lintSummary.failed > 0) reasons.push("lint_failed");
+  if (input.lintSummary.needsHuman > 0) reasons.push("lint_needs_human");
+  return reasons;
+}
+
+function healthWarningReasons(input: {
+  pendingReviewTasks: number;
+  negativeFeedback: number;
+  lowTrustCount: number;
+  staleAuditCount: number;
+  activeCorrections: number;
+}): string[] {
+  const reasons: string[] = [];
+  if (input.pendingReviewTasks > 0) reasons.push("pending_review_tasks");
+  if (input.negativeFeedback > 0) reasons.push("negative_feedback");
+  if (input.lowTrustCount > 0) reasons.push("low_trust_components");
+  if (input.staleAuditCount > 0) reasons.push("stale_audit_components");
+  if (input.activeCorrections > 0) reasons.push("active_corrections_waiting_rebuild");
+  return reasons;
+}
+
+function healthSummary(status: string, version: string, blockingCount: number, warningCount: number): string {
+  if (status === "passed") return `发布 ${version} 当前可供 Agent 消费，未发现阻断项。`;
+  if (status === "needs_attention") return `发布 ${version} 存在 ${blockingCount} 类阻断项，Agent 可查询但应谨慎采纳。`;
+  return `发布 ${version} 可消费，但存在 ${warningCount} 类风险，建议 Agent 按推荐动作继续治理。`;
+}
+
+function healthRecommendations(blockingReasons: string[], warningReasons: string[]): Array<{ action: string; tool: string; reason: string }> {
+  const reasons = new Set([...blockingReasons, ...warningReasons]);
+  const out: Array<{ action: string; tool: string; reason: string }> = [];
+  if (reasons.has("pending_corrections") || reasons.has("active_corrections_waiting_rebuild")) {
+    out.push({ action: "run_incremental_check", tool: "kb_start_incremental_check", reason: "存在待应用或已激活修正，需要 scoped rebuild/check 后才能进入发布判断。" });
+  }
+  if (reasons.has("lint_failed") || reasons.has("lint_needs_human")) {
+    out.push({ action: "inspect_exceptions", tool: "kb_get_flywheel_status", reason: "Knowledge Lint 治理项需要先处理，自动发布门禁不会绕过。" });
+  }
+  if (reasons.has("low_trust_components") || reasons.has("stale_audit_components") || reasons.has("negative_feedback")) {
+    out.push({ action: "submit_correction_or_feedback", tool: "kb_govern_flywheel", reason: "低可信、审计过期或负反馈应由 Agent 提交修正并触发增量检查。" });
+  }
+  if (out.length === 0) out.push({ action: "publish_if_ready", tool: "kb_publish_if_ready", reason: "未发现阻断项，可请求系统按门禁判断是否发布修订。" });
+  return out;
+}
+
+function healthComponent(component: { componentId: string; artifactId: string; title: string; kind: string; trust: TrustScore | KnowledgeEnvelopeTrustScore | null }): HealthComponentSummary {
+  return {
+    componentId: component.componentId,
+    artifactId: component.artifactId,
+    title: component.title,
+    kind: component.kind,
+    score: component.trust?.score ?? null,
+    status: component.trust?.status ?? "unknown",
+    lastTrustedAuditAt: component.trust?.lastTrustedAuditAt ?? null,
+  };
+}
+
+function auditIsStale(lastTrustedAuditAt: string | null, maxAuditAgeDays: number): boolean {
+  if (!lastTrustedAuditAt) return true;
+  const at = Date.parse(lastTrustedAuditAt);
+  if (!Number.isFinite(at)) return true;
+  return Date.now() - at > maxAuditAgeDays * 24 * 60 * 60 * 1000;
+}
+
 function manifestComponentIds(release: ReleaseRecord): string[] {
   return uniqueSorted(jsonArray((release.manifest as Record<string, unknown>).componentIds));
 }
@@ -2556,6 +2762,12 @@ function numberArg(payload: Record<string, unknown>, fallback: number, ...keys: 
     if (Number.isFinite(numeric)) return numeric;
   }
   return fallback;
+}
+
+function boundedScoreArg(payload: Record<string, unknown>, fallback: number, ...keys: string[]): number {
+  const value = numberArg(payload, fallback, ...keys);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
 }
 
 function booleanArg(payload: Record<string, unknown>, fallback: boolean, ...keys: string[]): boolean {

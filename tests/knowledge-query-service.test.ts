@@ -47,6 +47,22 @@ describe("KnowledgeQueryService", () => {
       expect(releaseWithManifest.result.manifest.revision.diff.componentIds.added).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
       expect(releaseWithManifest.result.manifest.autoPublish.changedComponents).toMatchObject({ count: expect.any(Number), sample: expect.any(Array) });
 
+      const health = await service.runTool("kb_run_health_check", { maxAuditAgeDays: 3650 }, { sessionId: "test", agentRole: "planner" });
+      expect(health.result).toMatchObject({
+        projectId: "default_project",
+        release: { releaseId: fixture.releaseId },
+        checks: {
+          release: { status: "passed", componentCount: expect.any(Number) },
+          trust: { averageScore: expect.any(Number), lowTrustCount: expect.any(Number) },
+          governance: { blockingTasks: expect.any(Number), pendingCorrections: expect.any(Number) },
+        },
+        recommendations: expect.any(Array),
+      });
+      expect(health.result.reasons).toEqual(expect.any(Array));
+      const { rows: healthEvents } = await fixture.db.adapter.query("SELECT * FROM knowledge_events WHERE event_type = 'knowledge_lint.health_checked'");
+      expect(healthEvents).toHaveLength(1);
+      expect(healthEvents[0].entity_id).toBe(fixture.releaseId);
+
       const search = await service.runTool("kb_search", { query: "Battle stamina" }, { sessionId: "test", agentRole: "planner" });
       expect(search.result.items[0].title).toBe("Battle System");
       expect(search.trace.componentIds).toContain(fixture.pageComponentId);

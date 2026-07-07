@@ -30,6 +30,7 @@ export type KnowledgeEventType =
   | "release.published"
   | "lint.checked"
   | "knowledge_lint.remediations_recorded"
+  | "knowledge_lint.health_checked"
   | "knowledge_lint.remediation_started"
   | "knowledge_lint.remediation_completed"
   | "knowledge_lint.remediation_failed";

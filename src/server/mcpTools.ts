@@ -175,6 +175,17 @@ export const knowledgeMcpTools: Array<{
     readOnly: true,
   },
   {
+    name: "kb_run_health_check",
+    title: "Run Health Check",
+    description: "Run an auditable read-only health check over the current release: lint remediation, trust, audit freshness, pending corrections, blocking tasks, and recommended next MCP actions.",
+    inputSchema: z.object({
+      ...contextFields,
+      minTrustScore: z.number().min(0).max(1).optional().describe("Trust threshold for warning about weak components. Defaults to 0.7."),
+      maxAuditAgeDays: z.number().int().positive().max(3650).optional().describe("Maximum accepted days since trusted audit/review before a component is considered stale. Defaults to 180."),
+    }).passthrough(),
+    readOnly: true,
+  },
+  {
     name: "kb_submit_correction",
     title: "Submit Correction",
     description: "Submit a structured correction proposal for a staged/draft knowledge component. This does not mutate published OKF assets.",
