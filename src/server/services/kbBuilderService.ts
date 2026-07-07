@@ -495,6 +495,18 @@ export class KbBuilderPipelineService {
     return true;
   }
 
+  /**
+   * 启动时回收：把上一进程遗留的 running 构建（进程已死、DB 行还挂着的孤儿）标记为 failed。
+   * 返回回收数量。只改状态、不发事件——这些 run 已无执行上下文，无需触发下游自动化。
+   */
+  async failInterruptedRuns(reason = "构建被服务重启中断"): Promise<number> {
+    const { rowCount } = await this.adapter.query(
+      "UPDATE knowledge_build_runs SET status = 'failed', finished_at = $1, error = $2 WHERE status = 'running'",
+      [new Date().toISOString(), reason],
+    );
+    return rowCount ?? 0;
+  }
+
   async startRebuildFromReviewTask(taskId: string, requestedBy: string, traceId?: string): Promise<KnowledgeBuildRun> {
     const existing = await this.findExistingRebuildRun(taskId);
     if (existing) return existing;
