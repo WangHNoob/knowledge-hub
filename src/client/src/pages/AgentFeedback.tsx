@@ -99,6 +99,10 @@ const MCP_TOOL_SPECS: McpToolSpec[] = [
   ] },
   { name: "kb_get_release", title: "读取发布", fields: [] },
   { name: "kb_get_flywheel_status", title: "飞轮状态", fields: [] },
+  { name: "kb_run_health_check", title: "知识健康巡检", fields: [
+    { name: "minTrustScore", label: "最低可信度", type: "number", placeholder: "默认 0.7" },
+    { name: "maxAuditAgeDays", label: "最长审计间隔（天）", type: "number", placeholder: "默认 180" },
+  ] },
   { name: "kb_submit_correction", title: "提交修正建议", fields: [
     { name: "componentId", label: "组件 ID", type: "text", placeholder: "优先使用 MCP 命中的 componentId" },
     { name: "knowledgePath", label: "知识路径", type: "text", placeholder: "没有组件 ID 时填写 wiki 路径/标题/来源路径" },
@@ -879,12 +883,16 @@ function McpConnectPanel({ info }: { info: McpConnectInfo }) {
           <strong>硬边界</strong>
           <span>{(info.capabilities?.hardBoundaries ?? ["不能直接修改已发布 OKF bundle", "不能直接修改历史 release", "不能直接切换 current channel"]).join("、")}；发布只能由服务端门禁生成新 revision。</span>
         </div>
+        <div className="diagnosis-item">
+          <strong>推荐巡检</strong>
+          <span>让消费端 Agent 定期调用 kb_run_health_check，读取 status、reasons 和 recommendations；需要治理时再调用 kb_govern_flywheel 或 kb_start_incremental_check。</span>
+        </div>
       </div>
 
       <div className="mcp-connect-steps">
         <span><b>1</b><strong>确认已经发布知识包</strong><small>MCP 默认读取 current release；没有发布时查询会为空或报未发布。</small></span>
         <span><b>2</b><strong>在 Agent 中添加 MCP server</strong><small>选择 Streamable HTTP / Remote MCP，填入 URL 和 Authorization header。</small></span>
-        <span><b>3</b><strong>先跑 kb_get_release / kb_get_flywheel_status</strong><small>确认项目、发布、构建和 correction 门禁状态。</small></span>
+        <span><b>3</b><strong>先跑 kb_get_release / kb_run_health_check</strong><small>确认项目、发布、可信度、Lint 和 correction 门禁状态。</small></span>
       </div>
 
       <div className="mcp-config-block">

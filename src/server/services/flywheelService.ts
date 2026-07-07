@@ -773,6 +773,8 @@ function automationTitle(eventType: string, payload: Record<string, unknown>): s
       return "已根据标注启动重建";
     case "knowledge_lint.remediations_recorded":
       return "已生成 Knowledge Lint 治理队列";
+    case "knowledge_lint.health_checked":
+      return "Agent 已完成知识健康巡检";
     case "knowledge_lint.remediation_started":
       return "已启动 Knowledge Lint 自动治理";
     case "knowledge_lint.remediation_completed":

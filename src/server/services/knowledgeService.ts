@@ -1561,7 +1561,8 @@ export class KnowledgeService {
          'build.completed',
          'release.revision_proposed',
          'release.auto_publish_succeeded',
-         'release.auto_publish_skipped'
+         'release.auto_publish_skipped',
+         'knowledge_lint.health_checked'
        )
        ORDER BY created_at DESC
        LIMIT 100`,

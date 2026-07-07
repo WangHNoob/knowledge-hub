@@ -104,6 +104,17 @@ describe("flywheel ops console api", () => {
         reason: "存在待复核的确定性源覆盖，自动发布被拦截。",
       },
     });
+    await emitKnowledgeEvent(db, {
+      eventType: "knowledge_lint.health_checked",
+      entityType: "release",
+      entityId: "rel_health_check",
+      payload: {
+        projectId: "default_project",
+        releaseId: "rel_health_check",
+        status: "passed",
+        consumption: "ready",
+      },
+    });
 
     const exceptions = await app.inject({
       method: "GET",
@@ -125,6 +136,14 @@ describe("flywheel ops console api", () => {
     expect(status.json().state).toBe("needs_attention");
     expect(status.json().primaryAction.action).toBe("open_exceptions");
     expect(status.json().metrics.pendingExceptions).toBe(1);
+    expect(status.json().recentAutomation.some((item: { title: string }) => item.title === "Agent 已完成知识健康巡检")).toBe(true);
+
+    const flywheelEvents = await app.inject({
+      method: "GET",
+      url: "/api/agent/flywheel-events",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(flywheelEvents.json().events.some((event: { eventType: string }) => event.eventType === "knowledge_lint.health_checked")).toBe(true);
   });
 
   it("starts a build-and-publish run when syncing a project with a source version", async () => {
