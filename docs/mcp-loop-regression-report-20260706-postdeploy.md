@@ -2,7 +2,7 @@
 
 > 依据：`docs/claudecode-mcp-loop-regression-plan-20260706.md`
 > 仅通过 MCP 工具复测，未直接读取数据库/源码/OKF/构建产物/后台 API
-> **被测环境：云端 MCP（本地修复已部署）** ｜ 项目：`default_project`（航海王）｜ 当前发布：`rel_20260703033246_AHJdTP` ｜ manifestHash：`sha256:bf2dc0a9…747b1efe`
+> **被测环境：云端 MCP（本地修复已部署）** ｜ 项目：`default_project` ｜ 当前发布：`rel_20260703033246_AHJdTP` ｜ manifestHash：`sha256:bf2dc0a9…747b1efe`
 > 执行日期：2026-07-06
 
 ## 6 个修复点复测结论
@@ -27,7 +27,7 @@ Project: currentProjectId `default_project`｜testedProjectId `default_project`
 Tool chain: `kb_list_projects` → `kb_get_release` → `kb_get_release(includeManifest)` → `kb_get_flywheel_status`
 
 Key observations:
-- `kb_list_projects` ✓ 返回 `currentProjectId` + 项目「航海王」（status active）。
+- `kb_list_projects` ✓ 返回 `currentProjectId` + 项目（status active）。
 - `kb_get_release` 默认 ✓ 返回轻量 summary（releaseId/projectId/version/publishedAt/manifestHash/packageIds/quality/okf/componentCount），**不含大 manifest**，**不 session expired**。
 - `kb_get_release(includeManifest=true)` ✗ **两次均 session expired**——完整 manifest 分支仍未修好。
 - `kb_get_flywheel_status` ✓ 含 `exceptions/recentActivity/gates.reasons`。
@@ -148,7 +148,7 @@ Highest priority fixes:
 3. kb_publish_if_ready 返回体瘦身（componentIds 全量 → 采样/分页，当前 1.1MB）。
 
 Useful ids:
-- projectIds: default_project（航海王）
+- projectIds: default_project
 - releaseIds: rel_20260703033246_AHJdTP（manifestHash sha256:bf2dc0a9…747b1efe，全程未变）
 - componentIds: cmp_...wiki_systems_md_eb26566283（荣耀连战.md，Loop 4 锚定目标）
 - correctionIds: corr_...wmqDdh（Loop 4-A，pending_review）；corr_...N3kqij（latestCorrection）

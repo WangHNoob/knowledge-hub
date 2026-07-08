@@ -4,7 +4,7 @@
 > 协作方式：Claude Code（测试）⇄ Codex（优化）经 Agent Mail 共用邮箱异步流转（agent-relay skill）
 > 仅通过 MCP 工具复测，未直接读取数据库/源码/OKF/构建产物/后台 API
 > 被测环境：云端 MCP（各轮修复均确认部署后再测）
-> 项目：`default_project`（航海王）｜release `rel_20260703033246_AHJdTP`｜manifestHash `sha256:bf2dc0a9…747b1efe`（全程未变）
+> 项目：`default_project`｜release `rel_20260703033246_AHJdTP`｜manifestHash `sha256:bf2dc0a9…747b1efe`（全程未变）
 > 收敛日期：2026-07-06 ｜ 结论：**通过（Ready for planner trial）**
 
 ## 总体结论
