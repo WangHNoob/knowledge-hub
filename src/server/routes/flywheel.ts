@@ -38,6 +38,23 @@ export function registerFlywheelRoutes(app: FastifyInstance, ctx: RouteContext) 
     async (request) => ({ clusters: await ctx.flywheelService.listFeedbackClusters(request.params.projectId) }),
   );
 
+  app.post(
+    "/api/flywheel/feedback-clusters/promote",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request) => ctx.flywheelService.promoteFeedbackClusters({
+      projectId: "default_project",
+      requestedBy: request.user.username,
+    }),
+  );
+  app.post<{ Params: { projectId: string } }>(
+    "/api/projects/:projectId/flywheel/feedback-clusters/promote",
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request) => ctx.flywheelService.promoteFeedbackClusters({
+      projectId: request.params.projectId,
+      requestedBy: request.user.username,
+    }),
+  );
+
   // 例外软忽略：从收件箱隐藏但保留可审计痕迹，可恢复（denyRole viewer）。
   registerExceptionDismissalRoutes(app, ctx, "/api/flywheel", "default_project");
   registerExceptionDismissalRoutes(app, ctx, "/api/projects/:projectId/flywheel", null);

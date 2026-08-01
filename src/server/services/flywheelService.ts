@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 
+import { emitKnowledgeEvent } from "./eventService";
 import type { DiagnosticLogger } from "./diagnosticService";
 import type { GovernanceProfileService } from "./governanceProfileService";
 import type { KbBuilderPipelineService } from "./kbBuilderService";
@@ -265,6 +266,75 @@ export class FlywheelService {
     }
 
     return clusters.sort((a, b) => severityWeight(b.severity) - severityWeight(a.severity) || b.count - a.count || b.lastSeenAt.localeCompare(a.lastSeenAt));
+  }
+
+  /**
+   * 反馈晋升：把高频负反馈簇升级为 rebuild 候选事件，供反馈自动化触发 scoped rebuild。
+   * 不直接改发布；仅编排触发。
+   */
+  async promoteFeedbackClusters(input: {
+    projectId?: string;
+    requestedBy: string;
+    minCount?: number;
+  }): Promise<{ promoted: number; clusterIds: string[] }> {
+    const projectId = input.projectId ?? "default_project";
+    const profile = await this.governance.resolve(projectId);
+    const minCount = input.minCount ?? profile.feedback.highFrequencyThreshold;
+    const clusters = (await this.listFeedbackClusters(projectId)).filter(
+      (cluster) => cluster.count >= minCount && cluster.affectedComponents.length > 0,
+    );
+    const promoted: string[] = [];
+    for (const cluster of clusters) {
+      const component = cluster.affectedComponents[0];
+      if (!component) continue;
+      const { rows } = await this.adapter.query(
+        `SELECT task_id FROM review_tasks
+         WHERE project_id = $1 AND component_id = $2 AND status = 'open'
+           AND rule_id = 'agent_feedback.rebuild_candidate'
+         LIMIT 1`,
+        [projectId, component.componentId],
+      );
+      let taskId = rows[0] ? String(rows[0].task_id) : "";
+      if (!taskId) {
+        const { rows: componentRows } = await this.adapter.query(
+          "SELECT package_id FROM asset_components WHERE component_id = $1",
+          [component.componentId],
+        );
+        const packageId = componentRows[0] ? String(componentRows[0].package_id) : "";
+        if (!packageId) continue;
+        taskId = `task_promote_${nanoid(8)}`;
+        await this.adapter.query(
+          `INSERT INTO review_tasks
+            (task_id, project_id, package_id, component_id, severity, status, title, description, suggested_action, created_at, task_kind, rule_id, candidates, confidence, context_snapshot)
+           VALUES ($1,$2,$3,$4,'blocking','open',$5,$6,$7,$8,'annotation','agent_feedback.rebuild_candidate','[]',0.9,$9)`,
+          [
+            taskId,
+            projectId,
+            packageId,
+            component.componentId,
+            `晋升反馈簇：${cluster.title}`,
+            `高频负反馈 ${cluster.count} 次，类型 ${cluster.type}`,
+            "scoped_rebuild",
+            new Date().toISOString(),
+            JSON.stringify({ clusterId: cluster.clusterId, queries: cluster.queryExamples, promotedBy: input.requestedBy }),
+          ],
+        );
+      }
+      await emitKnowledgeEvent(this.db, {
+        eventType: "agent.feedback.rebuild_proposed",
+        entityType: "component",
+        entityId: component.componentId,
+        payload: {
+          projectId,
+          taskId,
+          componentId: component.componentId,
+          clusterId: cluster.clusterId,
+          promotedBy: input.requestedBy,
+        },
+      });
+      promoted.push(cluster.clusterId);
+    }
+    return { promoted: promoted.length, clusterIds: promoted };
   }
 
   /**
