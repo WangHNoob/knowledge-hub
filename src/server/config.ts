@@ -54,7 +54,11 @@ export const config = {
   autoRemediationLlmProvider: optional("KH_AUTO_REMEDIATION_LLM_PROVIDER", ""),
   autoRemediationLlmBaseUrl: optional("KH_AUTO_REMEDIATION_LLM_BASE_URL", ""),
   autoRemediationLlmModel: optional("KH_AUTO_REMEDIATION_LLM_MODEL", ""),
-  autoRemediationLlmApiKey: optional("KH_AUTO_REMEDIATION_LLM_API_KEY", "")
+  autoRemediationLlmApiKey: optional("KH_AUTO_REMEDIATION_LLM_API_KEY", ""),
+  /** When set, stdio MCP requires matching KH_MCP_SERVICE_TOKEN in the environment of the caller process. Empty = allow (dev). */
+  mcpServiceToken: optional("KH_MCP_SERVICE_TOKEN", ""),
+  /** When true, refuse mcp:stdio unless KH_MCP_SERVICE_TOKEN is configured. */
+  mcpStdioRequireToken: flag("KH_MCP_STDIO_REQUIRE_TOKEN", false),
 };
 
 export const testConfig = {

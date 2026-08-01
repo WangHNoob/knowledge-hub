@@ -10,6 +10,11 @@ import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 
 const root = process.cwd();
 const dataDir = isAbsolute(config.dataDir) ? config.dataDir : resolve(root, config.dataDir);
+
+if (config.mcpStdioRequireToken && !config.mcpServiceToken.trim()) {
+  throw new Error("KH_MCP_STDIO_REQUIRE_TOKEN=true but KH_MCP_SERVICE_TOKEN is empty; refusing to start stdio MCP.");
+}
+
 const db = await createDatabase({
   databaseUrl: config.databaseUrl,
 });

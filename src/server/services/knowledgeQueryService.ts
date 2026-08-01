@@ -18,6 +18,7 @@ import { createSourceBundleService } from "./sourceBundleService";
 import { createProjectService } from "./projectService";
 import { createKnowledgeService } from "./knowledgeService";
 import { createFlywheelService, type FlywheelService } from "./flywheelService";
+import { isComponentVisibleToRole } from "./knowledgeAcl";
 import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { DENSE_INDEX_URI, fuseSearchWithRrf, searchDenseIndex, type OkfDenseIndex } from "./okf/hybridSearch";
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
@@ -312,7 +313,7 @@ export class KnowledgeQueryService {
     let hitComponentIds: string[] = [];
     let qualityFlags: string[] = [];
     try {
-      const toolResult = await this.executeTool(release, toolName, payload);
+      const toolResult = await this.executeTool(release, toolName, payload, context);
       hitComponentIds = uniqueSorted(toolResult.componentIds);
       const okfEvidenceRecords = this.okfEvidenceRecordsForComponents(release, hitComponentIds);
       const dbEvidenceRecords = await this.evidenceRecordsForComponents(hitComponentIds);
@@ -458,12 +459,12 @@ export class KnowledgeQueryService {
     }
   }
 
-  private async executeTool(release: ReleaseRecord, toolName: string, payload: Record<string, unknown>): Promise<ToolResult> {
+  private async executeTool(release: ReleaseRecord, toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<ToolResult> {
     switch (toolName) {
       case "kb_get_release":
         return { result: releaseSummary(release, booleanArg(payload, false, "includeManifest", "manifest"), numberArg(payload, 30, "manifestLimit", "limit")), componentIds: [], forceHit: true };
       case "kb_search":
-        return this.kbSearch(release, stringArg(payload, "query", "q"), numberArg(payload, 10, "limit", "topK", "top_k"));
+        return this.kbSearch(release, stringArg(payload, "query", "q"), numberArg(payload, 10, "limit", "topK", "top_k"), context.agentRole);
       case "kb_resolve_topic":
         return this.kbResolveTopic(release, stringArg(payload, "topic", "query", "q"));
       case "kb_get_page":
@@ -509,9 +510,9 @@ export class KnowledgeQueryService {
     }
   }
 
-  private async kbSearch(release: ReleaseRecord, query: string, limit = 10): Promise<ToolResult> {
+  private async kbSearch(release: ReleaseRecord, query: string, limit = 10, agentRole?: string): Promise<ToolResult> {
     const boundedLimit = boundedLimitArg(limit, 10, 50);
-    const indexItems = await this.kbSearchIndex(release, query, boundedLimit);
+    const indexItems = await this.kbSearchIndex(release, query, boundedLimit, agentRole);
     if (indexItems.length > 0) {
       const match = classifySearchMatch(query, indexItems);
       return {
@@ -521,28 +522,43 @@ export class KnowledgeQueryService {
         qualityFlags: match.qualityFlags,
       };
     }
-    return this.kbSearchMarkdownFallback(release, query, boundedLimit);
+    return this.kbSearchMarkdownFallback(release, query, boundedLimit, agentRole);
   }
 
-  private async kbSearchIndex(release: ReleaseRecord, query: string, limit: number): Promise<OkfSearchResultItem[]> {
+  private async kbSearchIndex(release: ReleaseRecord, query: string, limit: number, agentRole?: string): Promise<OkfSearchResultItem[]> {
     const index = this.readOkfSearchIndex(release);
     if (!index) return [];
     const lexical = searchOkfIndex(index, query, Math.max(limit * 2, 20));
     const dense = this.readOkfDenseIndex(release);
+    let candidates: OkfSearchResultItem[];
     if (!dense || dense.vectors.length === 0) {
-      return this.alignSearchItemsWithPageTables(release, lexical.slice(0, limit));
+      candidates = lexical.slice(0, Math.max(limit * 2, 20));
+    } else {
+      const denseRanks = searchDenseIndex(dense, query, Math.max(limit * 2, 20));
+      const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
+      candidates = fuseSearchWithRrf(lexical, denseRanks, pageById, Math.max(limit * 2, 20));
     }
-    const denseRanks = searchDenseIndex(dense, query, Math.max(limit * 2, 20));
-    const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
-    const fused = fuseSearchWithRrf(lexical, denseRanks, pageById, limit);
-    return this.alignSearchItemsWithPageTables(release, fused);
+    const visible = await this.filterSearchItemsByDbVisibility(candidates, agentRole);
+    return this.alignSearchItemsWithPageTables(release, visible.slice(0, limit));
+  }
+
+  private async filterSearchItemsByDbVisibility(items: OkfSearchResultItem[], agentRole?: string): Promise<OkfSearchResultItem[]> {
+    if (items.length === 0) return items;
+    const ids = items.map((item) => item.componentId);
+    const placeholders = ids.map((_, index) => `$${index + 1}`).join(",");
+    const { rows } = await this.adapter.query(
+      `SELECT component_id, quality FROM asset_components WHERE component_id IN (${placeholders})`,
+      ids,
+    );
+    const qualityById = new Map(rows.map((row) => [String(row.component_id), jsonObject(row.quality)] as const));
+    return items.filter((item) => isComponentVisibleToRole(qualityById.get(item.componentId) ?? {}, agentRole));
   }
 
   private readOkfDenseIndex(release: ReleaseRecord): OkfDenseIndex | null {
     return this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUri", DENSE_INDEX_URI);
   }
 
-  private async kbSearchMarkdownFallback(release: ReleaseRecord, query: string, limit: number): Promise<ToolResult> {
+  private async kbSearchMarkdownFallback(release: ReleaseRecord, query: string, limit: number, agentRole?: string): Promise<ToolResult> {
     const needle = query.toLowerCase();
     const pages = this.readOkfPages(release);
     const items: OkfSearchResultItem[] = [];
@@ -568,7 +584,8 @@ export class KnowledgeQueryService {
       });
     }
     items.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
-    const limited = await this.alignSearchItemsWithPageTables(release, items.slice(0, limit));
+    const visible = await this.filterSearchItemsByDbVisibility(items, agentRole);
+    const limited = await this.alignSearchItemsWithPageTables(release, visible.slice(0, limit));
     const match = classifySearchMatch(query, limited);
     return {
       result: await this.searchResultPayload(release, query, limited),
