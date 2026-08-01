@@ -125,7 +125,7 @@ export class FlywheelService {
    * 不能自动治理的 lint 治理项）。普通 warning、已自动治理、纯观察项不进入此列表。
    */
   async listExceptions(projectId = "default_project"): Promise<HumanException[]> {
-    const [tasks, events, skips, needsHumanRemediations, failedRemediations, profile, dismissedKeys] = await Promise.all([
+    const [tasks, events, skips, needsHumanRemediations, failedRemediations, profile, dismissedKeys, freshness, attributions] = await Promise.all([
       this.knowledge.listReviewTasks({ status: "open", projectId }),
       this.knowledge.listAgentEvents(projectId),
       this.listPendingPublishSkips(projectId),
@@ -133,6 +133,8 @@ export class FlywheelService {
       this.remediations.listRemediations({ projectId, status: "failed" }),
       this.governance.resolve(projectId),
       this.activeDismissedKeys(projectId),
+      this.listFreshnessExceptions(projectId),
+      this.listAttributionExceptions(projectId),
     ]);
 
     const out: HumanException[] = [];
@@ -143,6 +145,8 @@ export class FlywheelService {
     for (const skip of skips) out.push(skip);
     for (const cluster of clusterNegativeFeedback(events, profile.feedback.highFrequencyThreshold)) out.push(cluster);
     for (const remediation of [...needsHumanRemediations, ...failedRemediations]) out.push(exceptionFromRemediation(remediation));
+    for (const item of freshness) out.push(item);
+    for (const item of attributions) out.push(item);
 
     return out
       .filter((exception) => !dismissedKeys.has(exception.id))
@@ -624,6 +628,85 @@ export class FlywheelService {
       status: automationStatus(event.eventType),
       createdAt: event.createdAt,
     }));
+  }
+
+  /**
+   * 新鲜度 SLA：消费最近一次健康巡检结果，把「过期审计」升为例外，驱动运营台主动作。
+   * 阈值来自治理 Profile.trust.maxAuditAgeDays（巡检侧已接线）。
+   */
+  private async listFreshnessExceptions(projectId: string): Promise<HumanException[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT event_id, payload_json, created_at
+       FROM knowledge_events
+       WHERE project_id = $1 AND event_type = 'knowledge_lint.health_checked'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [projectId],
+    );
+    if (!rows.length) return [];
+    const payload = readJsonObject(rows[0].payload_json);
+    const reasons = Array.isArray(payload.reasons) ? payload.reasons.map(String) : [];
+    if (!reasons.includes("stale_audit_components")) return [];
+    const thresholds = payload.thresholds && typeof payload.thresholds === "object"
+      ? (payload.thresholds as Record<string, unknown>)
+      : {};
+    const maxAuditAgeDays = typeof thresholds.maxAuditAgeDays === "number" ? thresholds.maxAuditAgeDays : 180;
+    const releaseId = typeof payload.releaseId === "string" ? payload.releaseId : "";
+    return [{
+      id: `freshness-${String(rows[0].event_id)}`,
+      type: "exception",
+      attentionLevel: "needs_decision",
+      severity: "warning",
+      title: "知识新鲜度 SLA 告警：存在过期未复审组件",
+      body: `最近一次健康巡检发现组件超过 ${maxAuditAgeDays} 天未可信审计，Agent 可能消费过时知识。`,
+      whyHumanNeeded: "过期是时间驱动的，自动重建无法替代人工复审或资料更新。",
+      recommendedAction: "打开相关资产复审并更新资料，或触发 scoped rebuild 后重新发布修订。",
+      primaryAction: { label: "去资产页", type: "open_asset" },
+      target: { page: "assets", params: releaseId ? { releaseId } : {} },
+      technicalIds: { releaseId: releaseId || undefined },
+      createdAt: String(rows[0].created_at ?? new Date().toISOString()),
+    }];
+  }
+
+  /**
+   * 归因消费：高频「无证据创作」段落入例外，避免 Agent 输出伪装成知识库事实。
+   */
+  private async listAttributionExceptions(projectId: string): Promise<HumanException[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT a.audit_id, a.release_id, a.title, a.segments_json, a.created_at
+       FROM attribution_audits a
+       INNER JOIN releases r ON r.release_id = a.release_id
+       WHERE r.project_id = $1
+       ORDER BY a.created_at DESC
+       LIMIT 40`,
+      [projectId],
+    );
+    const out: HumanException[] = [];
+    for (const row of rows) {
+      const segments = readJsonArray(row.segments_json) as Array<Record<string, unknown>>;
+      const ungrounded = segments.filter((segment) => {
+        const type = String(segment.attributionType ?? "");
+        return type === "创作" || type === "无法判断";
+      });
+      if (ungrounded.length === 0) continue;
+      const auditId = String(row.audit_id);
+      const releaseId = String(row.release_id ?? "");
+      out.push({
+        id: `attribution-${auditId}`,
+        type: "feedback",
+        attentionLevel: ungrounded.length >= 3 ? "blocking" : "needs_decision",
+        severity: ungrounded.length >= 3 ? "blocking" : "warning",
+        title: `归因审计发现 ${ungrounded.length} 段无证据输出`,
+        body: `${String(row.title || auditId)}：存在「创作/无法判断」段落，不能当作已发布知识事实。`,
+        whyHumanNeeded: "无证据引用无法自动晋升为纠正或发布修订，需要策划确认是否补证据或驳回。",
+        recommendedAction: "核对 Agent 会话引用的 component/evidence，补提交纠正或忽略该归因。",
+        primaryAction: { label: "去反馈页", type: "open_asset" },
+        target: { page: "agent", params: { auditId } },
+        technicalIds: { releaseId: releaseId || undefined },
+        createdAt: String(row.created_at ?? new Date().toISOString()),
+      });
+    }
+    return out.slice(0, 8);
   }
 
   /** 最近被跳过、且此后没有成功发布覆盖的自动发布尝试 → 发布阻断例外。 */
@@ -1116,6 +1199,19 @@ function readJsonObject(value: unknown): Record<string, unknown> {
     }
   }
   return {};
+}
+
+function readJsonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
 }
 
 function shanghaiDottedDate(): string {

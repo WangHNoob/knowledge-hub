@@ -640,6 +640,8 @@ export interface KnowledgeDisplayRef {
 export interface GovernanceTrustPolicy {
   minAutoPublishScore: number;
   requireEvidence: boolean;
+  /** 组件超过该天数未复审/可信审计即视为过期（新鲜度 SLA）。 */
+  maxAuditAgeDays: number;
 }
 
 export interface GovernanceLintPolicy {

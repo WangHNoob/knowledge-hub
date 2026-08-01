@@ -1481,9 +1481,14 @@ export class KnowledgeQueryService {
   }
 
   private async kbRunHealthCheck(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
-    const maxAuditAgeDays = boundedLimitArg(numberArg(payload, 180, "maxAuditAgeDays", "auditHalfLifeDays"), 180, 3650);
-    const trustThreshold = boundedScoreArg(payload, 0.7, "minTrustScore", "trustThreshold");
-    const [release, latestBuild, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, corrections, governanceProfile] = await Promise.all([
+    const governanceProfile = await this.governanceProfileService.resolve(projectId);
+    const maxAuditAgeDays = boundedLimitArg(
+      numberArg(payload, governanceProfile.trust.maxAuditAgeDays, "maxAuditAgeDays", "auditHalfLifeDays"),
+      governanceProfile.trust.maxAuditAgeDays,
+      3650,
+    );
+    const trustThreshold = boundedScoreArg(payload, governanceProfile.trust.minAutoPublishScore, "minTrustScore", "trustThreshold");
+    const [release, latestBuild, blockingTasks, pendingReviewTasks, negativeFeedback, lintSummary, corrections] = await Promise.all([
       this.releaseService.getCurrent(projectId),
       this.latestBuild(projectId),
       this.countOpenBlockingTasks(projectId),
@@ -1491,7 +1496,6 @@ export class KnowledgeQueryService {
       this.countNegativeFeedback(projectId),
       this.lintRemediationService.summary(projectId),
       this.listCorrections(projectId, 50),
-      this.governanceProfileService.resolve(projectId),
     ]);
     if (!release) {
       const result = {
@@ -1687,6 +1691,18 @@ export class KnowledgeQueryService {
       queryContext: optionalString(payload, "queryContext"),
       confidence: optionalNumber(payload, "confidence"),
     };
+    const conflict = await this.findConflictingSourceCorrection({
+      projectId,
+      componentId: component.componentId,
+      sourcePath,
+      factKey,
+      correctValue,
+    });
+    if (conflict) {
+      throw new Error(
+        `纠正冲突：组件 ${component.componentId} / ${sourcePath} 已有未退休纠正 ${conflict.correctionId}（${conflict.createdBy}），内容与本次建议不一致。请先确认或退役旧纠正，避免两 Agent 互相覆盖。`,
+      );
+    }
     await this.adapter.query(
       `UPDATE source_corrections
        SET state = 'retired', updated_at = $7
@@ -2229,6 +2245,35 @@ export class KnowledgeQueryService {
   private async getCorrection(projectId: string, correctionId: string): Promise<SourceCorrectionView | null> {
     const { rows } = await this.adapter.query("SELECT * FROM source_corrections WHERE project_id = $1 AND correction_id = $2", [projectId, correctionId]);
     return rows.length ? sourceCorrectionRecord(rows[0]) : null;
+  }
+
+  /** 同实体已有未退休纠正且核心内容不同 → 冲突，禁止静默覆盖。 */
+  private async findConflictingSourceCorrection(input: {
+    projectId: string;
+    componentId: string;
+    sourcePath: string;
+    factKey: string | null;
+    correctValue: Record<string, unknown>;
+  }): Promise<{ correctionId: string; createdBy: string } | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT correction_id, created_by, correct_value
+       FROM source_corrections
+       WHERE project_id = $1
+         AND component_id = $2
+         AND source_path = $3
+         AND COALESCE(fact_key, '') = COALESCE($4, '')
+         AND state IN ('pending_review', 'active')
+       ORDER BY updated_at DESC
+       LIMIT 8`,
+      [input.projectId, input.componentId, input.sourcePath, input.factKey],
+    );
+    const incoming = normalizeCorrectionFingerprint(input.correctValue);
+    for (const row of rows) {
+      const existing = normalizeCorrectionFingerprint(jsonObject(row.correct_value));
+      if (existing === incoming) continue;
+      return { correctionId: String(row.correction_id), createdBy: String(row.created_by ?? "") };
+    }
+    return null;
   }
 
   private async listCorrections(projectId: string, limit: number): Promise<SourceCorrectionView[]> {
@@ -3146,6 +3191,17 @@ function normalizeSourcePath(value: string): string {
 function sourceCorrectionFactKey(value: Record<string, unknown>): string | null {
   const direct = String(value.factKey ?? value.fact_key ?? value.field ?? value.key ?? "").trim();
   return direct || null;
+}
+
+/** Compare correction cores ignoring volatile metadata fields. */
+function normalizeCorrectionFingerprint(value: Record<string, unknown>): string {
+  const skip = new Set(["confidence", "queryContext", "sourceContext", "issue", "actor", "createdAt"]);
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (skip.has(key)) continue;
+    cleaned[key] = raw;
+  }
+  return JSON.stringify(cleaned, Object.keys(cleaned).sort());
 }
 
 function sourceCorrectionRecord(row: Record<string, unknown>): SourceCorrectionView {

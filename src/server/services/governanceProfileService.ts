@@ -7,6 +7,7 @@ import type { DatabaseHandle, KnowledgeGovernanceProfile, KnowledgeGovernancePro
 export interface GovernanceDefaults {
   minAutoPublishScore: number;
   requireEvidence: boolean;
+  maxAuditAgeDays: number;
   lintAutoGovernanceEnabled: boolean;
   lintAutoEligibleThreshold: number;
   autoPublishRevisions: boolean;
@@ -20,6 +21,7 @@ export interface GovernanceDefaults {
 export const DEFAULT_GOVERNANCE_DEFAULTS: GovernanceDefaults = {
   minAutoPublishScore: 0.7,
   requireEvidence: true,
+  maxAuditAgeDays: 180,
   lintAutoGovernanceEnabled: true,
   lintAutoEligibleThreshold: 0.85,
   autoPublishRevisions: true,
@@ -52,7 +54,11 @@ export class GovernanceProfileService {
     const d = this.defaults;
     return {
       projectId,
-      trust: { minAutoPublishScore: d.minAutoPublishScore, requireEvidence: d.requireEvidence },
+      trust: {
+        minAutoPublishScore: d.minAutoPublishScore,
+        requireEvidence: d.requireEvidence,
+        maxAuditAgeDays: d.maxAuditAgeDays,
+      },
       lint: { autoGovernanceEnabled: d.lintAutoGovernanceEnabled, autoEligibleThreshold: d.lintAutoEligibleThreshold },
       release: {
         autoPublishRevisions: d.autoPublishRevisions,
@@ -138,6 +144,7 @@ function normalizeInput(raw: Record<string, unknown> | KnowledgeGovernanceProfil
   const trustPatch = {
     ...numberField(trust, "minAutoPublishScore", 0, 1),
     ...boolField(trust, "requireEvidence"),
+    ...intField(trust, "maxAuditAgeDays", 1, 3650),
   };
   if (Object.keys(trustPatch).length) out.trust = trustPatch;
   const lintPatch = {

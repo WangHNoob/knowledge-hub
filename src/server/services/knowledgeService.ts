@@ -1270,6 +1270,17 @@ export class KnowledgeService {
     if (!sourcePath) return "";
     const anchor = await this.resolveSourceCorrectionAnchor(input.packageId, sourcePath);
     const factKey = sourceCorrectionFactKey(input.correctValue);
+    const conflict = await this.findConflictingSourceCorrection({
+      componentId: input.componentId,
+      sourcePath,
+      factKey,
+      correctValue: input.correctValue,
+    });
+    if (conflict) {
+      throw new Error(
+        `纠正冲突：组件 ${input.componentId} / ${sourcePath} 已有未退休纠正 ${conflict.correctionId}（${conflict.createdBy}），内容不一致，禁止互相覆盖。`,
+      );
+    }
     const correctionId = `corr_${slug(sourcePath)}_${slug(input.ruleId)}_${nanoid(6)}`;
     await this.adapter.query(
       `UPDATE source_corrections
@@ -1414,6 +1425,32 @@ export class KnowledgeService {
   private async getSourceCorrection(correctionId: string): Promise<Record<string, unknown> | null> {
     const { rows } = await this.adapter.query("SELECT * FROM source_corrections WHERE correction_id = $1", [correctionId]);
     return rows[0] ?? null;
+  }
+
+  private async findConflictingSourceCorrection(input: {
+    componentId: string;
+    sourcePath: string;
+    factKey: string | null;
+    correctValue: Record<string, unknown>;
+  }): Promise<{ correctionId: string; createdBy: string } | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT correction_id, created_by, correct_value
+       FROM source_corrections
+       WHERE component_id = $1
+         AND source_path = $2
+         AND COALESCE(fact_key, '') = COALESCE($3, '')
+         AND state IN ('pending_review', 'active')
+       ORDER BY updated_at DESC
+       LIMIT 8`,
+      [input.componentId, input.sourcePath, input.factKey],
+    );
+    const incoming = normalizeCorrectionFingerprint(input.correctValue);
+    for (const row of rows) {
+      const existing = normalizeCorrectionFingerprint(jsonObject(row.correct_value));
+      if (existing === incoming) continue;
+      return { correctionId: String(row.correction_id), createdBy: String(row.created_by ?? "") };
+    }
+    return null;
   }
 
   private async findLatestSourceHash(bundleId: string, sourcePath: string): Promise<string> {
@@ -2000,6 +2037,16 @@ function normalizeSourcePath(value: string): string {
 function sourceCorrectionFactKey(value: Record<string, unknown>): string | null {
   const direct = stringValue(value.factKey) || stringValue(value.fact_key) || stringValue(value.field) || stringValue(value.key);
   return direct || null;
+}
+
+function normalizeCorrectionFingerprint(value: Record<string, unknown>): string {
+  const skip = new Set(["confidence", "queryContext", "sourceContext", "issue", "actor", "createdAt"]);
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (skip.has(key)) continue;
+    cleaned[key] = raw;
+  }
+  return JSON.stringify(cleaned, Object.keys(cleaned).sort());
 }
 
 function sourceCorrectionRecord(row: Record<string, unknown>): Record<string, unknown> {

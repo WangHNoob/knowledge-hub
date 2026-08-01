@@ -27,7 +27,8 @@ export const exceptionRestoreSchema = z.object({
 export const governanceProfileUpdateSchema = z.object({
   trust: z.object({
     minAutoPublishScore: z.number().min(0).max(1).optional(),
-    requireEvidence: z.boolean().optional()
+    requireEvidence: z.boolean().optional(),
+    maxAuditAgeDays: z.number().int().min(1).max(3650).optional()
   }).optional(),
   lint: z.object({
     autoGovernanceEnabled: z.boolean().optional(),
