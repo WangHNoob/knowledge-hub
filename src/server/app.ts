@@ -89,7 +89,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const lintRemediationService = createLintRemediationService(options.db);
   const governanceProfileService = createGovernanceProfileService(options.db, {
     autoPublishRevisions: config.autoPublishRevisions,
-    lintAutoGovernanceEnabled: config.autoRemediationEnabled,
+    // Lint 自动治理与 Agent 反馈 auto-remediation 语义分离：前者默认开启，后者用 KH_AUTO_REMEDIATION_ENABLED。
+    lintAutoGovernanceEnabled: true,
     lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
   });
   const releaseService = createReleaseService(options.db, dataDir, diagnostics, governanceProfileService);
