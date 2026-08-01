@@ -85,7 +85,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const knowledgeService = createKnowledgeService(options.db);
   const bundleService = createSourceBundleService(options.db, dataDir);
   const kbBuilderService = createKbBuilderPipelineService(options.db, dataDir, diagnostics);
-  const releaseService = createReleaseService(options.db, dataDir, diagnostics);
   const projectService = createProjectService(options.db);
   const lintRemediationService = createLintRemediationService(options.db);
   const governanceProfileService = createGovernanceProfileService(options.db, {
@@ -93,6 +92,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     lintAutoGovernanceEnabled: config.autoRemediationEnabled,
     lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
   });
+  const releaseService = createReleaseService(options.db, dataDir, diagnostics, governanceProfileService);
   const ctx: RouteContext = {
     db: options.db,
     dataDir,

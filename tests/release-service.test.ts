@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createReleaseService } from "../src/server/services/releaseService";
+import { createGovernanceProfileService } from "../src/server/services/governanceProfileService";
 import { emitKnowledgeEvent } from "../src/server/services/eventService";
 import { registerReleaseAutomation } from "../src/server/services/releaseAutomationService";
 import { createTestDb, type TestDbHandle } from "./helpers/testDb";
@@ -198,6 +199,58 @@ describe("ReleaseService", () => {
         count: 1,
         sampleIds: expect.arrayContaining(["gamedocs/demo.md · config_table"])
       }));
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
+
+  it("honors governance profile blockOnPendingCorrections=false in auto-publish check", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_gov_pending_off" });
+    const governance = createGovernanceProfileService(fixture.db, {
+      blockOnPendingCorrections: false,
+      minAutoPublishScore: 0,
+    });
+    const service = createReleaseService(fixture.db, fixture.dataDir, undefined, governance);
+    try {
+      await fixture.db.adapter.query(
+        `INSERT INTO source_blobs (content_hash, byte_size, storage_uri, first_seen_at)
+         VALUES ('hash_pending_current', 10, 'storage/blobs/pending.md', NOW())
+         ON CONFLICT DO NOTHING`
+      );
+      await fixture.db.adapter.query(
+        `INSERT INTO source_bundle_versions (
+           version_id, bundle_id, parent_version_id, label, note, created_by, created_at,
+           file_count, added_count, modified_count, removed_count, unchanged_count, total_bytes
+         )
+         VALUES ('srcv_fixture','default',NULL,'fixture','','admin',NOW(),1,1,0,0,0,10)
+         ON CONFLICT DO NOTHING`
+      );
+      await fixture.db.adapter.query(
+        `INSERT INTO source_files (version_id, logical_path, category, content_hash, byte_size)
+         VALUES ('srcv_fixture','gamedocs/demo.md','gamedocs','hash_pending_current',10)
+         ON CONFLICT DO NOTHING`
+      );
+      await fixture.db.adapter.query(
+        `INSERT INTO source_corrections (
+           correction_id, bundle_id, source_path, rule_id, page_type, fact_key,
+           bound_source_hash, state, correct_value, component_id, package_id,
+           example_id, task_id, created_by, created_at, updated_at
+         )
+         VALUES (
+           'corr_gov_pending_off','default','gamedocs/demo.md','wiki.required_fact','system','config_table',
+           'hash_old','pending_review','{"setFacts":{"config_table":"Demo/Table"}}',
+           NULL,'pkg_gov_pending_off','','task_gov_pending','admin',NOW(),NOW()
+         )`
+      );
+
+      const draft = await service.createDraft({
+        version: "2026.06.15.gov-pending-off",
+        packageIds: ["pkg_gov_pending_off"],
+        requestedBy: "admin",
+      });
+      const published = await service.publish(draft.releaseId, "admin");
+      const manifest = published.manifest as Record<string, any>;
+      expect(manifest.autoPublish.reasons).not.toContain("has_pending_review_corrections");
     } finally {
       await fixture.cleanup();
     }

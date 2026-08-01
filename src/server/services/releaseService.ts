@@ -7,6 +7,7 @@ import { nanoid } from "nanoid";
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, LintRemediationSummary, ReleaseRecord, ReviewTask } from "../types";
 import { mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
+import { createGovernanceProfileService, type GovernanceProfileService } from "./governanceProfileService";
 import { createLegislationService } from "./legislationService";
 import { createLintRemediationService } from "./lintRemediationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
@@ -100,10 +101,15 @@ export interface ProposedReleaseRevision {
   reason: "created" | "no_current_release" | "duplicate_draft" | "unknown_package" | "not_scoped_build";
 }
 
-export function createReleaseService(db: DatabaseHandle, dataDirOrDiagnostics?: string | DiagnosticLogger, diagnostics?: DiagnosticLogger) {
+export function createReleaseService(
+  db: DatabaseHandle,
+  dataDirOrDiagnostics?: string | DiagnosticLogger,
+  diagnostics?: DiagnosticLogger,
+  governanceProfileService?: GovernanceProfileService,
+) {
   return typeof dataDirOrDiagnostics === "string"
-    ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics)
-    : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics);
+    ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics, governanceProfileService)
+    : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics, governanceProfileService);
 }
 
 export class AutoPublishEligibilityError extends Error {
@@ -114,9 +120,16 @@ export class AutoPublishEligibilityError extends Error {
 
 export class ReleaseService {
   private readonly adapter;
+  private readonly governanceProfileService: GovernanceProfileService;
 
-  constructor(private readonly db: DatabaseHandle, private readonly dataDir: string, private readonly diagnostics?: DiagnosticLogger) {
+  constructor(
+    private readonly db: DatabaseHandle,
+    private readonly dataDir: string,
+    private readonly diagnostics?: DiagnosticLogger,
+    governanceProfileService?: GovernanceProfileService,
+  ) {
     this.adapter = db.adapter;
+    this.governanceProfileService = governanceProfileService ?? createGovernanceProfileService(db);
   }
 
   async createDraft(input: CreateReleaseDraftInput): Promise<ReleaseRecord> {
@@ -578,10 +591,13 @@ export class ReleaseService {
     autoMode: boolean,
     pendingSourceCorrections: PendingSourceCorrection[],
   ): Promise<AutoPublishCheck> {
+    const governance = await this.governanceProfileService.resolve(release.projectId);
     const changedComponentIds = uniqueSorted([...revision.diff.componentIds.added, ...revision.diff.changedComponents]);
     const reasons: string[] = [];
     if (!parentRelease || !release.parentReleaseId) reasons.push("missing_parent_release");
-    if (revision.diff.componentIds.removed.length > 0) reasons.push("removed_components_present");
+    if (governance.release.blockOnDeletes && revision.diff.componentIds.removed.length > 0) {
+      reasons.push("removed_components_present");
+    }
     if (changedComponentIds.length === 0) reasons.push("no_component_changes");
 
     const blockingTasksRaw = await this.findOpenBlockingTasksForComponents(changedComponentIds);
@@ -589,8 +605,18 @@ export class ReleaseService {
     if (blockingTasks.length > 0) reasons.push("changed_components_have_blocking_tasks");
 
     const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
-    if (trustDeclines.length > 0) reasons.push("trust_score_declined_or_missing");
-    if (pendingSourceCorrections.length > 0) reasons.push("has_pending_review_corrections");
+    if (governance.release.blockOnTrustDecline && trustDeclines.length > 0) {
+      reasons.push("trust_score_declined_or_missing");
+    }
+    if (governance.release.blockOnPendingCorrections && pendingSourceCorrections.length > 0) {
+      reasons.push("has_pending_review_corrections");
+    }
+    const belowMinTrust = changedComponentsBelowMinTrust(
+      components,
+      changedComponentIds,
+      governance.trust.minAutoPublishScore,
+    );
+    if (belowMinTrust.length > 0) reasons.push("changed_components_below_min_trust_score");
     const lintRemediation = await createLintRemediationService(this.db).summary(release.projectId);
     if (lintRemediation.pending > 0 || lintRemediation.failed > 0 || lintRemediation.needsHuman > 0) {
       reasons.push("knowledge_lint_remediation_unresolved");
@@ -603,6 +629,8 @@ export class ReleaseService {
       trustDeclines,
       pendingSourceCorrections,
       lintRemediation,
+      belowMinTrust,
+      minAutoPublishScore: governance.trust.minAutoPublishScore,
     });
 
     return {
@@ -865,6 +893,8 @@ function buildAutoPublishReasonDetails(input: {
   trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
   pendingSourceCorrections: PendingSourceCorrection[];
   lintRemediation: LintRemediationSummary;
+  belowMinTrust?: Array<{ componentId: string; score: number | null }>;
+  minAutoPublishScore?: number;
 }): AutoPublishReasonDetail[] {
   return input.reasons.map((reason) => {
     switch (reason) {
@@ -918,6 +948,18 @@ function buildAutoPublishReasonDetails(input: {
           count: input.trustDeclines.length,
           sampleIds: input.trustDeclines.map((item) => `${item.componentId} ${formatScore(item.previousScore)}→${formatScore(item.nextScore)}`).slice(0, 8),
         };
+      case "changed_components_below_min_trust_score":
+        return {
+          code: reason,
+          label: "变更组件可信度低于自动发布门槛",
+          severity: "blocking",
+          description: `项目治理要求变更组件可信度不低于 ${Math.round((input.minAutoPublishScore ?? 0) * 100)}%，当前有组件未达标。`,
+          action: "补证据或完成复核以提升可信度，或由管理员下调项目 minAutoPublishScore 后再自动发布。",
+          count: (input.belowMinTrust ?? []).length,
+          sampleIds: (input.belowMinTrust ?? [])
+            .map((item) => `${item.componentId} ${formatScore(item.score)}`)
+            .slice(0, 8),
+        };
       case "has_pending_review_corrections":
         return {
           code: reason,
@@ -955,6 +997,22 @@ function buildAutoPublishReasonDetails(input: {
         };
     }
   });
+}
+
+function changedComponentsBelowMinTrust(
+  components: AssetComponent[],
+  changedComponentIds: string[],
+  minAutoPublishScore: number,
+): Array<{ componentId: string; score: number | null }> {
+  const byId = new Map(components.map((component) => [component.componentId, component] as const));
+  const below: Array<{ componentId: string; score: number | null }> = [];
+  for (const componentId of changedComponentIds) {
+    const score = scoreFromQuality(byId.get(componentId)?.quality ?? {});
+    if (score === null || score + 0.0001 < minAutoPublishScore) {
+      below.push({ componentId, score });
+    }
+  }
+  return below;
 }
 
 function formatScore(value: number | null): string {
