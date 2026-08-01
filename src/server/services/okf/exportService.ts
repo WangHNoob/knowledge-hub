@@ -7,6 +7,7 @@ import { trustFromQuality } from "../trustScore";
 import { renderReportMarkdown } from "./reportRender";
 import { scanWorkspace } from "./conformanceService";
 import { buildOkfSearchIndex } from "./searchIndex";
+import { buildOkfDenseIndex, DENSE_INDEX_URI } from "./hybridSearch";
 import { OKF_EXPORTER_VERSION, type ConformanceReport } from "./types";
 import { exportKnowledgeLintReport, type KnowledgeLintReport } from "./lintService";
 import {
@@ -25,6 +26,7 @@ export interface OkfExportManifest {
   tableSchemasUri?: string;
   tableAliasesUri?: string;
   searchIndexUri?: string;
+  denseIndexUri?: string;
   revisionUri?: string;
   logUri: string;
   lintUri: string;
@@ -117,9 +119,13 @@ export class OkfExportService {
       if (metaUri) exportedPaths.push(metaUri);
     }
 
-    const searchIndexUri = exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
-    if (!searchIndexUri) removeBundleFile(bundleDir, "search/index.json");
-    if (searchIndexUri) exportedPaths.push(searchIndexUri);
+    const searchExport = exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
+    if (!searchExport.searchIndexUri) removeBundleFile(bundleDir, "search/index.json");
+    if (!searchExport.denseIndexUri) removeBundleFile(bundleDir, DENSE_INDEX_URI);
+    if (searchExport.searchIndexUri) exportedPaths.push(searchExport.searchIndexUri);
+    if (searchExport.denseIndexUri) exportedPaths.push(searchExport.denseIndexUri);
+    const searchIndexUri = searchExport.searchIndexUri;
+    const denseIndexUri = searchExport.denseIndexUri;
     const revisionUri = input.revision ? exportRevisionAsset(bundleDir, input.revision) : undefined;
     if (revisionUri) exportedPaths.push(revisionUri);
 
@@ -156,6 +162,7 @@ export class OkfExportService {
         tableSchemasUri,
         tableAliasesUri,
         searchIndexUri,
+        denseIndexUri,
         revisionUri,
         logUri: posix.join("releases", input.release.releaseId, "okf_bundle", "log.md"),
         lintUri: lint.jsonUri,
@@ -371,11 +378,18 @@ function exportTableAliasesAsset(dataDir: string, bundleDir: string, components:
   return uri;
 }
 
-function exportSearchIndexAsset(bundleDir: string, generatedAt: string, pages: Array<{ okfPath: string; markdown: string }>): string | undefined {
-  if (pages.length === 0) return undefined;
-  const uri = "search/index.json";
-  writeJsonAsset(bundleDir, uri, buildOkfSearchIndex({ generatedAt, pages, bundleDir }));
-  return uri;
+function exportSearchIndexAsset(
+  bundleDir: string,
+  generatedAt: string,
+  pages: Array<{ okfPath: string; markdown: string }>,
+): { searchIndexUri?: string; denseIndexUri?: string } {
+  if (pages.length === 0) return {};
+  const searchIndex = buildOkfSearchIndex({ generatedAt, pages, bundleDir });
+  const searchIndexUri = "search/index.json";
+  writeJsonAsset(bundleDir, searchIndexUri, searchIndex);
+  const denseIndexUri = DENSE_INDEX_URI;
+  writeJsonAsset(bundleDir, denseIndexUri, buildOkfDenseIndex(searchIndex));
+  return { searchIndexUri, denseIndexUri };
 }
 
 function exportRevisionAsset(bundleDir: string, revision: Record<string, unknown>): string {

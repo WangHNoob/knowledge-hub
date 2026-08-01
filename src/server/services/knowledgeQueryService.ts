@@ -19,6 +19,7 @@ import { createProjectService } from "./projectService";
 import { createKnowledgeService } from "./knowledgeService";
 import { createFlywheelService, type FlywheelService } from "./flywheelService";
 import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
+import { DENSE_INDEX_URI, fuseSearchWithRrf, searchDenseIndex, type OkfDenseIndex } from "./okf/hybridSearch";
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
 const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
@@ -526,7 +527,19 @@ export class KnowledgeQueryService {
   private async kbSearchIndex(release: ReleaseRecord, query: string, limit: number): Promise<OkfSearchResultItem[]> {
     const index = this.readOkfSearchIndex(release);
     if (!index) return [];
-    return this.alignSearchItemsWithPageTables(release, searchOkfIndex(index, query, limit));
+    const lexical = searchOkfIndex(index, query, Math.max(limit * 2, 20));
+    const dense = this.readOkfDenseIndex(release);
+    if (!dense || dense.vectors.length === 0) {
+      return this.alignSearchItemsWithPageTables(release, lexical.slice(0, limit));
+    }
+    const denseRanks = searchDenseIndex(dense, query, Math.max(limit * 2, 20));
+    const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
+    const fused = fuseSearchWithRrf(lexical, denseRanks, pageById, limit);
+    return this.alignSearchItemsWithPageTables(release, fused);
+  }
+
+  private readOkfDenseIndex(release: ReleaseRecord): OkfDenseIndex | null {
+    return this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUri", DENSE_INDEX_URI);
   }
 
   private async kbSearchMarkdownFallback(release: ReleaseRecord, query: string, limit: number): Promise<ToolResult> {
@@ -571,6 +584,11 @@ export class KnowledgeQueryService {
     return {
       query,
       total: items.length,
+      retrieval: {
+        mode: items.some((item) => item.matchedFields.includes("dense")) ? "hybrid_rrf" : "lexical",
+        lexical: true,
+        dense: items.some((item) => item.matchedFields.includes("dense")),
+      },
       items,
       match,
       cards: items.map((item, index) => searchCard(item, index, evidenceCounts.get(item.componentId) ?? 0, match)),
