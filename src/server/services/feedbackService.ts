@@ -99,20 +99,59 @@ export class FeedbackService {
     const repeatedCount = Number(countRows[0]?.count ?? 0) + 1;
     const effectiveFeedbackType: FeedbackType = feedbackType === "miss" && repeatedCount >= 3 ? "repeated_query" : feedbackType;
     const severity = repeatedCount >= 3 ? "blocking" : "warning";
-    const targetComponent = await this.targetComponent(release, hitComponentIds);
+    const title = feedbackTitle(effectiveFeedbackType, severity, query);
     const suggestedAction = feedbackSuggestedAction(effectiveFeedbackType);
+    const targetComponent = await this.targetComponent(release, hitComponentIds);
+    // 无目标组件时仍落 agent_events + 事件（记为 knowledge_gap），禁止 silent drop；
+    // review_tasks.component_id 非空约束，无法建任务，由飞轮按查询键聚类进例外。
     if (!targetComponent) {
+      const gapType: FeedbackType = effectiveFeedbackType === "miss" || effectiveFeedbackType === "repeated_query"
+        ? effectiveFeedbackType
+        : "knowledge_gap";
+      const eventId = `evt_${Date.now()}_${nanoid(6)}`;
+      await this.adapter.query(
+        `INSERT INTO agent_events
+          (event_id, project_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          eventId,
+          release.projectId,
+          release.releaseId,
+          query,
+          JSON.stringify(hitComponentIds),
+          JSON.stringify(qualityFlags),
+          "miss",
+          gapType,
+          suggestedAction,
+          "",
+          new Date().toISOString(),
+        ],
+      );
+      await emitKnowledgeEvent(this.db, {
+        eventType: "agent.feedback.received",
+        entityType: "release",
+        entityId: release.releaseId,
+        payload: {
+          projectId: release.projectId,
+          releaseId: release.releaseId,
+          feedbackType: gapType,
+          query,
+          taskId: null,
+          componentId: null,
+          qualityFlags,
+          untargeted: true,
+        },
+      });
       return {
-        recorded: false,
+        recorded: true,
         taskId: null,
-        feedbackType: effectiveFeedbackType,
+        feedbackType: gapType,
         severity,
         query,
         targetComponentId: null,
         suggestedAction,
       };
     }
-    const title = feedbackTitle(effectiveFeedbackType, severity, query);
     const taskId = `task_mcp_${slug(effectiveFeedbackType)}_${nanoid(6)}`;
 
     await this.adapter.query(
