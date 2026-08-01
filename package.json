@@ -16,7 +16,8 @@
     "db:down": "docker compose down",
     "db:restore": "node scripts/restore-seed.mjs",
     "mcp:stdio": "tsx src/server/mcpStdio.ts",
-    "okf:scan": "tsx src/server/services/okf/cli.ts"
+    "okf:scan": "tsx src/server/services/okf/cli.ts",
+    "eval:retrieval": "tsx scripts/eval-retrieval.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",
