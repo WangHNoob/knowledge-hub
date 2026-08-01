@@ -59,6 +59,16 @@ export const config = {
   mcpServiceToken: optional("KH_MCP_SERVICE_TOKEN", ""),
   /** When true, refuse mcp:stdio unless KH_MCP_SERVICE_TOKEN is configured. */
   mcpStdioRequireToken: flag("KH_MCP_STDIO_REQUIRE_TOKEN", false),
+  /** Per-user MCP HTTP requests allowed per window. 0 disables. */
+  mcpRateLimitMax: Number(optional("KH_MCP_RATE_LIMIT_MAX", "120")),
+  /** MCP rate-limit window in milliseconds. */
+  mcpRateLimitWindowMs: Number(optional("KH_MCP_RATE_LIMIT_WINDOW_MS", "60000")),
+  /**
+   * Event bus delivery: inline (default, process EventEmitter) or outbox
+   * (persist to knowledge_event_outbox + worker with SKIP LOCKED for multi-instance).
+   */
+  eventBusMode: optional("KH_EVENT_BUS_MODE", "inline") === "outbox" ? "outbox" as const : "inline" as const,
+  eventOutboxIntervalMs: Number(optional("KH_EVENT_OUTBOX_INTERVAL_MS", "1000")),
 };
 
 export const testConfig = {
