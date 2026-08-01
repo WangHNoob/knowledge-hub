@@ -297,6 +297,17 @@ export const knowledgeMcpTools: Array<{
     readOnly: true,
   },
   {
+    name: "kb_rollback_release",
+    title: "Rollback Release Channel",
+    description: "Admin-only: repoint the project release channel to a previously published release. Does not rewrite immutable release snapshots.",
+    inputSchema: z.object({
+      ...contextFields,
+      releaseId: z.string().min(1).describe("Published release id to make current."),
+      agentRole: z.string().optional().describe("Must be admin for this tool."),
+    }).passthrough(),
+    readOnly: false,
+  },
+  {
     name: "kb_report_gap",
     title: "Report Knowledge Gap",
     description: "Agent feedback: report that current published knowledge cannot answer a user query. Routes a review task into the flywheel.",

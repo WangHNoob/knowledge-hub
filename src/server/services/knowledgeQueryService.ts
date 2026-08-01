@@ -37,6 +37,7 @@ const GOVERNANCE_TOOLS = new Set([
   "kb_govern_flywheel",
   "kb_submit_attribution",
   "kb_list_feedback_clusters",
+  "kb_rollback_release",
 ]);
 const MCP_ENVELOPE_DETAIL_LIMIT = 20;
 
@@ -449,6 +450,8 @@ export class KnowledgeQueryService {
         return this.kbSubmitAttribution(projectId, payload, context);
       case "kb_list_feedback_clusters":
         return this.kbListFeedbackClusters(projectId);
+      case "kb_rollback_release":
+        return this.kbRollbackRelease(projectId, payload, context);
       default:
         throw new Error(`Unknown Knowledge MCP governance tool: ${toolName}`);
     }
@@ -2043,6 +2046,35 @@ export class KnowledgeQueryService {
         clusters,
       },
       componentIds: uniqueSorted(clusters.flatMap((cluster) => cluster.affectedComponents.map((item) => item.componentId))),
+      forceHit: true,
+    };
+  }
+
+  private async kbRollbackRelease(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    const role = (context.agentRole ?? "").toLowerCase();
+    if (role !== "admin") {
+      throw new Error("kb_rollback_release requires agentRole=admin.");
+    }
+    const releaseId = stringArg(payload, "releaseId");
+    const release = await this.releaseService.getRelease(releaseId);
+    if (!release) throw new Error(`Unknown release: ${releaseId}`);
+    if (release.projectId !== projectId) {
+      throw new Error(`Release ${releaseId} does not belong to project ${projectId}.`);
+    }
+    const rolled = await this.releaseService.rollback(releaseId, context.sessionId || "mcp-admin");
+    return {
+      result: {
+        projectId,
+        releaseId: rolled.releaseId,
+        version: rolled.version,
+        status: "rolled_back_channel",
+        message: "已将 release channel 指回指定已发布版本；不改写历史 release 快照。",
+        boundary: {
+          publishedAssetsImmutable: true,
+          channelRepointOnly: true,
+        },
+      },
+      componentIds: [],
       forceHit: true,
     };
   }
