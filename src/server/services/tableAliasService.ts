@@ -43,6 +43,12 @@ export class TableAliasService {
     const now = new Date().toISOString();
     for (const entry of entries) {
       const aliases = dedupe(entry.aliases.map((a) => a.trim()).filter(Boolean));
+      const conflicts = await this.findAliasConflicts(entry.canonical, aliases);
+      if (conflicts.length > 0) {
+        throw new Error(
+          `表别名冲突：${aliases.join(", ")} 已映射到其他 canonical（${conflicts.map((c) => `${c.alias}→${c.canonical}`).join("; ")}）。请先解决冲突再写入。`,
+        );
+      }
       await this.adapter.query(
         `INSERT INTO table_aliases (canonical, aliases, source, updated_by, updated_at)
          VALUES ($1,$2::jsonb,$3,$4,$5)
@@ -52,6 +58,23 @@ export class TableAliasService {
       );
     }
     return this.list();
+  }
+
+  /** Detect alias tokens already owned by a different canonical table. */
+  async findAliasConflicts(canonical: string, aliases: string[]): Promise<Array<{ alias: string; canonical: string }>> {
+    if (aliases.length === 0) return [];
+    const existing = await this.list();
+    const conflicts: Array<{ alias: string; canonical: string }> = [];
+    const wanted = new Set(aliases.map((alias) => alias.toLowerCase()));
+    for (const row of existing) {
+      if (row.canonical === canonical) continue;
+      for (const alias of row.aliases) {
+        if (wanted.has(alias.toLowerCase())) {
+          conflicts.push({ alias, canonical: row.canonical });
+        }
+      }
+    }
+    return conflicts;
   }
 
   /** Canonical names that still have no alias — the work-list for LLM drafting. */
