@@ -22,6 +22,8 @@ import { registerFeedbackAutomation } from "./services/feedbackAutomationService
 import { registerReleaseAutomation } from "./services/releaseAutomationService";
 import { registerSourceIngestAutomation } from "./services/sourceIngestAutomationService";
 import { registerHealthSweepScheduler } from "./services/healthSweepScheduler";
+import { configureKnowledgeEventBus } from "./services/eventService";
+import { registerEventOutboxWorker } from "./services/eventOutboxWorker";
 import { createSourceBundleService } from "./services/sourceBundleService";
 import { createStorageMaintenanceService } from "./services/storageMaintenanceService";
 import { createProjectService } from "./services/projectService";
@@ -71,11 +73,16 @@ export interface BuildAppOptions {
    * 依据 config.healthSweepIntervalHours 显式开启；测试默认不启动定时器。
    */
   enableHealthSweep?: boolean;
+  /**
+   * 多实例事件 outbox worker。默认跟随 config.eventBusMode；测试保持 inline 且不启 worker。
+   */
+  enableEventOutboxWorker?: boolean;
 }
 
 export async function buildApp(options: BuildAppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const dataDir = options.dataDir ?? process.cwd();
+  configureKnowledgeEventBus(config.eventBusMode);
   const diagnostics = options.diagnosticLogger ?? createDiagnosticLogger(options.db, dataDir, {
     level: config.logLevel,
     retentionDays: config.logRetentionDays,
@@ -186,6 +193,15 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         intervalMs: config.healthSweepIntervalHours * 60 * 60 * 1000,
       })
     : () => {};
+  const enableOutboxWorker = options.enableEventOutboxWorker === true
+    || (options.enableEventOutboxWorker !== false && config.eventBusMode === "outbox" && backgroundAutomationsEnabled);
+  const unsubscribeEventOutbox = enableOutboxWorker
+    ? registerEventOutboxWorker({
+        db: options.db,
+        diagnostics,
+        intervalMs: config.eventOutboxIntervalMs,
+      })
+    : () => {};
 
   await app.register(cors, { origin: true, credentials: true });
   await app.register(jwt, { secret: options.jwtSecret });
@@ -233,6 +249,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     unsubscribeLintAutoRemediation();
     unsubscribeSourceIngestAutomation();
     unsubscribeHealthSweep();
+    unsubscribeEventOutbox();
     if (options.closeDatabaseOnClose !== false) await options.db.close();
   });
   return app;

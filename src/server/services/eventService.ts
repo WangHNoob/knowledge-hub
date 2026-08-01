@@ -49,9 +49,27 @@ export interface KnowledgeEvent {
 const bus = new EventEmitter();
 bus.setMaxListeners(0);
 
+/** Delivery mode for subscribers. inline = emit in-process after insert (default). */
+export type KnowledgeEventBusMode = "inline" | "outbox";
+
+let eventBusMode: KnowledgeEventBusMode = "inline";
+
+export function configureKnowledgeEventBus(mode: KnowledgeEventBusMode): void {
+  eventBusMode = mode === "outbox" ? "outbox" : "inline";
+}
+
+export function getKnowledgeEventBusMode(): KnowledgeEventBusMode {
+  return eventBusMode;
+}
+
 export function onKnowledgeEvent(type: KnowledgeEventType, listener: (event: KnowledgeEvent) => void): () => void {
   bus.on(type, listener);
   return () => bus.off(type, listener);
+}
+
+/** Deliver an already-persisted event to in-process subscribers (outbox worker). */
+export function deliverOutboxEvent(event: KnowledgeEvent): void {
+  bus.emit(event.eventType, event);
 }
 
 export async function emitKnowledgeEvent(
@@ -79,6 +97,23 @@ export async function emitKnowledgeEvent(
      VALUES ($1,$2,$3,$4,$5,$6,$7)`,
     [event.eventId, projectId, event.eventType, event.entityType, event.entityId, JSON.stringify(event.payload), event.createdAt],
   );
-  bus.emit(event.eventType, event);
+  if (eventBusMode === "outbox") {
+    await db.adapter.query(
+      `INSERT INTO knowledge_event_outbox
+         (outbox_id, event_id, event_type, entity_type, entity_id, payload_json, created_at, delivered_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NULL)`,
+      [
+        `out_${nanoid(10)}`,
+        event.eventId,
+        event.eventType,
+        event.entityType,
+        event.entityId,
+        JSON.stringify(event.payload),
+        event.createdAt,
+      ],
+    );
+  } else {
+    bus.emit(event.eventType, event);
+  }
   return event;
 }

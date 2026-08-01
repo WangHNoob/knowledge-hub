@@ -266,6 +266,17 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS ${p}knowledge_event_outbox (
+      outbox_id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      entity_type TEXT NOT NULL DEFAULT '',
+      entity_id TEXT NOT NULL DEFAULT '',
+      payload_json JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      delivered_at TIMESTAMPTZ
+    );
+
     CREATE TABLE IF NOT EXISTS ${p}knowledge_lint_remediations (
       remediation_id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL DEFAULT 'default_project',
@@ -419,6 +430,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       WHERE state <> 'retired';
     CREATE INDEX IF NOT EXISTS idx_rule_dismissals_component ON ${p}rule_dismissals(component_id, active);
     CREATE INDEX IF NOT EXISTS idx_knowledge_events_type_created ON ${p}knowledge_events(event_type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_event_outbox_pending ON ${p}knowledge_event_outbox(created_at ASC) WHERE delivered_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_lint_remediations_project_status ON ${p}knowledge_lint_remediations(project_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_exception_dismissals_active ON ${p}exception_dismissals(project_id, restored_at);
   `);
