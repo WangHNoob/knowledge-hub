@@ -266,6 +266,30 @@ export const knowledgeMcpTools: Array<{
     readOnly: false,
   },
   {
+    name: "kb_submit_attribution",
+    title: "Submit Attribution Audit",
+    description: "Submit an Agent output attribution audit (releaseId + text segments with optional component/evidence traces). Does not mutate published OKF.",
+    inputSchema: z.object({
+      ...contextFields,
+      releaseId: z.string().optional().describe("Defaults to the current published release for the project."),
+      title: z.string().optional(),
+      componentIds: z.array(z.string()).optional(),
+      evidenceIds: z.array(z.string()).optional(),
+      segments: z.array(z.object({
+        text: z.string().min(1),
+        derivedFrom: z.array(z.string()).optional(),
+        trace: z.object({
+          releaseId: z.string().optional(),
+          componentIds: z.array(z.string()).optional(),
+          artifactIds: z.array(z.string()).optional(),
+          sourceVersionIds: z.array(z.string()).optional(),
+          evidenceIds: z.array(z.string()).optional(),
+        }).optional(),
+      })).min(1),
+    }).passthrough(),
+    readOnly: false,
+  },
+  {
     name: "kb_report_gap",
     title: "Report Knowledge Gap",
     description: "Agent feedback: report that current published knowledge cannot answer a user query. Routes a review task into the flywheel.",

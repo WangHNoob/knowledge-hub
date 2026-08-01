@@ -6,6 +6,7 @@ import xlsx from "xlsx";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, KnowledgeEnvelopeTrustScore, KnowledgeTrace, ReleaseRecord, TrustScore } from "../types";
 import { jsonArray, jsonObject, mapComponent, mapPackage } from "../db/mappers";
+import { createAttributionAuditService } from "./attributionAuditService";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createFeedbackService, type FeedbackService, type FeedbackType } from "./feedbackService";
 import { AutoPublishEligibilityError, createReleaseService, type AutoPublishCheck } from "./releaseService";
@@ -32,6 +33,7 @@ const GOVERNANCE_TOOLS = new Set([
   "kb_publish_if_ready",
   "kb_get_correction_status",
   "kb_govern_flywheel",
+  "kb_submit_attribution",
 ]);
 const MCP_ENVELOPE_DETAIL_LIMIT = 20;
 
@@ -245,6 +247,7 @@ export class KnowledgeQueryService {
   private readonly builderService;
   private readonly lintRemediationService;
   private readonly governanceProfileService;
+  private readonly attributionAuditService;
 
   constructor(
     private readonly db: DatabaseHandle,
@@ -253,12 +256,13 @@ export class KnowledgeQueryService {
     governanceProfileService?: GovernanceProfileService,
   ) {
     this.adapter = db.adapter;
-    this.releaseService = createReleaseService(db, dataDir, diagnostics);
+    this.governanceProfileService = governanceProfileService ?? createGovernanceProfileService(db);
+    this.releaseService = createReleaseService(db, dataDir, diagnostics, this.governanceProfileService);
     this.sourceService = createSourceBundleService(db, dataDir);
     this.feedback = createFeedbackService(db);
     this.builderService = createKbBuilderPipelineService(db, dataDir, diagnostics);
     this.lintRemediationService = createLintRemediationService(db);
-    this.governanceProfileService = governanceProfileService ?? createGovernanceProfileService(db);
+    this.attributionAuditService = createAttributionAuditService(db);
   }
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {
@@ -421,6 +425,8 @@ export class KnowledgeQueryService {
         return this.kbGetCorrectionStatus(projectId, stringArg(payload, "correctionId"));
       case "kb_govern_flywheel":
         return this.kbGovernFlywheel(projectId, payload, context);
+      case "kb_submit_attribution":
+        return this.kbSubmitAttribution(projectId, payload, context);
       default:
         throw new Error(`Unknown Knowledge MCP governance tool: ${toolName}`);
     }
@@ -1951,6 +1957,57 @@ export class KnowledgeQueryService {
       result,
       componentIds: uniqueSorted(componentIds),
       artifactIds: uniqueSorted(artifactIds),
+      forceHit: true,
+    };
+  }
+
+  private async kbSubmitAttribution(projectId: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
+    const releaseId = optionalString(payload, "releaseId")
+      ?? (await this.releaseService.getCurrent(projectId))?.releaseId
+      ?? "";
+    if (!releaseId) throw new Error("kb_submit_attribution requires releaseId or a current published release.");
+    const title = optionalString(payload, "title") ?? `Agent attribution ${new Date().toISOString()}`;
+    const segmentsRaw = payload.segments;
+    if (!Array.isArray(segmentsRaw) || segmentsRaw.length === 0) {
+      throw new Error("kb_submit_attribution requires a non-empty segments array.");
+    }
+    const segments = segmentsRaw.map((item) => {
+      const row = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : {};
+      const text = typeof row.text === "string" ? row.text.trim() : "";
+      if (!text) throw new Error("Each attribution segment requires non-empty text.");
+      const traceRaw = row.trace && typeof row.trace === "object" && !Array.isArray(row.trace)
+        ? row.trace as Record<string, unknown>
+        : {};
+      const derivedFrom = Array.isArray(row.derivedFrom) ? row.derivedFrom.map(String) : [];
+      return {
+        text,
+        derivedFrom,
+        trace: {
+          releaseId: typeof traceRaw.releaseId === "string" ? traceRaw.releaseId : releaseId,
+          componentIds: Array.isArray(traceRaw.componentIds)
+            ? traceRaw.componentIds.map(String)
+            : Array.isArray(payload.componentIds) ? payload.componentIds.map(String) : [],
+          artifactIds: Array.isArray(traceRaw.artifactIds) ? traceRaw.artifactIds.map(String) : [],
+          sourceVersionIds: Array.isArray(traceRaw.sourceVersionIds) ? traceRaw.sourceVersionIds.map(String) : [],
+          evidenceIds: Array.isArray(traceRaw.evidenceIds)
+            ? traceRaw.evidenceIds.map(String)
+            : Array.isArray(payload.evidenceIds) ? payload.evidenceIds.map(String) : [],
+        },
+      };
+    });
+    const audit = await this.attributionAuditService.createAudit({
+      releaseId,
+      title,
+      createdBy: context.sessionId || context.agentRole || "mcp-agent",
+      segments,
+    });
+    return {
+      result: {
+        projectId,
+        audit,
+        message: "归因审计已写入；不修改已发布 OKF。",
+      },
+      componentIds: uniqueSorted(segments.flatMap((segment) => segment.trace.componentIds ?? [])),
       forceHit: true,
     };
   }
