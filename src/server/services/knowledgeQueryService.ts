@@ -16,6 +16,8 @@ import { createGovernanceProfileService, type GovernanceProfileService } from ".
 import { emitKnowledgeEvent } from "./eventService";
 import { createSourceBundleService } from "./sourceBundleService";
 import { createProjectService } from "./projectService";
+import { createKnowledgeService } from "./knowledgeService";
+import { createFlywheelService, type FlywheelService } from "./flywheelService";
 import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { scoreFromQuality, trustFromQuality } from "./trustScore";
 
@@ -34,6 +36,7 @@ const GOVERNANCE_TOOLS = new Set([
   "kb_get_correction_status",
   "kb_govern_flywheel",
   "kb_submit_attribution",
+  "kb_list_feedback_clusters",
 ]);
 const MCP_ENVELOPE_DETAIL_LIMIT = 20;
 
@@ -248,6 +251,7 @@ export class KnowledgeQueryService {
   private readonly lintRemediationService;
   private readonly governanceProfileService;
   private readonly attributionAuditService;
+  private flywheelService: FlywheelService | null = null;
 
   constructor(
     private readonly db: DatabaseHandle,
@@ -263,6 +267,22 @@ export class KnowledgeQueryService {
     this.builderService = createKbBuilderPipelineService(db, dataDir, diagnostics);
     this.lintRemediationService = createLintRemediationService(db);
     this.attributionAuditService = createAttributionAuditService(db);
+  }
+
+  private flywheel(): FlywheelService {
+    if (this.flywheelService) return this.flywheelService;
+    this.flywheelService = createFlywheelService({
+      db: this.db,
+      knowledgeService: createKnowledgeService(this.db),
+      bundleService: this.sourceService,
+      kbBuilderService: this.builderService,
+      releaseService: this.releaseService,
+      projectService: createProjectService(this.db),
+      lintRemediationService: this.lintRemediationService,
+      governanceProfileService: this.governanceProfileService,
+      diagnostics: this.diagnostics,
+    });
+    return this.flywheelService;
   }
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {
@@ -427,6 +447,8 @@ export class KnowledgeQueryService {
         return this.kbGovernFlywheel(projectId, payload, context);
       case "kb_submit_attribution":
         return this.kbSubmitAttribution(projectId, payload, context);
+      case "kb_list_feedback_clusters":
+        return this.kbListFeedbackClusters(projectId);
       default:
         throw new Error(`Unknown Knowledge MCP governance tool: ${toolName}`);
     }
@@ -2008,6 +2030,19 @@ export class KnowledgeQueryService {
         message: "归因审计已写入；不修改已发布 OKF。",
       },
       componentIds: uniqueSorted(segments.flatMap((segment) => segment.trace.componentIds ?? [])),
+      forceHit: true,
+    };
+  }
+
+  private async kbListFeedbackClusters(projectId: string): Promise<ToolResult> {
+    const clusters = await this.flywheel().listFeedbackClusters(projectId);
+    return {
+      result: {
+        projectId,
+        count: clusters.length,
+        clusters,
+      },
+      componentIds: uniqueSorted(clusters.flatMap((cluster) => cluster.affectedComponents.map((item) => item.componentId))),
       forceHit: true,
     };
   }

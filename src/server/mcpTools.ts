@@ -290,6 +290,13 @@ export const knowledgeMcpTools: Array<{
     readOnly: false,
   },
   {
+    name: "kb_list_feedback_clusters",
+    title: "List Feedback Clusters",
+    description: "List aggregated Agent negative-feedback clusters for the project flywheel (high-frequency gaps, bad hits, stale knowledge).",
+    inputSchema: noArgs,
+    readOnly: true,
+  },
+  {
     name: "kb_report_gap",
     title: "Report Knowledge Gap",
     description: "Agent feedback: report that current published knowledge cannot answer a user query. Routes a review task into the flywheel.",
