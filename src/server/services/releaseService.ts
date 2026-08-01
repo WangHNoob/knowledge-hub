@@ -313,6 +313,41 @@ export class ReleaseService {
       const published = await this.getRelease(releaseId);
       if (!published) throw new Error(`Unknown release after publish: ${releaseId}`);
       await span?.complete({ manifestHash: published.manifestHash, packageIds: published.packageIds });
+      await emitKnowledgeEvent(this.db, {
+        eventType: "release.published",
+        entityType: "release",
+        entityId: published.releaseId,
+        payload: {
+          projectId: published.projectId,
+          releaseId: published.releaseId,
+          version: published.version,
+          parentReleaseId: published.parentReleaseId,
+          packageIds: published.packageIds,
+          publishedBy,
+          autoMode: Boolean(options.autoMode),
+          manifestHash: published.manifestHash,
+        },
+      });
+      const previousTrustByArtifact = parentComponentTrustScores(parentRelease);
+      for (const component of trustedComponents) {
+        const previousScore = previousTrustByArtifact.get(component.artifactId) ?? null;
+        const nextScore = scoreFromQuality(component.quality);
+        if (previousScore === nextScore) continue;
+        if (previousScore === null && nextScore === null) continue;
+        await emitKnowledgeEvent(this.db, {
+          eventType: "component.trust_changed",
+          entityType: "component",
+          entityId: component.componentId,
+          payload: {
+            projectId: published.projectId,
+            releaseId: published.releaseId,
+            componentId: component.componentId,
+            artifactId: component.artifactId,
+            previousScore,
+            nextScore,
+          },
+        });
+      }
       // 同步记录 Knowledge Lint 治理队列（发布目录已写出 knowledge_lint.json）。
       // 必须在此处顺序执行，而非通过事件总线异步：DB 适配器的事务客户端不可重入，
       // 异步写入会与请求路径的 BEGIN/COMMIT 竞争。治理记录尽力而为，失败不回滚发布。
