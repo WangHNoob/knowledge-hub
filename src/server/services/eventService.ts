@@ -23,6 +23,9 @@ export type KnowledgeEventType =
   | "agent.feedback.received"
   | "agent.feedback.rebuild_proposed"
   | "agent.feedback.rebuild_started"
+  | "attribution.audit_received"
+  | "gap.fill_candidate_created"
+  | "gap.fill_candidate_linked"
   | "release.revision_proposed"
   | "release.auto_publish_succeeded"
   | "release.auto_publish_skipped"
@@ -35,7 +38,8 @@ export type KnowledgeEventType =
   | "knowledge_lint.remediation_started"
   | "knowledge_lint.remediation_completed"
   | "knowledge_lint.remediation_failed"
-  | "knowledge_lint.alias_remediated";
+  | "knowledge_lint.alias_remediated"
+  | "eval.retrieval_completed";
 
 export interface KnowledgeEvent {
   eventId: string;

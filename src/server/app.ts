@@ -99,8 +99,33 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     // Lint 自动治理与 Agent 反馈 auto-remediation 语义分离：前者默认开启，后者用 KH_AUTO_REMEDIATION_ENABLED。
     lintAutoGovernanceEnabled: true,
     lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
+    evalEnabled: config.retrievalEvalEnabled,
+    evalGoldPath: config.retrievalEvalGoldPath,
+    evalMinHitAtK: config.retrievalEvalMinHitAtK,
+    evalMinCitationCoverage: config.retrievalEvalMinCitationCoverage,
+    evalBlockOnRegression: config.retrievalEvalBlockOnRegression,
   });
-  const releaseService = createReleaseService(options.db, dataDir, diagnostics, governanceProfileService);
+  const releaseService = createReleaseService(
+    options.db,
+    dataDir,
+    diagnostics,
+    governanceProfileService,
+    async ({ projectId, goldPath }) => {
+      const { createRetrievalEvalService } = await import("./services/retrievalEvalService");
+      const summary = await createRetrievalEvalService(
+        options.db,
+        dataDir,
+        diagnostics,
+        governanceProfileService,
+      ).run({ projectId, goldPath, emitEvent: true });
+      return {
+        hitAtK: summary.hitAtK,
+        citationCoverage: summary.citationCoverage,
+        trustPassRate: summary.trustPassRate,
+        total: summary.total,
+      };
+    },
+  );
   const ctx: RouteContext = {
     db: options.db,
     dataDir,

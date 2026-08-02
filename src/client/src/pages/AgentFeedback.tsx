@@ -593,6 +593,13 @@ function clusterTypeLabel(type: AgentFeedbackCluster["type"]): string {
 function ConvergencePanel({ summary }: { summary: FlywheelConvergenceSummary }) {
   const autoTotal = summary.automation.autoPublished + summary.automation.autoSkipped;
   const autoRate = autoTotal === 0 ? "n/a" : formatPercent(summary.automation.autoPublished / autoTotal);
+  const pilot = summary.pilot;
+  const aliasRate = pilot?.aliasRemediation.successRate == null
+    ? "n/a"
+    : formatPercent(pilot.aliasRemediation.successRate);
+  const creationRatio = pilot ? formatPercent(pilot.attribution.creationRatio) : "n/a";
+  const exceptionRate = pilot ? formatPercent(pilot.exceptionRate) : "n/a";
+  const topSkip = pilot?.skipReasonDistribution?.[0];
   return (
     <div className="convergence-panel">
       <div className="detail-head">
@@ -609,11 +616,19 @@ function ConvergencePanel({ summary }: { summary: FlywheelConvergenceSummary }) 
         <Metric label="负反馈" value={summary.feedback.negative} hint={`${summary.feedback.openGeneratedTasks}/${summary.feedback.generatedTasks} 任务未关`} tone={summary.feedback.openGeneratedTasks ? "warn" : "ok"} />
         <Metric label="Scoped rebuild" value={summary.rebuilds.scoped} hint={`${summary.rebuilds.completed} 完成 / ${summary.rebuilds.failed} 失败`} tone={summary.rebuilds.failed ? "hot" : summary.rebuilds.running ? "warn" : "ok"} />
         <Metric label="自动发布率" value={autoRate} hint={`${summary.automation.autoPublished}/${autoTotal || 0} 成功`} tone={summary.automation.autoSkipped ? "warn" : summary.automation.autoPublished ? "ok" : undefined} />
+        {pilot && (
+          <>
+            <Metric label="例外率" value={exceptionRate} hint={`${pilot.pendingExceptionsProxy} 待处理 / ${pilot.openGapCandidates} 缺口候选`} tone={pilot.exceptionRate > 0.5 ? "hot" : pilot.exceptionRate > 0.2 ? "warn" : "ok"} />
+            <Metric label="别名修复率" value={aliasRate} hint={`${pilot.aliasRemediation.applied}/${pilot.aliasRemediation.attempts || 0} applied`} tone={pilot.aliasRemediation.successRate != null && pilot.aliasRemediation.successRate < 0.5 ? "warn" : "ok"} />
+            <Metric label="归因创作占比" value={creationRatio} hint={`${pilot.attribution.creationSegments}/${pilot.attribution.totalSegments || 0} 段 · 无证据 ${formatPercent(pilot.attribution.ungroundedRatio)}`} tone={pilot.attribution.creationRatio > 0.2 ? "hot" : pilot.attribution.ungroundedRatio > 0.1 ? "warn" : "ok"} />
+          </>
+        )}
       </div>
       <div className="convergence-notes">
         <p><strong>样例池：</strong>{summary.annotations.latestAt ? `最近标注 ${formatTime(summary.annotations.latestAt)}` : "还没有人工标注样例。"}</p>
         <p><strong>重建：</strong>{summary.rebuilds.latestAt ? `最近 scoped rebuild ${formatTime(summary.rebuilds.latestAt)}` : "还没有反馈驱动的 scoped rebuild。"}</p>
         <p><strong>自动化：</strong>{summary.automation.latestAt ? `最近发布自动化事件 ${formatTime(summary.automation.latestAt)}` : "还没有发布自动化事件。"}</p>
+        {topSkip && <p><strong>Skip 主因：</strong>{topSkip.label}（{topSkip.count} 次，{formatPercent(topSkip.pct)}）</p>}
       </div>
     </div>
   );

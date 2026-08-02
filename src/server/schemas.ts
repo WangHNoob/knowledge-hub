@@ -24,6 +24,15 @@ export const exceptionRestoreSchema = z.object({
   key: z.string().min(1, "缺少例外标识 key。")
 });
 
+export const gapFillLinkSchema = z.object({
+  sourceBundleId: z.string().min(1),
+  sourcePath: z.string().max(1000).optional()
+});
+
+export const gapFillDismissSchema = z.object({
+  candidateId: z.string().min(1).optional()
+});
+
 export const governanceProfileUpdateSchema = z.object({
   trust: z.object({
     minAutoPublishScore: z.number().min(0).max(1).optional(),
@@ -43,6 +52,13 @@ export const governanceProfileUpdateSchema = z.object({
   feedback: z.object({
     autoClusterEnabled: z.boolean().optional(),
     highFrequencyThreshold: z.number().int().min(1).max(100).optional()
+  }).optional(),
+  eval: z.object({
+    enabled: z.boolean().optional(),
+    goldPath: z.string().min(1).max(500).optional(),
+    minHitAtK: z.number().min(0).max(1).optional(),
+    minCitationCoverage: z.number().min(0).max(1).optional(),
+    blockOnRegression: z.boolean().optional()
   }).optional()
 });
 

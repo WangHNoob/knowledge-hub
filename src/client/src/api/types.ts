@@ -921,6 +921,13 @@ export interface KnowledgeGovernanceProfile {
     blockOnPendingCorrections: boolean;
   };
   feedback: { autoClusterEnabled: boolean; highFrequencyThreshold: number };
+  eval: {
+    enabled: boolean;
+    goldPath: string;
+    minHitAtK: number;
+    minCitationCoverage: number;
+    blockOnRegression: boolean;
+  };
   source: "default" | "project";
   updatedBy: string;
   updatedAt: string;
@@ -931,6 +938,7 @@ export type KnowledgeGovernanceProfileInput = {
   lint?: Partial<KnowledgeGovernanceProfile["lint"]>;
   release?: Partial<KnowledgeGovernanceProfile["release"]>;
   feedback?: Partial<KnowledgeGovernanceProfile["feedback"]>;
+  eval?: Partial<KnowledgeGovernanceProfile["eval"]>;
 };
 
 export interface FlywheelConvergenceSummary {
@@ -973,6 +981,28 @@ export interface FlywheelConvergenceSummary {
     openAnnotation: number;
     openFeedback: number;
     interventionLoad: number;
+  };
+  pilot?: {
+    exceptionRate: number;
+    pendingExceptionsProxy: number;
+    autoGoverned: number;
+    dismissedActive: number;
+    openGapCandidates: number;
+    skipReasonDistribution: Array<{ code: string; label: string; count: number; pct: number }>;
+    aliasRemediation: {
+      attempts: number;
+      applied: number;
+      noAction: number;
+      successRate: number | null;
+    };
+    attribution: {
+      totalSegments: number;
+      creationSegments: number;
+      ungroundedSegments: number;
+      creationRatio: number;
+      ungroundedRatio: number;
+    };
+    windowDays: number;
   };
 }
 

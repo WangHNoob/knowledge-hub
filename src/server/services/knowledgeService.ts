@@ -1600,7 +1600,12 @@ export class KnowledgeService {
          'release.revision_proposed',
          'release.auto_publish_succeeded',
          'release.auto_publish_skipped',
-         'knowledge_lint.health_checked'
+         'knowledge_lint.health_checked',
+         'knowledge_lint.alias_remediated',
+         'gap.fill_candidate_created',
+         'gap.fill_candidate_linked',
+         'attribution.audit_received',
+         'eval.retrieval_completed'
        )
        ORDER BY created_at DESC
        LIMIT 100`,
@@ -1625,6 +1630,11 @@ export class KnowledgeService {
       { rows: [taskRow] },
       { rows: [rebuildRow] },
       { rows: [automationRow] },
+      { rows: skipRows },
+      { rows: aliasRows },
+      { rows: [gapRow] },
+      { rows: [dismissedRow] },
+      { rows: attributionRows },
     ] = await Promise.all([
       this.adapter.query(
         `SELECT
@@ -1686,14 +1696,108 @@ export class KnowledgeService {
            COUNT(*) FILTER (WHERE event_type = 'release.auto_publish_skipped')::int AS auto_skipped,
            MAX(created_at) FILTER (WHERE event_type IN ('release.revision_proposed', 'release.auto_publish_succeeded', 'release.auto_publish_skipped')) AS latest_at
          FROM knowledge_events
-         WHERE project_id = $1`,
+         WHERE project_id = $1 AND created_at >= $2`,
+        [projectId, since],
+      ),
+      this.adapter.query(
+        `SELECT payload_json
+         FROM knowledge_events
+         WHERE project_id = $1
+           AND event_type = 'release.auto_publish_skipped'
+           AND created_at >= $2
+         ORDER BY created_at DESC
+         LIMIT 200`,
+        [projectId, since],
+      ),
+      this.adapter.query(
+        `SELECT payload_json
+         FROM knowledge_events
+         WHERE project_id = $1
+           AND event_type = 'knowledge_lint.alias_remediated'
+           AND created_at >= $2
+         ORDER BY created_at DESC
+         LIMIT 200`,
+        [projectId, since],
+      ),
+      this.adapter.query(
+        `SELECT COUNT(*)::int AS open_gaps FROM gap_fill_candidates WHERE project_id = $1 AND status = 'open'`,
         [projectId],
+      ),
+      this.adapter.query(
+        `SELECT COUNT(*)::int AS dismissed FROM exception_dismissals WHERE project_id = $1 AND restored_at IS NULL`,
+        [projectId],
+      ),
+      this.adapter.query(
+        `SELECT a.segments_json
+         FROM attribution_audits a
+         INNER JOIN releases r ON r.release_id = a.release_id
+         WHERE r.project_id = $1 AND a.created_at >= $2`,
+        [projectId, since],
       ),
     ]);
 
     const interventionLoad = Number(taskRow.open_feedback_tasks ?? 0)
       + Number(taskRow.open_annotation_tasks ?? 0)
       + Number(taskRow.open_blocking_tasks ?? 0);
+
+    const skipReasonCounts = new Map<string, { code: string; label: string; count: number }>();
+    for (const row of skipRows) {
+      const payload = jsonObject(row.payload_json);
+      const details = Array.isArray(payload.reasonDetails) ? payload.reasonDetails : [];
+      if (details.length > 0) {
+        for (const detail of details) {
+          if (!detail || typeof detail !== "object") continue;
+          const item = detail as Record<string, unknown>;
+          const code = String(item.code ?? "unknown");
+          const label = String(item.label ?? code);
+          const current = skipReasonCounts.get(code) ?? { code, label, count: 0 };
+          current.count += 1;
+          skipReasonCounts.set(code, current);
+        }
+      } else {
+        const code = String(payload.reason ?? "unspecified");
+        const current = skipReasonCounts.get(code) ?? { code, label: code, count: 0 };
+        current.count += 1;
+        skipReasonCounts.set(code, current);
+      }
+    }
+    const skipTotal = [...skipReasonCounts.values()].reduce((sum, item) => sum + item.count, 0) || 1;
+    const skipReasonDistribution = [...skipReasonCounts.values()]
+      .sort((a, b) => b.count - a.count)
+      .map((item) => ({ ...item, pct: item.count / skipTotal }));
+
+    let aliasApplied = 0;
+    let aliasNoAction = 0;
+    for (const row of aliasRows) {
+      const payload = jsonObject(row.payload_json);
+      const aliases = Array.isArray(payload.appliedAliases) ? payload.appliedAliases : [];
+      if (aliases.length > 0) aliasApplied += 1;
+      else aliasNoAction += 1;
+    }
+    const aliasAttempts = aliasApplied + aliasNoAction;
+
+    let attributionSegments = 0;
+    let creationSegments = 0;
+    let ungroundedSegments = 0;
+    for (const row of attributionRows) {
+      const segments = parseJsonArrayObjects(row.segments_json);
+      for (const segment of segments) {
+        attributionSegments += 1;
+        const type = String(segment.attributionType ?? "");
+        if (type === "创作") creationSegments += 1;
+        if (type === "创作" || type === "无法判断") ungroundedSegments += 1;
+      }
+    }
+
+    const autoPublished = Number(automationRow.auto_published ?? 0);
+    const autoSkipped = Number(automationRow.auto_skipped ?? 0);
+    const autoGoverned = autoPublished + aliasApplied;
+    const openGaps = Number(gapRow.open_gaps ?? 0);
+    const dismissedActive = Number(dismissedRow.dismissed ?? 0);
+    const pendingExceptionsProxy = interventionLoad + openGaps + autoSkipped;
+    const exceptionDenom = pendingExceptionsProxy + autoGoverned + dismissedActive;
+    const exceptionRate = exceptionDenom === 0 ? 0 : pendingExceptionsProxy / exceptionDenom;
+
     return {
       annotations: {
         examples: Number(annotationRow.examples ?? 0),
@@ -1725,8 +1829,8 @@ export class KnowledgeService {
       },
       automation: {
         revisionsProposed: Number(automationRow.revisions_proposed ?? 0),
-        autoPublished: Number(automationRow.auto_published ?? 0),
-        autoSkipped: Number(automationRow.auto_skipped ?? 0),
+        autoPublished,
+        autoSkipped,
         latestAt: automationRow.latest_at ? String(automationRow.latest_at) : null,
       },
       reviewLoad: {
@@ -1734,6 +1838,28 @@ export class KnowledgeService {
         openAnnotation: Number(taskRow.open_annotation_tasks ?? 0),
         openFeedback: Number(taskRow.open_feedback_tasks ?? 0),
         interventionLoad,
+      },
+      pilot: {
+        exceptionRate,
+        pendingExceptionsProxy,
+        autoGoverned,
+        dismissedActive,
+        openGapCandidates: openGaps,
+        skipReasonDistribution,
+        aliasRemediation: {
+          attempts: aliasAttempts,
+          applied: aliasApplied,
+          noAction: aliasNoAction,
+          successRate: aliasAttempts === 0 ? null : aliasApplied / aliasAttempts,
+        },
+        attribution: {
+          totalSegments: attributionSegments,
+          creationSegments,
+          ungroundedSegments,
+          creationRatio: attributionSegments === 0 ? 0 : creationSegments / attributionSegments,
+          ungroundedRatio: attributionSegments === 0 ? 0 : ungroundedSegments / attributionSegments,
+        },
+        windowDays: 7,
       },
     };
   }
@@ -1874,6 +2000,19 @@ function jsonObject(value: unknown): Record<string, unknown> {
     }
   }
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function parseJsonArrayObjects(value: unknown): Array<Record<string, unknown>> {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item));
 }
 
 function jsonArray(value: unknown): string[] {

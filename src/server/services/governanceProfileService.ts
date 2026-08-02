@@ -16,6 +16,11 @@ export interface GovernanceDefaults {
   blockOnPendingCorrections: boolean;
   autoClusterEnabled: boolean;
   highFrequencyThreshold: number;
+  evalEnabled: boolean;
+  evalGoldPath: string;
+  evalMinHitAtK: number;
+  evalMinCitationCoverage: number;
+  evalBlockOnRegression: boolean;
 }
 
 export const DEFAULT_GOVERNANCE_DEFAULTS: GovernanceDefaults = {
@@ -30,6 +35,11 @@ export const DEFAULT_GOVERNANCE_DEFAULTS: GovernanceDefaults = {
   blockOnPendingCorrections: true,
   autoClusterEnabled: true,
   highFrequencyThreshold: 2,
+  evalEnabled: false,
+  evalGoldPath: "evals/retrieval-gold.json",
+  evalMinHitAtK: 0.85,
+  evalMinCitationCoverage: 0,
+  evalBlockOnRegression: true,
 };
 
 export function createGovernanceProfileService(db: DatabaseHandle, defaults: Partial<GovernanceDefaults> = {}): GovernanceProfileService {
@@ -67,6 +77,13 @@ export class GovernanceProfileService {
         blockOnPendingCorrections: d.blockOnPendingCorrections,
       },
       feedback: { autoClusterEnabled: d.autoClusterEnabled, highFrequencyThreshold: d.highFrequencyThreshold },
+      eval: {
+        enabled: d.evalEnabled,
+        goldPath: d.evalGoldPath,
+        minHitAtK: d.evalMinHitAtK,
+        minCitationCoverage: d.evalMinCitationCoverage,
+        blockOnRegression: d.evalBlockOnRegression,
+      },
       source: "default",
       updatedBy: "",
       updatedAt: "",
@@ -99,6 +116,7 @@ export class GovernanceProfileService {
       lint: merged.lint,
       release: merged.release,
       feedback: merged.feedback,
+      eval: merged.eval,
     };
     const now = new Date().toISOString();
     await this.adapter.query(
@@ -140,6 +158,7 @@ function normalizeInput(raw: Record<string, unknown> | KnowledgeGovernanceProfil
   const lint = asObject(source.lint);
   const release = asObject(source.release);
   const feedback = asObject(source.feedback);
+  const evalObj = asObject(source.eval);
   const out: KnowledgeGovernanceProfileInput = {};
   const trustPatch = {
     ...numberField(trust, "minAutoPublishScore", 0, 1),
@@ -164,6 +183,14 @@ function normalizeInput(raw: Record<string, unknown> | KnowledgeGovernanceProfil
     ...intField(feedback, "highFrequencyThreshold", 1, 100),
   };
   if (Object.keys(feedbackPatch).length) out.feedback = feedbackPatch;
+  const evalPatch = {
+    ...boolField(evalObj, "enabled"),
+    ...stringField(evalObj, "goldPath"),
+    ...numberField(evalObj, "minHitAtK", 0, 1),
+    ...numberField(evalObj, "minCitationCoverage", 0, 1),
+    ...boolField(evalObj, "blockOnRegression"),
+  };
+  if (Object.keys(evalPatch).length) out.eval = evalPatch;
   return out;
 }
 
@@ -174,6 +201,7 @@ function mergeProfile(base: KnowledgeGovernanceProfile, patch: KnowledgeGovernan
     lint: { ...base.lint, ...patch.lint },
     release: { ...base.release, ...patch.release },
     feedback: { ...base.feedback, ...patch.feedback },
+    eval: { ...base.eval, ...patch.eval },
   };
 }
 
@@ -183,6 +211,10 @@ function asObject(value: unknown): Record<string, unknown> {
 
 function boolField(source: Record<string, unknown>, key: string): Record<string, boolean> {
   return typeof source[key] === "boolean" ? { [key]: source[key] as boolean } : {};
+}
+
+function stringField(source: Record<string, unknown>, key: string): Record<string, string> {
+  return typeof source[key] === "string" && source[key].trim() !== "" ? { [key]: String(source[key]).trim() } : {};
 }
 
 function numberField(source: Record<string, unknown>, key: string, min: number, max: number): Record<string, number> {

@@ -3,18 +3,21 @@ import { nanoid } from "nanoid";
 import { mapComponent } from "../db/mappers";
 import type { AssetComponent, DatabaseHandle, ReleaseRecord } from "../types";
 import { emitKnowledgeEvent } from "./eventService";
+import { createGapFillCandidateService } from "./gapFillCandidateService";
 
 const REBUILD_PROPOSAL_THRESHOLD = 2;
+const UNTARGETED_FEEDBACK_TYPES = new Set(["miss", "repeated_query", "knowledge_gap", "tool_error"]);
 
 export type FeedbackType =
-  | "miss"
-  | "low_quality_hit"
-  | "repeated_query"
-  | "evidence_insufficient"
-  | "relation_inference_failed"
-  | "knowledge_gap"
-  | "bad_hit"
-  | "stale_knowledge";
+    | "miss"
+    | "low_quality_hit"
+    | "repeated_query"
+    | "evidence_insufficient"
+    | "relation_inference_failed"
+    | "knowledge_gap"
+    | "bad_hit"
+    | "stale_knowledge"
+    | "tool_error";
 
 export interface FeedbackRecordResult {
   recorded: boolean;
@@ -50,7 +53,17 @@ export class FeedbackService {
     status: "hit" | "miss" | "error";
   }): Promise<void> {
     const { release, toolName, payload, hitComponentIds, qualityFlags, status } = input;
-    if (status === "error") return;
+    if (status === "error") {
+      await this.recordFeedback({
+        release,
+        toolName,
+        payload,
+        feedbackType: "tool_error",
+        hitComponentIds: [],
+        qualityFlags: qualityFlags.length ? qualityFlags : ["tool_error"],
+      });
+      return;
+    }
     if (status === "miss") {
       await this.recordFeedback({ release, toolName, payload, feedbackType: "miss", hitComponentIds: [], qualityFlags: [] });
       return;
@@ -101,11 +114,13 @@ export class FeedbackService {
     const severity = repeatedCount >= 3 ? "blocking" : "warning";
     const title = feedbackTitle(effectiveFeedbackType, severity, query);
     const suggestedAction = feedbackSuggestedAction(effectiveFeedbackType);
-    const targetComponent = await this.targetComponent(release, hitComponentIds);
+    const targetComponent = await this.targetComponent(release, hitComponentIds, effectiveFeedbackType);
     // 无目标组件时仍落 agent_events + 事件（记为 knowledge_gap），禁止 silent drop；
-    // review_tasks.component_id 非空约束，无法建任务，由飞轮按查询键聚类进例外。
+    // review_tasks.component_id 非空约束，无法建任务 → 写入 gap_fill_candidates 受控补源卡。
     if (!targetComponent) {
-      const gapType: FeedbackType = effectiveFeedbackType === "miss" || effectiveFeedbackType === "repeated_query"
+      const gapType: FeedbackType = effectiveFeedbackType === "miss"
+        || effectiveFeedbackType === "repeated_query"
+        || effectiveFeedbackType === "tool_error"
         ? effectiveFeedbackType
         : "knowledge_gap";
       const eventId = `evt_${Date.now()}_${nanoid(6)}`;
@@ -120,13 +135,23 @@ export class FeedbackService {
           query,
           JSON.stringify(hitComponentIds),
           JSON.stringify(qualityFlags),
-          "miss",
+          statusForUntargeted(gapType),
           gapType,
           suggestedAction,
           "",
           new Date().toISOString(),
         ],
       );
+      const expected = typeof payload.expected === "string" ? payload.expected : "";
+      const reason = typeof payload.reason === "string" ? payload.reason : "";
+      const candidate = await createGapFillCandidateService(this.db).upsertFromFeedback({
+        projectId: release.projectId,
+        releaseId: release.releaseId,
+        query,
+        feedbackType: gapType,
+        expected,
+        reason,
+      });
       await emitKnowledgeEvent(this.db, {
         eventType: "agent.feedback.received",
         entityType: "release",
@@ -140,6 +165,7 @@ export class FeedbackService {
           componentId: null,
           qualityFlags,
           untargeted: true,
+          gapCandidateId: candidate.candidateId,
         },
       });
       return {
@@ -227,7 +253,11 @@ export class FeedbackService {
     };
   }
 
-  private async targetComponent(release: ReleaseRecord, hitComponentIds: string[]): Promise<AssetComponent | null> {
+  private async targetComponent(
+    release: ReleaseRecord,
+    hitComponentIds: string[],
+    feedbackType: FeedbackType,
+  ): Promise<AssetComponent | null> {
     if (hitComponentIds.length > 0) {
       const placeholders = hitComponentIds.map((_, i) => `$${i + 1}`).join(",");
       const { rows } = await this.adapter.query(
@@ -236,6 +266,8 @@ export class FeedbackService {
       );
       return rows.length ? mapComponent(rows[0]) : null;
     }
+    // Gap / miss / tool_error must stay untargeted — never bind the first package component.
+    if (UNTARGETED_FEEDBACK_TYPES.has(feedbackType)) return null;
     if (release.packageIds.length === 0) return null;
     const placeholders = release.packageIds.map((_, i) => `$${i + 1}`).join(",");
     const { rows } = await this.adapter.query(
@@ -378,6 +410,7 @@ function feedbackTitle(feedbackType: FeedbackType, severity: string, query: stri
   if (feedbackType === "repeated_query") return `错误本候选：MCP 查询重复失败 ${query}`;
   if (feedbackType === "low_quality_hit") return `MCP 低可信命中 ${query}`;
   if (feedbackType === "evidence_insufficient") return `MCP 证据不足命中 ${query}`;
+  if (feedbackType === "tool_error") return `MCP 工具调用错误 ${query}`;
   return `MCP 反馈 ${query}`;
 }
 
@@ -389,7 +422,12 @@ function feedbackSuggestedAction(feedbackType: FeedbackType): string {
   if (feedbackType === "repeated_query") return "同类查询已重复触发，修订 topic_index、Wiki 或图谱关系，并纳入错误本复盘。";
   if (feedbackType === "low_quality_hit") return "查看 Trust Score 明细，补证据、完整度、审计时效或一致性缺口后重新发布。";
   if (feedbackType === "evidence_insufficient") return "补充来源引用和 evidence_records，确保回答可追溯。";
+  if (feedbackType === "tool_error") return "排查 MCP/检索链路错误；若为知识缺失导致失败，导入资料并补证据后再发布。";
   return "检查知识图谱关系和查询意图映射。";
+}
+
+function statusForUntargeted(feedbackType: FeedbackType): string {
+  return feedbackType === "tool_error" ? "error" : "miss";
 }
 
 function feedbackDescription(toolName: string, payload: Record<string, unknown>, qualityFlags: string[]): string {

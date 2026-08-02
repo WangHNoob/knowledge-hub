@@ -69,6 +69,11 @@ export const config = {
    */
   eventBusMode: optional("KH_EVENT_BUS_MODE", "inline") === "outbox" ? "outbox" as const : "inline" as const,
   eventOutboxIntervalMs: Number(optional("KH_EVENT_OUTBOX_INTERVAL_MS", "1000")),
+  retrievalEvalEnabled: flag("KH_RETRIEVAL_EVAL_ENABLED", false),
+  retrievalEvalGoldPath: optional("KH_RETRIEVAL_EVAL_GOLD_PATH", "evals/retrieval-gold.json"),
+  retrievalEvalMinHitAtK: Number(optional("KH_RETRIEVAL_EVAL_MIN_HIT_AT_K", "0.85")),
+  retrievalEvalMinCitationCoverage: Number(optional("KH_RETRIEVAL_EVAL_MIN_CITATION", "0")),
+  retrievalEvalBlockOnRegression: flag("KH_RETRIEVAL_EVAL_BLOCK_ON_REGRESSION", true),
 };
 
 export const testConfig = {

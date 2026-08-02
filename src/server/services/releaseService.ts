@@ -62,7 +62,25 @@ export interface AutoPublishCheck {
   trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
   pendingSourceCorrections: PendingSourceCorrection[];
   lintRemediation: LintRemediationSummary;
+  retrievalEval?: {
+    hitAtK: number;
+    citationCoverage: number;
+    trustPassRate: number;
+    total: number;
+    minHitAtK: number;
+    minCitationCoverage: number;
+  } | null;
 }
+
+export type RetrievalEvalGateFn = (input: {
+  projectId: string;
+  goldPath: string;
+}) => Promise<{
+  hitAtK: number;
+  citationCoverage: number;
+  trustPassRate: number;
+  total: number;
+} | null>;
 
 export interface AutoPublishReasonDetail {
   code: string;
@@ -106,10 +124,11 @@ export function createReleaseService(
   dataDirOrDiagnostics?: string | DiagnosticLogger,
   diagnostics?: DiagnosticLogger,
   governanceProfileService?: GovernanceProfileService,
+  retrievalEvalGate?: RetrievalEvalGateFn,
 ) {
   return typeof dataDirOrDiagnostics === "string"
-    ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics, governanceProfileService)
-    : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics, governanceProfileService);
+    ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics, governanceProfileService, retrievalEvalGate)
+    : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics, governanceProfileService, retrievalEvalGate);
 }
 
 export class AutoPublishEligibilityError extends Error {
@@ -121,15 +140,18 @@ export class AutoPublishEligibilityError extends Error {
 export class ReleaseService {
   private readonly adapter;
   private readonly governanceProfileService: GovernanceProfileService;
+  private readonly retrievalEvalGate?: RetrievalEvalGateFn;
 
   constructor(
     private readonly db: DatabaseHandle,
     private readonly dataDir: string,
     private readonly diagnostics?: DiagnosticLogger,
     governanceProfileService?: GovernanceProfileService,
+    retrievalEvalGate?: RetrievalEvalGateFn,
   ) {
     this.adapter = db.adapter;
     this.governanceProfileService = governanceProfileService ?? createGovernanceProfileService(db);
+    this.retrievalEvalGate = retrievalEvalGate;
   }
 
   async createDraft(input: CreateReleaseDraftInput): Promise<ReleaseRecord> {
@@ -656,6 +678,30 @@ export class ReleaseService {
     if (lintRemediation.pending > 0 || lintRemediation.failed > 0 || lintRemediation.needsHuman > 0) {
       reasons.push("knowledge_lint_remediation_unresolved");
     }
+
+    let retrievalEval: AutoPublishCheck["retrievalEval"] = null;
+    if (governance.eval.enabled && governance.eval.blockOnRegression && this.retrievalEvalGate) {
+      const summary = await this.retrievalEvalGate({
+        projectId: release.projectId,
+        goldPath: governance.eval.goldPath,
+      });
+      if (summary && summary.total > 0) {
+        retrievalEval = {
+          ...summary,
+          minHitAtK: governance.eval.minHitAtK,
+          minCitationCoverage: governance.eval.minCitationCoverage,
+        };
+        if (summary.hitAtK + 1e-9 < governance.eval.minHitAtK) {
+          reasons.push("retrieval_eval_regression");
+        } else if (
+          governance.eval.minCitationCoverage > 0
+          && summary.citationCoverage + 1e-9 < governance.eval.minCitationCoverage
+        ) {
+          reasons.push("retrieval_eval_regression");
+        }
+      }
+    }
+
     const details = buildAutoPublishReasonDetails({
       reasons,
       revision,
@@ -666,6 +712,7 @@ export class ReleaseService {
       lintRemediation,
       belowMinTrust,
       minAutoPublishScore: governance.trust.minAutoPublishScore,
+      retrievalEval,
     });
 
     return {
@@ -678,6 +725,7 @@ export class ReleaseService {
       trustDeclines,
       pendingSourceCorrections,
       lintRemediation,
+      retrievalEval,
     };
   }
 
@@ -930,6 +978,7 @@ function buildAutoPublishReasonDetails(input: {
   lintRemediation: LintRemediationSummary;
   belowMinTrust?: Array<{ componentId: string; score: number | null }>;
   minAutoPublishScore?: number;
+  retrievalEval?: AutoPublishCheck["retrievalEval"];
 }): AutoPublishReasonDetail[] {
   return input.reasons.map((reason) => {
     switch (reason) {
@@ -1019,6 +1068,20 @@ function buildAutoPublishReasonDetails(input: {
             `failed=${input.lintRemediation.failed}`,
             `needs_human=${input.lintRemediation.needsHuman}`,
           ].filter((item) => !item.endsWith("=0")),
+        };
+      case "retrieval_eval_regression":
+        return {
+          code: reason,
+          label: "检索黄金集回归未通过",
+          severity: "blocking",
+          description: `当前发布通道上的检索评测 hit@k=${formatScore(input.retrievalEval?.hitAtK ?? null)}（门槛 ${formatScore(input.retrievalEval?.minHitAtK ?? null)}），citation=${formatScore(input.retrievalEval?.citationCoverage ?? null)}。自动发布拒绝质量回退。`,
+          action: "修复检索命中/证据覆盖后重跑评测，或由管理员下调治理 Profile.eval 门槛后重试。",
+          count: input.retrievalEval?.total ?? 0,
+          sampleIds: [
+            `hitAtK=${formatScore(input.retrievalEval?.hitAtK ?? null)}`,
+            `citation=${formatScore(input.retrievalEval?.citationCoverage ?? null)}`,
+            `trustPass=${formatScore(input.retrievalEval?.trustPassRate ?? null)}`,
+          ],
         };
       default:
         return {

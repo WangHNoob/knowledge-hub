@@ -433,6 +433,26 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_knowledge_event_outbox_pending ON ${p}knowledge_event_outbox(created_at ASC) WHERE delivered_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_lint_remediations_project_status ON ${p}knowledge_lint_remediations(project_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_exception_dismissals_active ON ${p}exception_dismissals(project_id, restored_at);
+
+    CREATE TABLE IF NOT EXISTS ${p}gap_fill_candidates (
+      candidate_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      release_id TEXT NOT NULL DEFAULT '',
+      query_key TEXT NOT NULL,
+      query_raw TEXT NOT NULL DEFAULT '',
+      feedback_type TEXT NOT NULL DEFAULT 'knowledge_gap',
+      expected TEXT NOT NULL DEFAULT '',
+      reason TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'open',
+      source_bundle_id TEXT NOT NULL DEFAULT '',
+      source_path TEXT NOT NULL DEFAULT '',
+      event_count INTEGER NOT NULL DEFAULT 1,
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (project_id, query_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gap_fill_candidates_open
+      ON ${p}gap_fill_candidates(project_id, status, event_count DESC, last_seen_at DESC);
   `);
 
   await adapter.exec(`

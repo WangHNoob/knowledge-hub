@@ -125,7 +125,7 @@ export class FlywheelService {
    * 不能自动治理的 lint 治理项）。普通 warning、已自动治理、纯观察项不进入此列表。
    */
   async listExceptions(projectId = "default_project"): Promise<HumanException[]> {
-    const [tasks, events, skips, needsHumanRemediations, failedRemediations, profile, dismissedKeys, freshness, attributions] = await Promise.all([
+    const [tasks, events, skips, needsHumanRemediations, failedRemediations, profile, dismissedKeys, freshness, attributions, gaps] = await Promise.all([
       this.knowledge.listReviewTasks({ status: "open", projectId }),
       this.knowledge.listAgentEvents(projectId),
       this.listPendingPublishSkips(projectId),
@@ -135,6 +135,7 @@ export class FlywheelService {
       this.activeDismissedKeys(projectId),
       this.listFreshnessExceptions(projectId),
       this.listAttributionExceptions(projectId),
+      this.listGapFillExceptions(projectId),
     ]);
 
     const out: HumanException[] = [];
@@ -147,6 +148,7 @@ export class FlywheelService {
     for (const remediation of [...needsHumanRemediations, ...failedRemediations]) out.push(exceptionFromRemediation(remediation));
     for (const item of freshness) out.push(item);
     for (const item of attributions) out.push(item);
+    for (const item of gaps) out.push(item);
 
     return out
       .filter((exception) => !dismissedKeys.has(exception.id))
@@ -669,6 +671,38 @@ export class FlywheelService {
   }
 
   /**
+   * 无组件知识缺口：受控补源候选卡（禁止无证据进 release）。
+   */
+  private async listGapFillExceptions(projectId: string): Promise<HumanException[]> {
+    const { rows } = await this.adapter.query(
+      `SELECT * FROM gap_fill_candidates
+       WHERE project_id = $1 AND status = 'open'
+       ORDER BY event_count DESC, last_seen_at DESC
+       LIMIT 20`,
+      [projectId],
+    );
+    return rows.map((row) => {
+      const candidateId = String(row.candidate_id);
+      const queryRaw = String(row.query_raw || row.query_key || "");
+      const eventCount = Number(row.event_count ?? 1);
+      return {
+        id: `gap-${candidateId}`,
+        type: "feedback" as const,
+        attentionLevel: eventCount >= 3 ? "blocking" as const : "needs_decision" as const,
+        severity: eventCount >= 3 ? "blocking" as const : "warning" as const,
+        title: `知识缺口待补源：${queryRaw || candidateId}`,
+        body: `同类查询已出现 ${eventCount} 次，尚无对应资产组件。可关联资料库路径，但禁止在无 evidence 时直接发布。`,
+        whyHumanNeeded: "无信源不能自动生成真相页；需要导入/关联资料后走正常构建与证据门禁。",
+        recommendedAction: "打开资料库导入相关文档，或在飞轮中把候选关联到已有资料包。",
+        primaryAction: { label: "去资料库", type: "open_asset" as const },
+        target: { page: "sources" as const, params: { gapCandidateId: candidateId, q: queryRaw } },
+        technicalIds: { releaseId: String(row.release_id || "") || undefined },
+        createdAt: String(row.last_seen_at ?? row.created_at ?? new Date().toISOString()),
+      };
+    });
+  }
+
+  /**
    * 归因消费：高频「无证据创作」段落入例外，避免 Agent 输出伪装成知识库事实。
    */
   private async listAttributionExceptions(projectId: string): Promise<HumanException[]> {
@@ -700,8 +734,8 @@ export class FlywheelService {
         body: `${String(row.title || auditId)}：存在「创作/无法判断」段落，不能当作已发布知识事实。`,
         whyHumanNeeded: "无证据引用无法自动晋升为纠正或发布修订，需要策划确认是否补证据或驳回。",
         recommendedAction: "核对 Agent 会话引用的 component/evidence，补提交纠正或忽略该归因。",
-        primaryAction: { label: "去反馈页", type: "open_asset" },
-        target: { page: "agent", params: { auditId } },
+        primaryAction: { label: "去审核任务", type: "annotate" },
+        target: { page: "review", params: { auditId } },
         technicalIds: { releaseId: releaseId || undefined },
         createdAt: String(row.created_at ?? new Date().toISOString()),
       });
@@ -1152,6 +1186,16 @@ function automationTitle(eventType: string, payload: Record<string, unknown>): s
       return "Knowledge Lint 自动治理完成";
     case "knowledge_lint.remediation_failed":
       return "Knowledge Lint 自动治理失败";
+    case "knowledge_lint.alias_remediated":
+      return "已自动修复表名别名并触发全量同步";
+    case "gap.fill_candidate_created":
+      return "已登记知识缺口补源候选";
+    case "gap.fill_candidate_linked":
+      return "知识缺口已关联资料";
+    case "attribution.audit_received":
+      return "已接收 Agent 归因审计";
+    case "eval.retrieval_completed":
+      return "检索黄金集评测完成";
     default:
       return eventType;
   }

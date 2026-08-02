@@ -365,7 +365,7 @@ export interface AgentEvent {
   hitComponentIds: string[];
   qualityFlags: string[];
   status: "hit" | "miss";
-  feedbackType: "hit" | "miss" | "low_quality_hit" | "repeated_query" | "evidence_insufficient" | "relation_inference_failed" | "knowledge_gap" | "bad_hit" | "stale_knowledge";
+  feedbackType: "hit" | "miss" | "low_quality_hit" | "repeated_query" | "evidence_insufficient" | "relation_inference_failed" | "knowledge_gap" | "bad_hit" | "stale_knowledge" | "tool_error";
   suggestedAction: string;
   taskId: string;
   createdAt: string;
@@ -661,12 +661,22 @@ export interface GovernanceFeedbackPolicy {
   highFrequencyThreshold: number;
 }
 
+/** 自动发布前的检索黄金集回归闸（默认关闭，避免空库/演示库误拦）。 */
+export interface GovernanceEvalPolicy {
+  enabled: boolean;
+  goldPath: string;
+  minHitAtK: number;
+  minCitationCoverage: number;
+  blockOnRegression: boolean;
+}
+
 export interface KnowledgeGovernanceProfile {
   projectId: string;
   trust: GovernanceTrustPolicy;
   lint: GovernanceLintPolicy;
   release: GovernanceReleasePolicy;
   feedback: GovernanceFeedbackPolicy;
+  eval: GovernanceEvalPolicy;
   /** "default"=全部沿用环境变量默认；"project"=存在项目级覆盖。 */
   source: "default" | "project";
   updatedBy: string;
@@ -678,7 +688,28 @@ export type KnowledgeGovernanceProfileInput = {
   lint?: Partial<GovernanceLintPolicy>;
   release?: Partial<GovernanceReleasePolicy>;
   feedback?: Partial<GovernanceFeedbackPolicy>;
+  eval?: Partial<GovernanceEvalPolicy>;
 };
+
+/** 无组件知识缺口的受控补源候选（禁止无证据直接进 release）。 */
+export type GapFillCandidateStatus = "open" | "source_linked" | "dismissed";
+
+export interface GapFillCandidate {
+  candidateId: string;
+  projectId: string;
+  releaseId: string;
+  queryKey: string;
+  queryRaw: string;
+  feedbackType: string;
+  expected: string;
+  reason: string;
+  status: GapFillCandidateStatus;
+  sourceBundleId: string;
+  sourcePath: string;
+  eventCount: number;
+  lastSeenAt: string;
+  createdAt: string;
+}
 
 export interface PageTypeSpec {
   id: string;

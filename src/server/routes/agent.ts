@@ -58,13 +58,21 @@ export function registerAgentRoutes(app: FastifyInstance, ctx: RouteContext) {
     audits: await ctx.attributionAuditService.listAudits()
   }));
 
+  app.get("/api/agent/attribution-stats", { preHandler: app.authenticate }, async () => ({
+    stats: await ctx.attributionAuditService.getStats("default_project")
+  }));
+  app.get<{ Params: { projectId: string } }>("/api/projects/:projectId/agent/attribution-stats", { preHandler: app.authenticate }, async (request) => ({
+    stats: await ctx.attributionAuditService.getStats(request.params.projectId)
+  }));
+
   app.post("/api/agent/output-audits", { preHandler: app.authenticate }, async (request, reply) => {
     const parsed = createAttributionAuditSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid attribution audit payload." });
     return {
       audit: await ctx.attributionAuditService.createAudit({
         ...parsed.data,
-        createdBy: request.user.username
+        createdBy: request.user.username,
+        projectId: "default_project",
       })
     };
   });

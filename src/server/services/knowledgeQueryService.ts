@@ -2076,6 +2076,7 @@ export class KnowledgeQueryService {
       title,
       createdBy: context.sessionId || context.agentRole || "mcp-agent",
       segments,
+      projectId,
     });
     return {
       result: {

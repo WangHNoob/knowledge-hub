@@ -40,7 +40,7 @@ export function GovernanceProfile() {
   const saveMutation = useMutation({
     mutationFn: (profile: KnowledgeGovernanceProfile) =>
       updateGovernanceProfile(
-        { trust: profile.trust, lint: profile.lint, release: profile.release, feedback: profile.feedback },
+        { trust: profile.trust, lint: profile.lint, release: profile.release, feedback: profile.feedback, eval: profile.eval },
         currentProjectId,
       ),
     onSuccess: async (profile) => {
@@ -171,6 +171,43 @@ export function GovernanceProfile() {
             step={1}
             disabled={!isAdmin}
             onChange={(v) => patch({ feedback: { ...draft.feedback, highFrequencyThreshold: Math.round(v) } })}
+          />
+        </GovernanceSection>
+
+        <GovernanceSection title="检索评测门禁" desc="自动发布前对当前发布通道跑黄金集；回归不达标则 skip（默认关闭）。">
+          <ToggleField
+            label="启用检索评测门禁"
+            hint="开启后 revision 自动发布会检查 hit@k / citation。"
+            checked={draft.eval?.enabled ?? false}
+            disabled={!isAdmin}
+            onChange={(v) => patch({ eval: { ...draft.eval, enabled: v } })}
+          />
+          <ToggleField
+            label="回归不达标时阻断"
+            hint="评测低于门槛时拒绝自动发布。"
+            checked={draft.eval?.blockOnRegression ?? true}
+            disabled={!isAdmin || !(draft.eval?.enabled ?? false)}
+            onChange={(v) => patch({ eval: { ...draft.eval, blockOnRegression: v } })}
+          />
+          <NumberField
+            label="最低 hit@k"
+            hint="黄金集命中率门槛（0–1）。"
+            value={draft.eval?.minHitAtK ?? 0.85}
+            min={0}
+            max={1}
+            step={0.05}
+            disabled={!isAdmin || !(draft.eval?.enabled ?? false)}
+            onChange={(v) => patch({ eval: { ...draft.eval, minHitAtK: v } })}
+          />
+          <NumberField
+            label="最低 citation 覆盖"
+            hint="设为 0 表示不检查 citation。"
+            value={draft.eval?.minCitationCoverage ?? 0}
+            min={0}
+            max={1}
+            step={0.05}
+            disabled={!isAdmin || !(draft.eval?.enabled ?? false)}
+            onChange={(v) => patch({ eval: { ...draft.eval, minCitationCoverage: v } })}
           />
         </GovernanceSection>
       </div>

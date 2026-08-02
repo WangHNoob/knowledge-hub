@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import type { z } from "zod";
 
-import { flywheelSyncSchema, exceptionDismissSchema, exceptionRestoreSchema } from "../schemas";
+import { flywheelSyncSchema, exceptionDismissSchema, exceptionRestoreSchema, gapFillLinkSchema } from "../schemas";
 import { denyRole } from "../middleware/auth";
 import type { RouteContext } from "./context";
+import { createGapFillCandidateService } from "../services/gapFillCandidateService";
 
 /**
  * 轻量知识运营台的三个入口：
@@ -94,6 +95,10 @@ export function registerFlywheelRoutes(app: FastifyInstance, ctx: RouteContext) 
     { preHandler: [app.authenticate, denyRole("viewer")] },
     async (request) => ({ stopped: await ctx.kbBuilderService.stopRunningBuilds(request.params.projectId, request.user.username) }),
   );
+
+  // 无组件知识缺口：受控补源候选（禁止无证据发布）
+  registerGapFillRoutes(app, ctx, "/api/flywheel", "default_project");
+  registerGapFillRoutes(app, ctx, "/api/projects/:projectId/flywheel", null);
 
   app.get<{ Querystring: { releaseId?: string } }>(
     "/api/flywheel/remediations",
@@ -187,6 +192,54 @@ function registerExceptionDismissalRoutes(
         restoredBy: request.user.username,
       });
       return reply.code(204).send();
+    },
+  );
+}
+
+function registerGapFillRoutes(
+  app: FastifyInstance,
+  ctx: RouteContext,
+  basePath: string,
+  defaultProjectId: string | null,
+) {
+  const resolveProjectId = (params: Record<string, string | undefined>): string =>
+    defaultProjectId ?? params.projectId ?? "default_project";
+  const gaps = () => createGapFillCandidateService(ctx.db);
+
+  app.get<{ Params: Record<string, string> }>(
+    `${basePath}/gap-candidates`,
+    { preHandler: app.authenticate },
+    async (request) => ({ candidates: await gaps().listOpen(resolveProjectId(request.params)) }),
+  );
+
+  app.post<{ Params: Record<string, string> & { candidateId: string }; Body: z.infer<typeof gapFillLinkSchema> }>(
+    `${basePath}/gap-candidates/:candidateId/link-source`,
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const parsed = gapFillLinkSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid link payload." });
+      const candidate = await gaps().linkSource({
+        projectId: resolveProjectId(request.params),
+        candidateId: request.params.candidateId,
+        sourceBundleId: parsed.data.sourceBundleId,
+        sourcePath: parsed.data.sourcePath,
+        linkedBy: request.user.username,
+      });
+      if (!candidate) return reply.code(404).send({ error: "Gap candidate not found or not open." });
+      return { candidate };
+    },
+  );
+
+  app.post<{ Params: Record<string, string> & { candidateId: string } }>(
+    `${basePath}/gap-candidates/:candidateId/dismiss`,
+    { preHandler: [app.authenticate, denyRole("viewer")] },
+    async (request, reply) => {
+      const candidate = await gaps().dismiss({
+        projectId: resolveProjectId(request.params),
+        candidateId: request.params.candidateId,
+      });
+      if (!candidate) return reply.code(404).send({ error: "Gap candidate not found." });
+      return { candidate };
     },
   );
 }
