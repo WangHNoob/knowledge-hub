@@ -20,3 +20,7 @@ seed/db/*.dump
 
 # 本地数据库备份
 backups/
+
+# 本机 docker compose 端口覆盖（如 5432 冲突时映射 5544）
+docker-compose.override.yml
+

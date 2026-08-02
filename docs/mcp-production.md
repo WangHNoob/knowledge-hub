@@ -2,6 +2,8 @@
 
 Knowledge Hub 的 Agent 入口是 Fastify `/mcp`（Streamable HTTP + JWT）。适合试点与单机；多 Agent 集群建议网关前置，而不是自研完整 MCP Gateway。
 
+产品总览与本地联调见根目录 [README.md](../README.md) 与 [QUICKSTART.md](./QUICKSTART.md)。
+
 ## 推荐拓扑
 
 ```
@@ -31,3 +33,9 @@ KH_EVENT_OUTBOX_INTERVAL_MS=1000
 
 - HTTP MCP 默认 `projectId` = 登录用户 `currentProjectId`。
 - Agent 侧应显式设置 `MCP_PROJECT_ID`（注入每个 `kb_*` 工具参数），禁止静默依赖 `default_project`。
+- design-agent-ts 在 MCP 已加载 `kb_search` 时默认禁用本地 wiki/grep/kg，避免双源；可用 `MCP_DISABLE_LOCAL_KNOWLEDGE_WHEN_HEALTHY=false` 保留本地降级。
+
+## 检索与 ACL（消费侧）
+
+- `kb_search` 为词项 + dense RRF 混合检索；返回结构保持向后兼容。
+- 组件 `quality.visibility` 在检索前按角色过滤（viewer ≈ public；developer/agent ≈ public+internal；admin 全可见）。

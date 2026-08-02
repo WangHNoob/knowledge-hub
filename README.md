@@ -1,103 +1,173 @@
 # Knowledge Hub
 
-> 把团队资料治理成 Agent 可消费、可追溯、可迭代的知识库。系统把原始资料编译为 LLM Wiki / OKF 知识包，通过 MCP 提供给 Agent，并把 Agent 反馈回流成自动治理与增量重建。
+> 把团队资料治理成 **Agent 可消费、可追溯、可迭代** 的知识库。  
+> 不是又一个纯向量 RAG，而是「资料 → 资产化 → 证据/可信度 → 发布冻结 → MCP 消费 → 反馈回流 → 修订发布」的治理型知识运营系统。
 
-Knowledge Hub 是一个 TypeScript 全栈应用，面向游戏策划知识库管理。它不是简单的 RAG 文件夹，而是一条轻量知识飞轮：
+[![Node](https://img.shields.io/badge/node-%3E%3D22-green.svg)](https://nodejs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-336791.svg)](https://www.postgresql.org/)
+[![License](https://img.shields.io/badge/license-personal%2Finternal-lightgrey.svg)](#许可)
+
+Knowledge Hub 是 TypeScript 全栈应用（Fastify + React），面向游戏 / 设计域知识资产治理。同一账号可切换多项目；资料、构建、发布、MCP、反馈与治理记录按 `project_id` 隔离。
 
 ```text
-导入资料 → 预览变更 → 一键构建并发布 → Agent 通过 MCP 消费
-   ↑                                             │
-   └──── 标注 / Knowledge Lint / Agent 反馈自动回流 ────┘
+导入资料 → 构建流水线 → OKF 发布冻结 → Agent 经 MCP (kb_*) 消费
+   ↑                                              │
+   └── 标注 / Lint·别名自愈 / 反馈晋升 / 健康巡检 ───┘
 ```
 
-系统已支持多游戏项目，同一账号可切换不同项目；资料库、构建、资产、发布、MCP 审计、Agent 反馈、审核和治理记录按项目隔离。
+配套 Agent 示例：[design-agent-ts](https://github.com/WangHNoob/design-agent-ts)（默认走 MCP，任务结束强制反馈与归因回写）。
+
+---
+
+## 目录
+
+- [核心能力](#核心能力)
+- [快速开始](#快速开始)
+- [常用命令](#常用命令)
+- [MCP 接入](#mcp-接入)
+- [设计原则](#设计原则)
+- [架构](#架构)
+- [部署与运维](#部署与运维)
+- [推荐流程](#推荐流程)
+- [权限](#权限)
+- [许可](#许可)
+
+更细的本地排障见 [docs/QUICKSTART.md](docs/QUICKSTART.md)；生产 MCP / 多实例见 [docs/mcp-production.md](docs/mcp-production.md)。
 
 ---
 
 ## 核心能力
 
-### 1. 资料库管理
+### 1. 资料库（不可变版本链）
 
-- 上传 `knowledge/`、`gamedata/`、`gamedocs/` 等资料目录。
-- 原始文件按内容哈希去重，源版本不可变。
-- 资料版本支持文件树预览、文件内容摘要、变更统计和增量构建建议。
-- **上传即自动流转**：上传新版本且相对上一版本确有变更时，自动触发增量构建 → Knowledge Lint 治理 → 发布，无需手动点构建。资料库页顶部有实时流水线进度条（构建 → 治理 → 发布），全程可见。
+- 上传 `knowledge/`、`gamedata/`、`gamedocs/` 等目录；内容哈希去重，源版本不可变。
+- 版本预览：文件树、摘要、diff、增量构建建议。
+- **上传即流转**（可关）：相对上一版本有变更时自动增量构建 → Lint / 别名治理 → 发布。
 
-### 2. 知识资产构建
-
-构建流水线：
+### 2. 知识构建流水线
 
 ```text
 convert → extract → tables → graph → viz
 ```
 
-- `extract` 阶段使用 AI SDK 6 兼容模型配置，支持 OpenAI-compatible / Anthropic / deterministic。
-- 构建产出知识资产包、wiki 组件、表依赖、图谱、证据记录和可信度信息。
-- 支持 scoped rebuild，单个组件修复时不必全量重建。
-- **单组件 / 图谱重建并发布修订**：在资产组件详情可对存在问题的组件「重建并发布修订」——源级 wiki 页 / 表说明页走来源级 scoped rebuild；知识图谱走阶段级重建（重跑抽取但只把图谱阶段组件合并回原包）。两者都作为当前发布的修订发布，未受影响的部分保持不动。
-- 标注样例与确定性覆盖会在后续构建中注入，降低重复人工处理。
+- `extract` 支持 OpenAI-compatible / Anthropic / deterministic。
+- 产出资产包、wiki / 表 / 图谱组件、证据与 trust。
+- Scoped rebuild：单组件修复不必全量重建；图谱可阶段级重建并作为 **修订发布**。
 
-### 3. OKF 发布
+### 3. OKF 发布（不可变快照）
 
-发布会导出不可变 OKF bundle，供 Agent 消费：
+发布导出冻结 OKF bundle（含 `search/index.json` 与稠密检索用的 `search/dense.json`）：
 
 ```text
 okf_bundle/
-  index.md
-  log.md
-  wiki/
-  graph/graph.json
-  tables/schemas.json
-  tables/aliases.json
-  search/index.json
+  index.md · log.md · wiki/ · graph/ · tables/ · search/
 ```
 
-- 已发布版本不可变。
-- current release 通过 release channel 指针切换。
-- 支持 revision：局部重建可以基于父发布 patch 变化组件，避免覆盖完整发布包。
-- MCP 默认读取当前项目的 current release。
+- Release channel 指向 current release；revision 继承父发布只 patch 变更组件。
+- 自动发布门禁读取**项目治理 Profile**（删除 / trust 下降 / 待审纠正 / 最低分等），不再硬编码。
 
-### 4. Knowledge Lint 自动治理
+### 4. 检索与权限
 
-发布后会生成统一健康检查报告，把以下问题合并成 Knowledge Lint：
+- **混合检索**：词项索引 + hashing dense 向量，RRF 融合后供 `kb_search`（契约向后兼容，结果带 `retrieval.mode`）。
+- **检索时 ACL**：按组件 `quality.visibility`（public / internal / restricted）与 Agent 角色过滤，而非事后裁剪。
+- 离线评测：`npm run eval:retrieval`（黄金集 hit@k，见 `evals/`）。
 
-- OKF 链接 / frontmatter / citation
-- 证据覆盖
-- graph
-- trust score
-- 表依赖
-- MCP 未解析查询和 Agent 反馈
+### 5. Knowledge Lint 与自愈合
 
-Lint issue 会进入可追踪治理队列：
+- 链接 / 证据 / 图谱 / trust / 表依赖 / MCP 反馈等统一进治理队列。
+- 可定位问题 → scoped rebuild；表名悬空边 → LLM 别名映射到真实 canonical 后全量 sync（有收敛保证，防死循环）。
+- 高频负反馈簇可 **晋升** 为 rebuild 候选任务；健康巡检覆盖「过期未复审」时间型问题。
 
-- 可定位到组件的问题会自动触发 scoped rebuild。
-- **表名解析类问题自动补别名修复**：`Data Dependencies 未解析到结构化表`、图谱 `configured_in` 悬空边，本质是（多为中文的）表名解析不到 canonical table，单纯重建修不好。系统会用 LLM 把未解析表名映射到**真实存在的** canonical 表名（映射不到真实表名就拒绝，不凭空造），写入持久化翻译表，再全量重建并自动发布；发布可回滚兜底。
-- 构建成功后治理项标记为 `completed`。
-- 构建失败后治理项标记为 `failed`，进入例外中心，可一键重试。
-- 无法安全自动处理的项标记为 `needs_human`，进入审核中心。
-- 自动发布会检查 Lint 治理状态；pending/running/failed/needs_human 未收敛时会给出明确跳过原因。
+### 6. 轻量知识运营台（飞轮）
 
-### 5. 轻量飞轮工作台
+- 一句话状态 + 一个主动作 + 例外中心（可软忽略、可恢复）。
+- 新鲜度 SLA（`maxAuditAgeDays`）与无证据归因审计可进入例外。
+- 纠正 / 别名写入前做冲突检测，避免多 Agent 互相覆盖。
 
-产品目标是让策划少看中间产物，只做必要的轻量管理：
+### 7. MCP / Agent 消费面
 
-- 首页展示当前项目状态、主动作和例外项。
-- 资料变更后可以一键同步、构建、治理、发布。
-- 审核中心只保留必须人工判断的任务。
-- **例外可软忽略**：例外收件箱中的项可填原因手动忽略——从收件箱隐藏但保留底层记录、留痕可审计、随时可恢复；若底层问题仍在则恢复后会重新出现。
-- 构建页和审核中心都能看到 Knowledge Lint 自动治理链路。
-- Agent 反馈会聚合成业务化问题簇，而不是裸 `cmp_pkg...` 技术 ID。
+| 入口 | 说明 |
+|------|------|
+| Streamable HTTP `/mcp` | JWT 保护；进程内按用户限流 |
+| `npm run mcp:stdio` | 本地联调；生产建议强制 service token |
 
-### 6. MCP / Agent 消费
+工具面覆盖查询、证据/trust、反馈、纠正、飞轮状态、归因提交、反馈簇、admin 渠道回点等。写路径不能直接改 published OKF / 切 channel。
 
-已发布知识通过 MCP 暴露，只读 current release。
+---
 
-支持两种 MCP 入口：
+## 快速开始
 
-- Streamable HTTP：`/mcp`
-- stdio：`npm run mcp:stdio`
+**要求**：Node.js 22+、Docker（推荐）或自备 PostgreSQL、npm。
 
-HTTP 示例：
+```bash
+cp .env.example .env
+# 必填：KH_JWT_SECRET、DATABASE_URL
+# 跑测试另需：KH_TEST_DATABASE_URL
+
+npm run db:up          # docker compose 起 PostgreSQL（默认主机 5432）
+npm install
+npm run dev            # 后端 http://0.0.0.0:4174
+npm run dev:web        # 前端 http://localhost:5174 （/api → 4174）
+```
+
+生产一体：
+
+```bash
+npm run build && npm start
+```
+
+### 演示账号
+
+| 用户 | 密码 | 角色 |
+|------|------|------|
+| `admin` | `adminpw` | admin |
+| `dev` | `devpw` | developer |
+| `viewer` | `viewpw` | viewer |
+
+### Windows 端口占用
+
+若本机已有 PostgreSQL 占用 **5432**，可建本地覆盖（已 gitignore）：
+
+```yaml
+# docker-compose.override.yml
+services:
+  postgres:
+    ports: !override
+      - "5544:5432"
+```
+
+并将 `.env` 中 `DATABASE_URL` / `KH_TEST_DATABASE_URL` 主机端口改为 `5544`。详见 [docs/QUICKSTART.md](docs/QUICKSTART.md)。
+
+---
+
+## 常用命令
+
+```bash
+npm run dev              # 后端热重载（tsx watch）
+npm run dev:web          # Vite 前端
+npm run build            # tsc + vite → dist/client
+npm start                # 生产入口（托管 API + SPA）
+npm run typecheck
+npm test                 # Vitest（真实 PostgreSQL + 每用例独立 schema）
+npm run eval:retrieval   # 检索黄金集离线评测
+npm run mcp:stdio
+npm run okf:scan
+npm run db:up | db:down | db:restore
+```
+
+单测示例：
+
+```bash
+npx vitest run tests/release-service.test.ts
+npx vitest run -t "honors governance"
+```
+
+---
+
+## MCP 接入
+
+HTTP（推荐）：
 
 ```json
 {
@@ -110,40 +180,23 @@ HTTP 示例：
 }
 ```
 
-多项目场景建议 Agent 工具参数显式传入：
+Web 端「MCP 连接」页可复制完整配置。多项目时：
 
-```json
-{
-  "projectId": "project_xxx"
-}
-```
+- Agent 侧设置 **`MCP_PROJECT_ID`**（注入每个 `kb_*` 参数），不要静默依赖 `default_project`。
+- 或不传 `projectId` 时使用 JWT 用户的 `currentProjectId`。
 
-如果 Agent 不传 `projectId`，服务端会使用 token 用户的当前 / 默认项目。别人使用时通常不会主动说明游戏项目，因此接入自己的 Agent 时应在系统配置里固定默认 `projectId`，不要依赖用户自然语言说明。
+与 design-agent-ts 联调要点：`MCP_ENABLED=true`、勿给已是 `kb_*` 的工具再加 `toolPrefix: "kb_"`、MCP 健康时默认禁用本地 wiki 双源。生产网关 / 限流 / outbox 见 [docs/mcp-production.md](docs/mcp-production.md)。
 
 ---
 
 ## 设计原则
 
-### 不可变 + 版本化
-
-- 原始 blob 不可变。
-- 资料版本不可变。
-- 构建产物不可变。
-- 发布快照不可变。
-
-名称、备注等元数据可修改；内容变化必须产生新版本。
-
-### 证据可追溯
-
-知识组件通过 `evidence_records`、OKF Citations、source refs 与源版本关联。Agent 返回知识时可以携带来源和可信度摘要。
-
-### 策略数据化
-
-质量门禁、策划立法规则、表名翻译 / alias、可信度策略都作为可维护配置存在，而不是散落在代码里。
-
-### 系统自动流转，人只处理不确定项
-
-构建后不再默认制造大量人工审核任务。系统优先 AI 自审、自动治理、自动发布；只有无法安全判断、自动治理失败、阻断发布或 Agent 高频负反馈时才让人介入。
+| 原则 | 含义 |
+|------|------|
+| 不可变 + 版本化 | blob / 资料版本 / 发布快照不可变；改内容必须新版本 |
+| 证据可追溯 | evidence、Citations、source refs；MCP 结果可带 trust / trace |
+| 策略数据化 | 质量门禁、立法规则、治理 Profile、别名表可配置 |
+| 人只处理不确定项 | 自动构建 / 治理 / 发布；例外与晋升才进人工 |
 
 ---
 
@@ -151,225 +204,62 @@ HTTP 示例：
 
 ```text
 src/server/
-  app.ts                         Fastify app，注册 API / MCP / tracing / automation
-  db.ts                          PostgreSQL 幂等迁移与 seed
-  routes/                        HTTP 路由层
-  services/
-    sourceBundleService.ts       资料库导入、预览、diff、build plan
-    kbBuilderService.ts          构建流水线编排
-    releaseService.ts            发布、revision、auto publish gate
-    knowledgeQueryService.ts     MCP kb_* 工具实现
-    lintRemediationService.ts    Knowledge Lint 治理队列与自动重试
-    flywheelService.ts           轻量工作台聚合
-    eventService.ts              事件总线 + knowledge_events
-    okf/                         OKF 导出、搜索索引、Lint
-    kbBuilder/                   convert / extract / tables / graph / viz
+  index.ts · app.ts · mcpStdio.ts · mcpTools.ts
+  config.ts · db.ts · db-adapter.ts · schemas.ts · types.ts
+  routes/          # HTTP（含 /mcp）
+  services/        # 业务：资料 / 构建 / 发布 / 飞轮 / 反馈 / Lint / 事件…
+    okf/           # 导出、词项+dense 检索、Lint
+    kbBuilder/     # 五阶段流水线
+  middleware/
 
-src/client/
-  api/                           fetch 封装与类型
-  pages/                         Sources / Builder / Assets / Review / Release / AgentFeedback
-  components/                    通用 UI 与治理链路组件
+src/client/src/    # React 19 + React Query SPA
+tests/             # Vitest + app.inject + schema 隔离
+evals/             # 检索黄金集
 ```
 
-后端分层遵循：
+分层：`Route → Service → DB adapter`。事件：`knowledge_events` + 进程内总线；多实例可切 `KH_EVENT_BUS_MODE=outbox`。
 
-```text
-Route → Service → DB adapter
-```
-
-路由不直接拼业务 SQL；新增读模型优先扩展对应 service。
+核心表见迁移 `db.ts`：`projects`、`source_*`、`asset_*`、`releases`、`knowledge_events` / `knowledge_event_outbox`、`knowledge_lint_remediations`、`exception_dismissals`、`table_aliases`、`attribution_audits` 等。
 
 ---
 
-## 数据模型概览
+## 部署与运维
 
-核心表：
+生产必填：`KH_JWT_SECRET`、`DATABASE_URL`；compose 场景注意 `POSTGRES_PASSWORD`。
 
-```text
-projects
-users
-source_bundles
-source_bundle_versions
-source_files
-source_blobs
-knowledge_build_runs
-asset_packages
-asset_components
-evidence_records
-review_tasks
-annotation_examples
-rule_dismissals
-source_corrections
-releases
-release_channels
-agent_events
-mcp_audit
-knowledge_events
-knowledge_lint_remediations
-exception_dismissals
-quality_gate_profiles
-knowledge_rule_profiles
-table_aliases
-```
+常用可选：
 
-多项目隔离边界是 `project_id`。新游戏项目拥有独立资料库、资产、构建、发布、反馈、审计与治理记录；账号和角色暂时是全局的。
+| 变量 | 作用 |
+|------|------|
+| `KH_PUBLIC_BASE_URL` | 公网 MCP 配置基址 |
+| `KH_AUTO_BUILD_ON_UPLOAD` | 上传即构建 |
+| `KH_AUTO_PUBLISH_REVISIONS` | 反馈/修订自动发布（可被 Profile 覆盖） |
+| `KH_MCP_RATE_LIMIT_MAX` | `/mcp` 进程内限流 |
+| `KH_MCP_STDIO_REQUIRE_TOKEN` | 生产 stdio 强制令牌 |
+| `KH_EVENT_BUS_MODE` | `inline` \| `outbox` |
+| `KH_UPLOAD_MAX_*` | 大包上传上限（需同步调反向代理） |
+
+上传大包时同时检查应用 multipart 与 Nginx `client_max_body_size`。无 TLS 时 MCP 使用 `http://`。
 
 ---
 
-## 快速开始
+## 推荐流程
 
-要求：
+**首建**：建项目 → 上传资料 → 一键同步发布 → 复制 MCP 配置 → Agent 查询并看证据 / trust。
 
-- Node.js 22+
-- PostgreSQL
-- npm
-
-复制环境变量：
-
-```bash
-cp .env.example .env
-```
-
-至少配置：
-
-```bash
-KH_JWT_SECRET=...
-DATABASE_URL=postgres://...
-```
-
-测试还需要：
-
-```bash
-KH_TEST_DATABASE_URL=postgres://...
-```
-
-启动本地数据库：
-
-```bash
-npm run db:up
-```
-
-安装依赖并启动：
-
-```bash
-npm install
-npm run dev
-```
-
-前端开发模式：
-
-```bash
-npm run dev:web
-```
-
-生产构建：
-
-```bash
-npm run build
-npm start
-```
-
-默认端口是 `4174`。
-
-演示账号：
-
-| 用户 | 密码 | 角色 |
-|---|---|---|
-| `admin` | `adminpw` | admin |
-| `dev` | `devpw` | developer |
-| `viewer` | `viewpw` | viewer |
-
----
-
-## 常用命令
-
-```bash
-npm run dev          # 后端热重载
-npm run dev:web      # Vite 前端，默认 5174，代理 /api
-npm run build        # typecheck + vite build
-npm start            # 生产模式启动
-npm run typecheck    # TypeScript 检查
-npm test             # Vitest
-npm run mcp:stdio    # MCP stdio server
-npm run okf:scan     # OKF 一致性扫描
-npm run db:up        # docker compose 启 PostgreSQL
-npm run db:down      # 停 PostgreSQL
-npm run db:restore   # 恢复 seed 数据
-```
-
-关键测试示例：
-
-```bash
-npx vitest run tests/knowledge-lint.test.ts
-npx vitest run tests/flywheel-governance.test.ts
-npx vitest run tests/release-service.test.ts
-```
-
----
-
-## 部署注意事项
-
-### 环境变量
-
-生产必须配置：
-
-```bash
-KH_JWT_SECRET=...
-DATABASE_URL=...
-POSTGRES_PASSWORD=...
-```
-
-如果用 docker compose，`.env` 中的 `POSTGRES_PASSWORD` 不能缺失。
-
-### 上传限制
-
-云服务器上传大型资料包时，可能遇到：
-
-- `request file too large`
-- `reach parts limit`
-
-需要同时检查：
-
-- 应用侧 multipart 限制：`KH_UPLOAD_MAX_FILE_BYTES`、`KH_UPLOAD_MAX_FILES`、`KH_UPLOAD_MAX_FIELDS`、`KH_UPLOAD_MAX_PARTS`
-- 反向代理限制：例如 Nginx `client_max_body_size`
-- 上传包目录结构：服务端会识别 `knowledge/`、`gamedata/`、`gamedocs/`
-
-### HTTP / HTTPS
-
-如果服务器只通过 IP 暴露且没有 TLS 证书，MCP URL 使用 `http://<ip>:<port>/mcp`。只有配置了域名和证书时才使用 `https://`。
-
----
-
-## 推荐使用流程
-
-### 初次建立知识库
-
-1. 创建或选择项目。
-2. 上传资料目录。
-3. 在资料库页面预览文件树和变更。
-4. 点击一键构建并发布。
-5. 在 MCP 连接页复制 Agent 配置。
-6. 用 Agent 查询知识，观察来源和可信度。
-
-### 日常资料更新
-
-1. 策划上传新表或新文档。
-2. 系统检测到相对上一版本有变更，自动走增量构建 → 治理 → 发布，进度条实时可见。
-3. Knowledge Lint 自动治理可定位问题；存在问题的单个组件（含知识图谱）可「重建并发布修订」。
-4. Agent 反馈持续回流。
-5. 只处理例外中心中确实需要人工判断的项，其余可软忽略（留痕可恢复）。
+**日常**：上传变更自动流转；Lint / 别名自愈；单组件「重建并发布修订」；只处理例外中心；反馈簇可晋升重建。
 
 ---
 
 ## 权限
 
-当前账号角色是全局角色：
+全局角色（第一版未做项目级成员）：
 
-- `admin`：发布、删除、配置、项目管理等高权限操作。
-- `developer`：导入、构建、反馈处理等日常维护。
-- `viewer`：只读查看，不能修改知识库。
+- **admin**：发布、删除、治理 Profile、渠道回点等
+- **developer**：导入、构建、日常维护
+- **viewer**：只读
 
-第一版未做项目级成员权限；多项目先保证数据隔离。
+MCP 检索可见性另受组件 `visibility` 约束。
 
 ---
 
