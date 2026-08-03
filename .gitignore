@@ -24,3 +24,7 @@ backups/
 # 本机 docker compose 端口覆盖（如 5432 冲突时映射 5544）
 docker-compose.override.yml
 
+# 本地联调产物（勿提交）
+.mcp-token.local
+.workbuddy/
+
