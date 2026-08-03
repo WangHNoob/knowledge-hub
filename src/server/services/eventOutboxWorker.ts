@@ -48,8 +48,7 @@ export function registerEventOutboxWorker(input: {
 }
 
 async function drainOutbox(db: DatabaseHandle, batchSize: number): Promise<number> {
-  await db.adapter.query("BEGIN");
-  try {
+  return db.adapter.transaction(async () => {
     const { rows } = await db.adapter.query(
       `SELECT outbox_id, event_id, event_type, entity_type, entity_id, payload_json, created_at
        FROM knowledge_event_outbox
@@ -74,12 +73,8 @@ async function drainOutbox(db: DatabaseHandle, batchSize: number): Promise<numbe
         [String(row.outbox_id), new Date().toISOString()],
       );
     }
-    await db.adapter.query("COMMIT");
     return rows.length;
-  } catch (error) {
-    await db.adapter.query("ROLLBACK").catch(() => undefined);
-    throw error;
-  }
+  });
 }
 
 function readPayload(value: unknown): Record<string, unknown> {

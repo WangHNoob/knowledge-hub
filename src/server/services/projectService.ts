@@ -36,8 +36,8 @@ export class ProjectService {
     const now = new Date().toISOString();
     const projectId = `proj_${slug(input.name)}_${nanoid(6)}`;
     const bundleId = `src_${slug(projectId)}_default`;
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
+
       await this.adapter.query(
         `INSERT INTO projects (project_id, name, description, status, created_by, created_at, updated_at)
          VALUES ($1,$2,$3,'active',$4,$5,$5)`,
@@ -48,11 +48,7 @@ export class ProjectService {
          VALUES ($1,$2,$3,$4,$5)`,
         [bundleId, projectId, "默认资料库", "gamedata 表格 + gamedocs 文档统一版本化", now],
       );
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
     return {
       project: (await this.getProject(projectId))!,
       bundle: (await this.getDefaultBundle(projectId))!,
