@@ -303,8 +303,8 @@ export class ReleaseService {
       });
       const manifestHash = hashManifest(manifest);
 
-      await this.adapter.query("BEGIN");
-      try {
+      await this.adapter.transaction(async () => {
+
         await this.adapter.query(
           `UPDATE releases
            SET status = $2,
@@ -326,11 +326,7 @@ export class ReleaseService {
         );
         await this.updateComponentQualities(trustedComponents);
         await this.pointChannelToRelease(release.projectId, releaseId, publishedBy);
-        await this.adapter.query("COMMIT");
-      } catch (error) {
-        await this.adapter.query("ROLLBACK");
-        throw error;
-      }
+    });
 
       const published = await this.getRelease(releaseId);
       if (!published) throw new Error(`Unknown release after publish: ${releaseId}`);
@@ -437,14 +433,10 @@ export class ReleaseService {
       const current = await this.getCurrent(release.projectId);
       if (current?.releaseId === releaseId) throw new Error("Cannot delete the current Agent release. Roll back to another release first.");
 
-      await this.adapter.query("BEGIN");
-      try {
+      await this.adapter.transaction(async () => {
+
         await this.adapter.query("DELETE FROM releases WHERE release_id = $1", [releaseId]);
-        await this.adapter.query("COMMIT");
-      } catch (error) {
-        await this.adapter.query("ROLLBACK");
-        throw error;
-      }
+    });
 
       const releaseDir = this.releaseDir(releaseId);
       if (existsSync(releaseDir)) rmSync(releaseDir, { recursive: true, force: true });
@@ -543,22 +535,18 @@ export class ReleaseService {
     only?: string | null;
   }): Promise<ProposedReleaseRevision> {
     if (!input.only) return { release: null, created: false, reason: "not_scoped_build" };
-    await this.adapter.query("BEGIN");
-    try {
+    return this.adapter.transaction(async () => {
       await this.adapter.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`release_revision:${input.runId}`]);
       const pkg = (await this.loadPackages([input.packageId]))[0];
       if (!pkg) {
-        await this.adapter.query("COMMIT");
         return { release: null, created: false, reason: "unknown_package" };
       }
       const current = await this.getCurrent(pkg.projectId);
       if (!current) {
-        await this.adapter.query("COMMIT");
         return { release: null, created: false, reason: "no_current_release" };
       }
       const duplicate = await this.findDraftRevision(current.releaseId, input.packageId);
       if (duplicate) {
-        await this.adapter.query("COMMIT");
         return { release: duplicate, created: false, reason: "duplicate_draft" };
       }
 
@@ -582,12 +570,8 @@ export class ReleaseService {
           only: input.only ?? "",
         },
       });
-      await this.adapter.query("COMMIT");
       return { release, created: true, reason: "created" };
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
   }
 
   private async findOpenBlockingTasksForComponents(componentIds: string[]): Promise<Record<string, unknown>[]> {

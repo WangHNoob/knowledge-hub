@@ -843,8 +843,7 @@ export class KnowledgeService {
    */
   async rollbackAutoFix(taskId: string, actor: string): Promise<ReviewTask> {
     const now = new Date().toISOString();
-    await this.adapter.query("BEGIN");
-    try {
+    const result = await this.adapter.transaction(async () => {
       const { rows: taskRows } = await this.adapter.query(
         "SELECT * FROM review_tasks WHERE task_id = $1 FOR UPDATE",
         [taskId]
@@ -879,42 +878,46 @@ export class KnowledgeService {
          RETURNING *`,
         [taskId, `rolled back auto-fix by ${actor} at ${now}`]
       );
-      await this.adapter.query("COMMIT");
+      return {
+        task: mapReviewTask(updated[0]),
+        projectId,
+        packageId: task.packageId,
+        componentId: task.componentId,
+        retiredCorrectionIds: retiredCorrections.map((row) => String(row.correction_id ?? "")).filter(Boolean),
+      };
+    });
+
+    await emitKnowledgeEvent(this.db, {
+      eventType: "annotation.review_resolved",
+      entityType: "review_task",
+      entityId: taskId,
+      payload: {
+        projectId: result.projectId,
+        action: "auto_fix_rollback",
+        resolvedBy: actor,
+        taskId,
+        componentId: result.componentId,
+        packageId: result.packageId,
+        retiredCorrectionIds: result.retiredCorrectionIds,
+      }
+    });
+    for (const correctionId of result.retiredCorrectionIds) {
       await emitKnowledgeEvent(this.db, {
-        eventType: "annotation.review_resolved",
-        entityType: "review_task",
-        entityId: taskId,
+        eventType: "source_correction.retired",
+        entityType: "source_correction",
+        entityId: correctionId,
         payload: {
-          projectId,
-          action: "auto_fix_rollback",
-          resolvedBy: actor,
+          projectId: result.projectId,
+          correctionId,
           taskId,
-          componentId: task.componentId,
-          packageId: task.packageId,
-          retiredCorrectionIds: retiredCorrections.map((row) => String(row.correction_id ?? "")).filter(Boolean)
+          componentId: result.componentId,
+          packageId: result.packageId,
+          actor,
+          reason: "auto_fix_rollback"
         }
       });
-      for (const row of retiredCorrections) {
-        await emitKnowledgeEvent(this.db, {
-          eventType: "source_correction.retired",
-          entityType: "source_correction",
-          entityId: String(row.correction_id ?? ""),
-          payload: {
-            projectId,
-            correctionId: String(row.correction_id ?? ""),
-            taskId,
-            componentId: task.componentId,
-            packageId: task.packageId,
-            actor,
-            reason: "auto_fix_rollback"
-          }
-        });
-      }
-      return mapReviewTask(updated[0]);
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
     }
+    return result.task;
   }
 
   async annotateReviewTask(input: {
@@ -958,8 +961,7 @@ export class KnowledgeService {
     const exampleId = `ann_${slug(task.componentId)}_${nanoid(6)}`;
     let correctionId = "";
 
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
       await this.adapter.query(
         `INSERT INTO annotation_examples
           (example_id, package_id, component_id, task_id, rule_id, apply_mode, page_type, context_hash, context_snapshot, correct_value, created_by, created_at, auto_generated, llm_analysis)
@@ -1039,11 +1041,7 @@ export class KnowledgeService {
           input.llmAnalysis ? JSON.stringify(input.llmAnalysis) : null,
         ],
       );
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
 
     const updated = (await this.listReviewTasks({})).find((item) => item.taskId === input.taskId);
     if (!updated) throw new Error(`Unknown review task after annotation: ${input.taskId}`);
@@ -1150,8 +1148,8 @@ export class KnowledgeService {
     };
     let correctionId = "";
 
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
+
       if (action === "promote_annotation_override") {
         await this.adapter.query(
           "UPDATE annotation_examples SET apply_mode = 'override', active = true WHERE example_id = $1",
@@ -1194,11 +1192,7 @@ export class KnowledgeService {
           JSON.stringify(annotationValue),
         ],
       );
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
 
     const [updated, after] = await Promise.all([
       this.listReviewTasks({}),

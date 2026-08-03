@@ -44,8 +44,7 @@ export async function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: s
   ];
 
   // 事务：先插包，再插组件
-  try {
-    await adapter.query("BEGIN");
+  await adapter.transaction(async () => {
     await adapter.query(
       `INSERT INTO asset_packages
         (package_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
@@ -75,11 +74,7 @@ export async function importLegacyAsDraftPackage(db: DatabaseHandle, _dataDir: s
         ]
       );
     }
-    await adapter.query("COMMIT");
-  } catch (error) {
-    await adapter.query("ROLLBACK");
-    throw error;
-  }
+  });
 
   const { rows: pkgRows } = await adapter.query("SELECT * FROM asset_packages WHERE package_id = $1", [scan.recommendedPackageId]);
   return {

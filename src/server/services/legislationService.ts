@@ -33,8 +33,8 @@ export class LegislationService {
     const hash = hashRuleConfig(config);
     const now = new Date().toISOString();
 
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
+
       if (input.activate) {
         await this.adapter.query("UPDATE knowledge_rule_profiles SET active = false WHERE active = true");
       }
@@ -43,11 +43,7 @@ export class LegislationService {
          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [profileId, input.name, Boolean(input.activate), hash, JSON.stringify(config), input.createdBy, now],
       );
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
 
     const profile = await this.getProfile(profileId);
     if (!profile) throw new Error("Failed to create knowledge rule profile.");
@@ -58,18 +54,14 @@ export class LegislationService {
     const profile = await this.getProfile(profileId);
     if (!profile) throw new Error(`Unknown knowledge rule profile: ${profileId}`);
     const now = new Date().toISOString();
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
+
       await this.adapter.query("UPDATE knowledge_rule_profiles SET active = false WHERE active = true");
       await this.adapter.query(
         "UPDATE knowledge_rule_profiles SET active = true, updated_at = $2, created_by = COALESCE(NULLIF(created_by, ''), $3) WHERE profile_id = $1",
         [profileId, now, activatedBy],
       );
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
     return this.getActiveProfile();
   }
 

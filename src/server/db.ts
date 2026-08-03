@@ -511,6 +511,12 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_source_bundles_project ON ${p}source_bundles(project_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_asset_packages_project ON ${p}asset_packages(project_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_build_runs_project ON ${p}knowledge_build_runs(project_id, started_at DESC);
+    -- 同项目同资料版本：飞轮类（非 scoped rebuild）同时只允许一条 running，防止双构建并发 persist。
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_build_runs_one_running_flywheel
+      ON ${p}knowledge_build_runs (project_id, source_version_id)
+      WHERE status = 'running'
+        AND COALESCE(config_json->>'mergeIntoPackageId', '') = ''
+        AND COALESCE(config_json->>'rebuildTaskId', '') = '';
     CREATE INDEX IF NOT EXISTS idx_releases_project ON ${p}releases(project_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_agent_events_project ON ${p}agent_events(project_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_mcp_audit_project ON ${p}mcp_audit(project_id, created_at DESC);

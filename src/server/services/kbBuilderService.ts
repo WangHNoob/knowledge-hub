@@ -110,7 +110,37 @@ export class KbBuilderPipelineService {
   }
 
   async startBuild(options: BuildPipelineOptions): Promise<KnowledgeBuildRun> {
-    const context = await this.createRun(options);
+    const projectId = options.projectId ?? "default_project";
+    // 飞轮全量/增量会并发触发两次（API autoSync + source.version_imported 自动化）。
+    // 同项目同资料版本只允许一条非 scoped running 构建，避免双 persist 打穿事务。
+    if (!options.force && !options.mergeIntoPackageId && !options.rebuildTaskId) {
+      const existing = await this.findRunningFlywheelBuild(projectId, options.versionId);
+      if (existing) {
+        await this.diagnostics?.write({
+          traceId: options.traceId,
+          level: "info",
+          category: "kb_build",
+          message: "reuse running build for same source version",
+          status: "completed",
+          actor: options.requestedBy,
+          entityType: "build_run",
+          entityId: existing.runId,
+          runId: existing.runId,
+          context: { projectId, sourceVersionId: options.versionId },
+        });
+        return existing;
+      }
+    }
+
+    let context: BuildRunContext;
+    try {
+      context = await this.createRun(options);
+    } catch (error) {
+      const reused = await this.reuseIfUniqueRunningConflict(error, projectId, options.versionId, options);
+      if (reused) return reused;
+      throw error;
+    }
+
     void this.executeRun(context).catch((error) => {
       void this.diagnostics?.write({
         traceId: context.options.traceId,
@@ -719,8 +749,8 @@ export class KbBuilderPipelineService {
 
   async updateActiveQualityProfile(config: QualityGateConfig, user: string): Promise<QualityGateProfile> {
     const now = new Date().toISOString();
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
+
       await this.adapter.query("UPDATE quality_gate_profiles SET active = false WHERE active = true");
       await this.adapter.query(
         `INSERT INTO quality_gate_profiles (profile_id, name, active, config_json, created_by, updated_at)
@@ -728,11 +758,7 @@ export class KbBuilderPipelineService {
          ON CONFLICT (profile_id) DO UPDATE SET active = EXCLUDED.active, config_json = EXCLUDED.config_json, created_by = EXCLUDED.created_by, updated_at = EXCLUDED.updated_at`,
         ["default", "默认知识质量门禁", true, JSON.stringify(config), user, now],
       );
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
     return this.getActiveQualityProfile();
   }
 
@@ -865,8 +891,8 @@ export class KbBuilderPipelineService {
       flywheel: flywheelSummary,
     };
 
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
+
       await this.adapter.query(
         `INSERT INTO asset_packages
           (package_id, project_id, name, kind, status, description, created_by_run_id, source_version_ids, legacy_paths, quality_summary, created_at)
@@ -928,11 +954,7 @@ export class KbBuilderPipelineService {
         componentRows.push({ componentId, artifact, sourceRefs: componentSourceRefs });
       }
       await this.insertAutomaticEvidence(packageId, versionId, componentRows, now);
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
 
     return this.requirePackage(packageId);
   }
@@ -999,8 +1021,8 @@ export class KbBuilderPipelineService {
       flywheel: flywheelSummary,
     };
 
-    await this.adapter.query("BEGIN");
-    try {
+    await this.adapter.transaction(async () => {
+
       await this.adapter.query(
         `UPDATE asset_packages
          SET quality_summary = $2
@@ -1064,11 +1086,7 @@ export class KbBuilderPipelineService {
         componentRows.push({ componentId, artifact, sourceRefs: componentSourceRefs });
       }
       await this.insertAutomaticEvidence(packageId, versionId, componentRows, now);
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
 
     return this.requirePackage(packageId);
   }
@@ -1303,6 +1321,34 @@ export class KbBuilderPipelineService {
       "UPDATE knowledge_build_runs SET config_json = $2 WHERE run_id = $1",
       [runId, JSON.stringify({ ...run.config, flywheel: flywheelSummary })],
     );
+  }
+
+  private async findRunningFlywheelBuild(projectId: string, versionId: string): Promise<KnowledgeBuildRun | null> {
+    const { rows } = await this.adapter.query(
+      `SELECT *
+       FROM knowledge_build_runs
+       WHERE project_id = $1
+         AND source_version_id = $2
+         AND status = 'running'
+         AND COALESCE(config_json->>'mergeIntoPackageId', '') = ''
+         AND COALESCE(config_json->>'rebuildTaskId', '') = ''
+       ORDER BY started_at ASC
+       LIMIT 1`,
+      [projectId, versionId],
+    );
+    return rows.length ? mapRun(rows[0]) : null;
+  }
+
+  private async reuseIfUniqueRunningConflict(
+    error: unknown,
+    projectId: string,
+    versionId: string,
+    options: BuildPipelineOptions,
+  ): Promise<KnowledgeBuildRun | null> {
+    if (options.mergeIntoPackageId || options.rebuildTaskId || options.force) return null;
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/idx_build_runs_one_running_flywheel|duplicate key value/i.test(message)) return null;
+    return this.findRunningFlywheelBuild(projectId, versionId);
   }
 
   private async requireRun(runId: string): Promise<KnowledgeBuildRun> {

@@ -208,9 +208,7 @@ export class SourceBundleService {
     let newBlobCount = 0;
     const driftCandidates: Array<{ logicalPath: string; previousHash: string; currentHash: string; changeKind: "modified" | "removed" }> = [];
 
-    try {
-      await this.adapter.query("BEGIN");
-
+    await this.adapter.transaction(async () => {
       const fileInserts: Array<{ logicalPath: string; category: string; contentHash: string; byteSize: number }> = [];
       for (const file of entries) {
         const { contentHash, byteSize, isNew } = await ensureBlob(this.adapter, this.dataDir, file.absolutePath);
@@ -268,12 +266,7 @@ export class SourceBundleService {
         now: createdAt,
         changes: driftCandidates,
       });
-
-      await this.adapter.query("COMMIT");
-    } catch (error) {
-      await this.adapter.query("ROLLBACK");
-      throw error;
-    }
+    });
 
     const version = (await this.getVersion(versionId))!;
     const changes = await this.diff(versionId);
