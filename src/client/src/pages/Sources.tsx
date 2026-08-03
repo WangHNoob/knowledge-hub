@@ -26,12 +26,14 @@ import { InlineEditor } from "../components/InlineEditor";
 import { LocalFileBrowser } from "../components/LocalFileBrowser";
 import { formatBytes, formatTime, kindLabel } from "../utils/format";
 import { useProject } from "../ui/projectContext";
+import { useUiMode } from "../ui/uiMode";
 
 type SourceTab = "upload" | "server" | "preview" | "history";
 
 export function Sources() {
   const queryClient = useQueryClient();
   const { currentProjectId, currentProject } = useProject();
+  const { isSimple } = useUiMode();
   const [tab, setTab] = useState<SourceTab>("upload");
   const [rootPath, setRootPath] = useState("");
   const [note, setNote] = useState("");
@@ -127,17 +129,22 @@ export function Sources() {
     await queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
   };
   const versionCount = (versions.data ?? []).length;
-  const tabs: ReadonlyArray<TabItem<SourceTab>> = [
-    { id: "upload", label: "上传导入", icon: UploadCloud },
-    { id: "server", label: "服务器导入", icon: Server },
-    { id: "preview", label: "资料预览", icon: GitBranch },
-    { id: "history", label: "历史版本", icon: History, count: versionCount }
-  ];
+  const tabs: ReadonlyArray<TabItem<SourceTab>> = isSimple
+    ? [
+        { id: "upload", label: "上传导入", icon: UploadCloud },
+        { id: "history", label: "历史版本", icon: History, count: versionCount },
+      ]
+    : [
+        { id: "upload", label: "上传导入", icon: UploadCloud },
+        { id: "server", label: "服务器导入", icon: Server },
+        { id: "preview", label: "资料预览", icon: GitBranch },
+        { id: "history", label: "历史版本", icon: History, count: versionCount },
+      ];
 
   return (
     <Page
-      title="资料库"
-      subtitle="批量导入 gamedata/ 与 gamedocs/，按内容哈希去重并按时间生成版本。"
+      title={isSimple ? "上传资料" : "资料库"}
+      subtitle={isSimple ? "上传文档或配表作为兜底导入；日常请优先走 SVN 同步。" : "批量导入 gamedata/ 与 gamedocs/，按内容哈希去重并按时间生成版本。"}
     >
       <p className="context-line">当前项目：{currentProject?.name ?? currentProjectId}</p>
       <Tabs items={tabs} active={tab} onChange={setTab} />

@@ -1,5 +1,7 @@
 export * from "./types";
 export { getToken, setToken, currentRole } from "./http";
+export { runSvnSync } from "./ops";
+export type { SvnSyncResult } from "./ops";
 export { login } from "./auth";
 export { createProject, listProjects, selectProject, updateProject } from "./projects";
 export { getDashboard, getFlywheelWorkbench } from "./dashboard";

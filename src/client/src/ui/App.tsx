@@ -10,7 +10,7 @@ import {
   Search,
   SearchCheck
 } from "lucide-react";
-import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useMemo, useState } from "react";
+import { lazy, startTransition, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { createProject, getToken, listProjects, searchAll, selectProject, setToken } from "../api";
@@ -19,6 +19,7 @@ import { LoginScreen } from "../pages/Login";
 import { useDebouncedValue } from "../utils/react";
 import { NavProvider, useNav, type NavParams, type View } from "./navigation";
 import { ProjectProvider, useProject } from "./projectContext";
+import { useUiMode } from "./uiMode";
 
 const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ default: module.Dashboard }));
 const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
@@ -49,7 +50,7 @@ const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   system: loadSystem
 };
 
-const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
+const NAV_FULL: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "飞轮总览", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
   { id: "rules", label: "规则治理", icon: ScrollText },
@@ -60,11 +61,19 @@ const NAV: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "system", label: "系统", icon: HardDrive },
 ];
 
+const NAV_SIMPLE: Array<{ id: View; label: string; icon: typeof Activity }> = [
+  { id: "dashboard", label: "工作台", icon: Activity },
+  { id: "sources", label: "上传资料", icon: Database },
+  { id: "review", label: "待我处理", icon: CheckCircle2 },
+  { id: "assets", label: "浏览知识", icon: Boxes },
+];
+
 export function App() {
   const [token, updateToken] = useState(getToken());
   const [view, setView] = useState<View>("dashboard");
   const [navParams, setNavParams] = useState<NavParams>({});
   const queryClient = useQueryClient();
+  const ui = useUiMode();
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: listProjects,
@@ -91,6 +100,13 @@ export function App() {
     });
   }, []);
   const navValue = useMemo(() => ({ navigate, params: navParams }), [navigate, navParams]);
+  const navItems = ui.isSimple ? NAV_SIMPLE : NAV_FULL;
+
+  useEffect(() => {
+    if (!ui.isSimple) return;
+    const allowed = new Set(NAV_SIMPLE.map((item) => item.id));
+    if (!allowed.has(view)) setView("dashboard");
+  }, [ui.isSimple, view]);
 
   if (!token) {
     return <LoginScreen onLogin={(next) => {
@@ -122,12 +138,12 @@ export function App() {
             <div className="brand-mark">KH</div>
             <div>
               <strong>Knowledge Hub</strong>
-              <span>资产飞轮管理台</span>
+              <span>{ui.brandSubtitle}</span>
             </div>
           </div>
           <ProjectSwitcher />
           <nav>
-            {NAV.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -143,6 +159,11 @@ export function App() {
               );
             })}
           </nav>
+          {ui.canToggleFull && (
+            <button type="button" className="logout" onClick={ui.toggleFullMode} title="仅管理员">
+              {ui.isSimple ? "切换完整模式" : "切回简单模式"}
+            </button>
+          )}
           <button
             className="logout"
             onClick={() => {

@@ -8,6 +8,7 @@ import {
   getFlywheelStatus,
   listDismissedExceptions,
   restoreException,
+  runSvnSync,
   stopFlywheelBuilds,
   syncFlywheel,
   type DismissedException,
@@ -21,6 +22,7 @@ import { Badge, ErrorState, Loading, Metric, Page, TechRef } from "../components
 import { useNav } from "../ui/navigation";
 import type { NavParams, View } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
+import { useUiMode } from "../ui/uiMode";
 import { formatCounts, formatPercent, formatTime } from "../utils/format";
 
 const STATE_TONE: Record<FlywheelStatus["state"], "hot" | "warn" | "ok"> = {
@@ -36,6 +38,7 @@ export function Dashboard() {
   const { navigate } = useNav();
   const queryClient = useQueryClient();
   const { currentProjectId, currentProject } = useProject();
+  const { isSimple, svnSyncEnabled } = useUiMode();
   const exceptionsRef = useRef<HTMLElement | null>(null);
 
   const dashboard = useQuery({ queryKey: ["dashboard", currentProjectId], queryFn: () => getDashboard(currentProjectId) });
@@ -47,6 +50,14 @@ export function Dashboard() {
 
   const syncMutation = useMutation({
     mutationFn: () => syncFlywheel(currentProjectId),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard", currentProjectId] });
+    },
+  });
+
+  const svnSyncMutation = useMutation({
+    mutationFn: () => runSvnSync({ projectId: currentProjectId }),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["flywheel", "status", currentProjectId] });
       void queryClient.invalidateQueries({ queryKey: ["dashboard", currentProjectId] });
@@ -118,16 +129,20 @@ export function Dashboard() {
     [navigate, syncMutation],
   );
 
-  if (statusQuery.isLoading || dashboard.isLoading) return <Loading title="正在整理知识运营台" />;
+  if (statusQuery.isLoading || dashboard.isLoading) return <Loading title={isSimple ? "正在加载工作台" : "正在整理知识运营台"} />;
   if (statusQuery.error || !status) return <ErrorState error={statusQuery.error} />;
 
   const data = dashboard.data;
-  const isSyncing = syncMutation.isPending || status.state === "building";
+  const isSyncing = syncMutation.isPending || svnSyncMutation.isPending || status.state === "building";
 
   return (
     <Page
-      title="知识运营台"
-      subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。构建、治理、发布尽量自动完成，你只处理少量例外。`}
+      title={isSimple ? "工作台" : "知识运营台"}
+      subtitle={
+        isSimple
+          ? `当前项目：${currentProject?.name ?? currentProjectId}。从 SVN 同步资料并发布；有问题到「待我处理」。`
+          : `当前项目：${currentProject?.name ?? currentProjectId}。构建、治理、发布尽量自动完成，你只处理少量例外。`
+      }
     >
       <section className={`flywheel-command ${STATE_TONE[status.state]}`}>
         <div>
@@ -137,9 +152,20 @@ export function Dashboard() {
           {syncMutation.data?.message && (
             <p className="command-note">{syncMutation.data.message}</p>
           )}
-          {syncMutation.error && (
+          {svnSyncMutation.data?.result?.ok && (
+            <p className="command-note">
+              SVN 同步完成
+              {svnSyncMutation.data.result.changedFileCount != null
+                ? `（变更 ${svnSyncMutation.data.result.changedFileCount} 个文件）`
+                : ""}
+              {svnSyncMutation.data.result.versionId ? ` · ${svnSyncMutation.data.result.versionId}` : ""}
+            </p>
+          )}
+          {(syncMutation.error || svnSyncMutation.error) && (
             <p className="command-note error">
-              {syncMutation.error instanceof Error ? syncMutation.error.message : "同步失败，请重试。"}
+              {(syncMutation.error || svnSyncMutation.error) instanceof Error
+                ? (syncMutation.error || svnSyncMutation.error)!.message
+                : "同步失败，请重试。"}
             </p>
           )}
           {stopMutation.data && (
@@ -147,15 +173,28 @@ export function Dashboard() {
           )}
         </div>
         <div className="command-actions">
-          <button
-            className="primary-action"
-            type="button"
-            disabled={status.primaryAction.action === "sync_and_publish" && isSyncing}
-            onClick={() => runPrimaryAction(status.primaryAction)}
-          >
-            {status.primaryAction.action === "sync_and_publish" && isSyncing ? "正在同步…" : status.primaryAction.label}
-            {status.primaryAction.action === "sync_and_publish" ? <RefreshCw size={16} /> : <ArrowRight size={16} />}
-          </button>
+          {svnSyncEnabled && (
+            <button
+              className="primary-action"
+              type="button"
+              disabled={isSyncing}
+              onClick={() => svnSyncMutation.mutate()}
+            >
+              {svnSyncMutation.isPending ? "正在从 SVN 同步…" : "从 SVN 同步到知识库"}
+              <RefreshCw size={16} />
+            </button>
+          )}
+          {!isSimple && (
+            <button
+              className="primary-action"
+              type="button"
+              disabled={status.primaryAction.action === "sync_and_publish" && isSyncing}
+              onClick={() => runPrimaryAction(status.primaryAction)}
+            >
+              {status.primaryAction.action === "sync_and_publish" && isSyncing ? "正在同步…" : status.primaryAction.label}
+              {status.primaryAction.action === "sync_and_publish" ? <RefreshCw size={16} /> : <ArrowRight size={16} />}
+            </button>
+          )}
           {status.metrics.runningBuilds > 0 || isSyncing ? (
             <button
               className="secondary-action danger"
@@ -172,15 +211,19 @@ export function Dashboard() {
       </section>
 
       <div className="metrics workbench-metrics">
-        <Metric label="待处理例外" value={status.metrics.pendingExceptions} hint="必须人工判断的问题" tone={status.metrics.pendingExceptions ? "hot" : "ok"} />
+        <Metric label="待处理" value={status.metrics.pendingExceptions} hint="需要人工判断" tone={status.metrics.pendingExceptions ? "hot" : "ok"} />
         <Metric label="资料待同步" value={status.metrics.sourceChanges} hint="最新资料尚未构建" tone={status.metrics.sourceChanges ? "warn" : "ok"} />
-        <Metric label="构建进行中" value={status.metrics.runningBuilds} hint="自动流水线运行中" tone={status.metrics.runningBuilds ? "warn" : "ok"} />
-        <Metric label="Agent 反馈" value={status.metrics.agentFeedbackOpen} hint="可复测的负反馈" tone={status.metrics.agentFeedbackOpen ? "warn" : "ok"} />
-        <Metric label="今日自动治理" value={status.metrics.autoGovernedToday} hint={`Lint 自动 ${status.remediation.autoGoverned} / 人工 ${status.remediation.needsHuman}`} tone="ok" />
+        <Metric label="构建进行中" value={status.metrics.runningBuilds} hint="流水线运行中" tone={status.metrics.runningBuilds ? "warn" : "ok"} />
+        {!isSimple && (
+          <Metric label="Agent 反馈" value={status.metrics.agentFeedbackOpen} hint="可复测的负反馈" tone={status.metrics.agentFeedbackOpen ? "warn" : "ok"} />
+        )}
+        {!isSimple && (
+          <Metric label="今日自动治理" value={status.metrics.autoGovernedToday} hint={`Lint 自动 ${status.remediation.autoGoverned} / 人工 ${status.remediation.needsHuman}`} tone="ok" />
+        )}
         <Metric label="当前发布" value={status.metrics.currentReleaseVersion || "未发布"} hint="Agent 正在消费的版本" tone={status.metrics.currentReleaseVersion ? "ok" : "warn"} />
       </div>
 
-      <section className="workbench-board dual">
+      <section className={`workbench-board ${isSimple ? "" : "dual"}`}>
         <section className="workbench-lane" ref={exceptionsRef}>
           <div className="lane-head">
             <ShieldAlert size={17} />
@@ -191,7 +234,7 @@ export function Dashboard() {
           </div>
           <div className="lane-list">
             {status.attentionItems.length === 0 ? (
-              <p className="lane-empty">没有需要人工处理的例外，飞轮在自动运转。</p>
+              <p className="lane-empty">{isSimple ? "没有需要处理的事项。" : "没有需要人工处理的例外，飞轮在自动运转。"}</p>
             ) : (
               status.attentionItems.map((item) => (
                 <ExceptionCard
@@ -211,6 +254,7 @@ export function Dashboard() {
           />
         </section>
 
+        {!isSimple && (
         <section className="workbench-lane">
           <div className="lane-head">
             <Sparkles size={17} />
@@ -227,9 +271,10 @@ export function Dashboard() {
             )}
           </div>
         </section>
+        )}
       </section>
 
-      {data && (
+      {data && !isSimple && (
         <section className="band workbench-health">
           <div>
             <h2>系统健康</h2>

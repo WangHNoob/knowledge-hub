@@ -48,13 +48,24 @@ export const config = {
   autoBuildOnUpload: flag("KH_AUTO_BUILD_ON_UPLOAD", true),
   healthSweepIntervalHours: Number(optional("KH_HEALTH_SWEEP_INTERVAL_HOURS", "24")),
   generateBuildReviewTasks: flag("KH_GENERATE_BUILD_REVIEW_TASKS", false),
-  autoRemediationEnabled: flag("KH_AUTO_REMEDIATION_ENABLED", true),
-  autoAliasRemediationEnabled: flag("KH_AUTO_ALIAS_REMEDIATION_ENABLED", true),
+  autoRemediationEnabled: flag("KH_AUTO_REMEDIATION_ENABLED", false),
+  autoAliasRemediationEnabled: flag("KH_AUTO_ALIAS_REMEDIATION_ENABLED", false),
   autoRemediationConfidenceThreshold: Number(optional("KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD", "0.85")),
   autoRemediationLlmProvider: optional("KH_AUTO_REMEDIATION_LLM_PROVIDER", ""),
   autoRemediationLlmBaseUrl: optional("KH_AUTO_REMEDIATION_LLM_BASE_URL", ""),
   autoRemediationLlmModel: optional("KH_AUTO_REMEDIATION_LLM_MODEL", ""),
   autoRemediationLlmApiKey: optional("KH_AUTO_REMEDIATION_LLM_API_KEY", ""),
+  /**
+   * UI 模式：simple=策划工作台（默认）；full=完整飞轮/治理/MCP 管理台。
+   * admin 可在前端切换到完整模式（localStorage），不改此配置。
+   */
+  uiMode: optional("KH_UI_MODE", "simple") === "full" ? "full" as const : "simple" as const,
+  /** 宽松自动发布：降低可信度门槛（试点优先能发布）。 */
+  publishRelaxed: flag("KH_PUBLISH_RELAXED", true),
+  minAutoPublishScore: Number(optional("KH_MIN_AUTO_PUBLISH_SCORE", "0.35")),
+  svnWcPath: optional("KH_SVN_WC_PATH", ""),
+  svnSyncEnabled: flag("KH_SVN_SYNC_ENABLED", false),
+  svnUpdateCommand: optional("KH_SVN_UPDATE_CMD", "svn update"),
   /** When set, stdio MCP requires matching KH_MCP_SERVICE_TOKEN in the environment of the caller process. Empty = allow (dev). */
   mcpServiceToken: optional("KH_MCP_SERVICE_TOKEN", ""),
   /** When true, refuse mcp:stdio unless KH_MCP_SERVICE_TOKEN is configured. */

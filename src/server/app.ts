@@ -29,6 +29,7 @@ import { createStorageMaintenanceService } from "./services/storageMaintenanceSe
 import { createProjectService } from "./services/projectService";
 import { registerAgentRoutes } from "./routes/agent";
 import { registerAuthRoutes } from "./routes/auth";
+import { registerOpsRoutes } from "./routes/ops";
 import { registerBuilderRoutes } from "./routes/builder";
 import { registerDashboardRoutes } from "./routes/dashboard";
 import { registerFlywheelRoutes } from "./routes/flywheel";import { registerGovernanceRoutes } from "./routes/governance";
@@ -97,13 +98,24 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const governanceProfileService = createGovernanceProfileService(options.db, {
     autoPublishRevisions: config.autoPublishRevisions,
     // Lint 自动治理与 Agent 反馈 auto-remediation 语义分离：前者默认开启，后者用 KH_AUTO_REMEDIATION_ENABLED。
-    lintAutoGovernanceEnabled: true,
+    lintAutoGovernanceEnabled: config.autoRemediationEnabled,
     lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
     evalEnabled: config.retrievalEvalEnabled,
     evalGoldPath: config.retrievalEvalGoldPath,
     evalMinHitAtK: config.retrievalEvalMinHitAtK,
     evalMinCitationCoverage: config.retrievalEvalMinCitationCoverage,
     evalBlockOnRegression: config.retrievalEvalBlockOnRegression,
+    ...(config.publishRelaxed
+      ? {
+          minAutoPublishScore: Number.isFinite(config.minAutoPublishScore) ? config.minAutoPublishScore : 0.35,
+          requireEvidence: false,
+          blockOnDeletes: false,
+          blockOnTrustDecline: false,
+          blockOnPendingCorrections: false,
+        }
+      : {
+          minAutoPublishScore: Number.isFinite(config.minAutoPublishScore) ? config.minAutoPublishScore : 0.7,
+        }),
   });
   const releaseService = createReleaseService(
     options.db,
@@ -246,6 +258,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerTracing(app, diagnostics);
 
   registerAuthRoutes(app, ctx);
+  registerOpsRoutes(app, ctx);
   registerProjectRoutes(app, ctx);
   registerDashboardRoutes(app, ctx);
   registerFlywheelRoutes(app, ctx);

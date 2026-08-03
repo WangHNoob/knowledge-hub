@@ -11,6 +11,7 @@ import { formatTime } from "../utils/format";
 import { insightFromTask, type FeedbackInsight } from "../utils/feedback";
 import { IdChip, useNav } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
+import { useUiMode } from "../ui/uiMode";
 
 const SEVERITY_OPTIONS = [
   { value: "", label: "全部级别" },
@@ -169,6 +170,7 @@ function rawRuleDetail(task: ReviewTask): string {
 export function Review() {
   const { navigate, params } = useNav();
   const { currentProjectId, currentProject } = useProject();
+  const { isSimple } = useUiMode();
   const queryClient = useQueryClient();
   const [severity, setSeverity] = useState("");
   const [status, setStatus] = useState("open");
@@ -285,7 +287,7 @@ export function Review() {
 
   return (
     <Page title="异常收件箱" subtitle={`当前项目：${currentProject?.name ?? currentProjectId}。这里只处理自动治理无法确定或会阻断发布的问题；正常飞轮不需要人工逐项审核。`}>
-      <Tabs items={REVIEW_TABS} active={reviewTab} onChange={setReviewTab} />
+      {(() => { const reviewTabs = isSimple ? REVIEW_TABS.filter((tab) => tab.id === "tasks") : REVIEW_TABS; return <Tabs items={reviewTabs} active={reviewTab} onChange={setReviewTab} />; })()}
 
       {(transition.error || annotate.error || rebuild.error) && (
         <p className="error">
