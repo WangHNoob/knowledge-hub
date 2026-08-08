@@ -168,12 +168,13 @@ describe("knowledge hub api", () => {
 
     expect(current.statusCode).toBe(200);
     const config = current.json().profile.config;
-    expect(config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("核心规则");
+    expect(config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("背景与目标");
     expect(config.documentTypes.activity_gameplay.wikiSpecTemplate.requiredFacts).toContain("reward");
     expect(config.documentTypes.table_schema.defaultPageTypeId).toBe("table");
+    expect(config.documentTypes.qa_checklist.defaultPageTypeId).toBe("qa");
     expect(config.pageTypes.field.requiredFacts).toContain("field_meaning");
-    expect(config.entityTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["system", "activity", "config_table", "field", "item", "numeric_item"]));
-    expect(config.relationTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["depends_on", "affects", "contains", "references", "produces", "consumes", "prerequisite_of", "mutually_exclusive_with"]));
+    expect(config.entityTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["system", "hero", "skill", "buff", "config_table", "field", "item", "numeric_item"]));
+    expect(config.relationTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["depends_on", "affects", "contains", "references", "produces", "consumes", "prerequisite_of", "mutually_exclusive_with", "applies", "fk_to"]));
     expect(config.qualityRules.source_trace_missing.severity).toBe("blocking");
   });
 

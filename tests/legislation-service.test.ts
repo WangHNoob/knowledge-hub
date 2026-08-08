@@ -16,8 +16,9 @@ describe("LegislationService", () => {
       expect(first.profileId).toBe("default");
       expect(first.active).toBe(true);
       expect(first.hash).toBe(second.hash);
-      expect(first.config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("核心规则");
-      expect(first.config.pageTypes.system.requiredSections).toContain("核心规则");
+      expect(first.config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("背景与目标");
+      expect(first.config.pageTypes.system.requiredSections).toContain("配表引用");
+      expect(first.config.entityTypes.some((item) => item.id === "hero")).toBe(true);
       expect(first.config.entityTypes.some((item) => item.id === "system")).toBe(true);
       expect(first.config.relationTypes.some((item) => item.id === "configured_in")).toBe(true);
       expect(first.config.governanceRules.evidence.requiredComponentKinds).toContain("wiki_page");
@@ -71,8 +72,9 @@ describe("LegislationService", () => {
       const migrated = await createDatabase({ databaseUrl: TEST_DATABASE_URL, schema, seedUsers: false });
       try {
         const profile = await createLegislationService(migrated).getActiveProfile();
-        expect(profile.config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("核心规则");
+        expect(profile.config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("背景与目标");
         expect(profile.config.pageTypes.activity.requiredFacts).toContain("reward");
+        expect(profile.config.documentTypes.qa_checklist.id).toBe("qa_checklist");
         expect(profile.config.governanceRules.lint.enabledDomains).toContain("mcp_feedback");
       } finally {
         await migrated.close();

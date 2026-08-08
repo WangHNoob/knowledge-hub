@@ -121,7 +121,7 @@ export function defaultGovernanceRules(): KnowledgeGovernanceRules {
     },
     evidence: {
       requiredComponentKinds: ["wiki_page", "table_wiki_page"],
-      citationRequiredOkfTypes: ["system_rule", "activity_template", "table_schema", "ui_flow", "numerical_convention"],
+      citationRequiredOkfTypes: ["system_rule", "numeric_rule", "table_schema", "qa_checklist", "activity_gameplay", "ui_flow"],
       autoBackfillOnPublish: true,
       missingEvidenceSeverity: "blocking",
     },

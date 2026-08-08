@@ -620,108 +620,234 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ["default", defaultQualityProfile, new Date(0).toISOString()]
   );
 
+  // 面向《星轨猎手》模拟知识库（knowledge/gamedocs + gamedata）的默认立法：
+  // 必填章节必须与文档 ## 二级标题精确一致（见 kbBuilder/qualityGate）。
   const defaultRuleProfile = {
     documentTypes: {
-      system_rule: {
-        id: "system_rule",
-        label: "系统规则文档",
-        description: "说明一个长期存在的游戏系统如何开启、运行、依赖配置并影响其他系统。",
-        defaultPageTypeId: "system",
+      concept_note: {
+        id: "concept_note",
+        label: "术语与总览文档",
+        description: "统一术语、枚举与 ID 注册表；是全库唯一权威口径，禁止同义替换或越权注册 ID。",
+        defaultPageTypeId: "concept",
         wikiSpecTemplate: {
-          requiredSections: ["概览", "核心规则", "入口与条件", "配置表依赖", "数值与奖励", "边界与异常", "证据"],
-          requiredFacts: ["system_name", "entry_condition", "config_table", "reward_or_cost", "source"],
-          evidenceRequired: true,
-          guidance: "适用于成就、任务、背包、养成线等系统型资料。"
+          requiredSections: [
+            "背景与目标",
+            "术语表（权威定义，禁止同义替换）",
+            "枚举定义（token 全库唯一）",
+            "ID 注册表（唯一权威，禁止越权注册）",
+            "配表引用",
+            "未决问题 / 风险"
+          ],
+          requiredFacts: ["definition", "source"],
+          evidenceRequired: false,
+          guidance: "对应 gamedocs/00_项目总览与术语表.md。只承载口径与 ID，不写可执行公式。"
         },
         publishable: true
       },
-      activity_gameplay: {
-        id: "activity_gameplay",
-        label: "活动玩法文档",
-        description: "说明限时活动或运营活动的参与条件、流程、奖励和配置依赖。",
-        defaultPageTypeId: "activity",
+      numeric_rule: {
+        id: "numeric_rule",
+        label: "数值与公式文档",
+        description: "定义伤害/战力等权威公式、参数来源与边界；同一概念全库只允许一个出处。",
+        defaultPageTypeId: "numeric",
         wikiSpecTemplate: {
-          requiredSections: ["概览", "活动目标", "开放条件", "玩法流程", "奖励与消耗", "关联配置表", "证据"],
-          requiredFacts: ["activity_name", "open_condition", "flow", "reward", "config_table", "source"],
+          requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+          requiredFacts: ["formula", "parameter_source", "source"],
           evidenceRequired: true,
-          guidance: "适用于神秘商店、节日活动、限时玩法等活动资料。"
+          guidance: "对应 01_战斗框架与伤害公式、02_属性体系与战力评估。公式正文可用自由章节，但必须保留上述必填节。"
+        },
+        publishable: true
+      },
+      system_rule: {
+        id: "system_rule",
+        label: "系统规则文档",
+        description: "说明长期系统如何运行、与其他系统接口，以及依赖哪些配表/ID。",
+        defaultPageTypeId: "system",
+        wikiSpecTemplate: {
+          requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+          requiredFacts: ["system_name", "config_table", "source"],
+          evidenceRequired: true,
+          guidance: "对应技能/Buff/角色/武器装备/副本/掉落经济/商店等系统文档（03–09）。中间业务章节可自由命名。"
         },
         publishable: true
       },
       table_schema: {
         id: "table_schema",
-        label: "配置表说明文档",
-        description: "说明配置表的业务用途、主键、关键字段、枚举和跨表关系。",
+        label: "配表规范文档",
+        description: "说明 CSV/xlsx 编码、字段规范、主键粒度与可验证外键清单。",
         defaultPageTypeId: "table",
         wikiSpecTemplate: {
-          requiredSections: ["概览", "表用途", "主键与粒度", "关键字段", "关联表", "常见误用", "证据"],
-          requiredFacts: ["table_name", "primary_key", "business_owner", "key_fields", "source"],
+          requiredSections: [
+            "背景与目标",
+            "文件与编码",
+            "字段规范",
+            "外键清单（子表字段 → 父表主键，必须可验证）",
+            "配表引用",
+            "未决问题 / 风险"
+          ],
+          requiredFacts: ["table_name", "primary_key", "key_fields", "source"],
           evidenceRequired: true,
-          guidance: "适用于 gamedata/xlsx 生成的表级 Wiki。"
+          guidance: "对应 10_配表规范与外键约定.md；也适用于由 gamedata 生成的表级 Wiki。"
+        },
+        publishable: true
+      },
+      qa_checklist: {
+        id: "qa_checklist",
+        label: "边界与 QA 清单",
+        description: "记录自检结论、边界异常用例与跨表证据链，供发布前验收。",
+        defaultPageTypeId: "qa",
+        wikiSpecTemplate: {
+          requiredSections: [
+            "自检清单（逐条，全部 PASS）",
+            "边界异常用例（QA 必测）",
+            "跨 3 跳证据链（写入本文档，防断裂）",
+            "未决问题 / 风险"
+          ],
+          requiredFacts: ["checklist_status", "source"],
+          evidenceRequired: true,
+          guidance: "对应 11_边界异常与QA检查清单.md。"
+        },
+        publishable: true
+      },
+      changelog: {
+        id: "changelog",
+        label: "版本变更记录",
+        description: "记录配表/文档变更摘要，保证 QA 清单可回溯。",
+        defaultPageTypeId: "changelog",
+        wikiSpecTemplate: {
+          requiredSections: ["配表引用"],
+          requiredFacts: ["source"],
+          evidenceRequired: false,
+          guidance: "对应 12_版本变更记录_v0.1.md。"
         },
         publishable: true
       },
       field_spec: {
         id: "field_spec",
         label: "字段说明文档",
-        description: "说明字段含义、取值范围、枚举、默认值、单位和是否可推断关系。",
+        description: "说明高风险字段含义、取值、枚举与关系推断。",
         defaultPageTypeId: "field",
         wikiSpecTemplate: {
-          requiredSections: ["字段含义", "取值规则", "枚举或单位", "关系推断", "证据"],
+          requiredSections: ["字段含义", "取值规则", "枚举或单位", "关系推断"],
           requiredFacts: ["field_name", "field_meaning", "value_rule", "source"],
           evidenceRequired: true,
-          guidance: "适用于高风险字段、关系字段和 Agent 经常误读的字段。"
+          guidance: "适用于 Agent 易误读的外键/枚举字段（如 buffId、itemType+itemId、recommendPower）。"
         },
         publishable: true
       },
-      numeric_rule: {
-        id: "numeric_rule",
-        label: "数值规则文档",
-        description: "说明公式、倍率、阈值、成长曲线和结算顺序。",
-        defaultPageTypeId: "numeric",
+      activity_gameplay: {
+        id: "activity_gameplay",
+        label: "活动玩法文档",
+        description: "限时/运营活动的参与条件、流程与奖励（本库当前无独立活动篇，预留类型）。",
+        defaultPageTypeId: "activity",
         wikiSpecTemplate: {
-          requiredSections: ["规则目标", "计算公式", "参数来源", "生效条件", "边界情况", "证据"],
-          requiredFacts: ["formula", "parameter_source", "effective_condition", "source"],
+          requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+          requiredFacts: ["activity_name", "reward", "config_table", "source"],
           evidenceRequired: true,
-          guidance: "适用于战力、奖励倍率、成长曲线、概率和结算规则。"
-        },
-        publishable: true
-      },
-      concept_note: {
-        id: "concept_note",
-        label: "概念说明文档",
-        description: "说明团队内需要统一口径的业务概念，避免 Agent 把概念误当规则。",
-        defaultPageTypeId: "concept",
-        wikiSpecTemplate: {
-          requiredSections: ["概念定义", "适用范围", "相关系统", "不适用情况"],
-          requiredFacts: ["definition"],
-          evidenceRequired: false,
-          guidance: "只用于术语口径，不承载可执行规则。"
+          guidance: "商店常驻兑换归 system_rule；仅限时活动使用本类型。"
         },
         publishable: true
       },
       ui_flow: {
         id: "ui_flow",
         label: "操作流程文档",
-        description: "说明玩家或运营人员在界面上的操作路径、入口和状态变化。",
+        description: "玩家界面入口、步骤与状态变化（本库偏规则/数值，预留类型）。",
         defaultPageTypeId: "ui_flow",
         wikiSpecTemplate: {
-          requiredSections: ["入口", "操作步骤", "状态变化", "关联系统", "证据"],
-          requiredFacts: ["entry", "steps", "state_change", "source"],
+          requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+          requiredFacts: ["entry", "steps", "source"],
           evidenceRequired: true,
-          guidance: "适用于界面流程、功能入口和操作路径说明。"
+          guidance: "有独立 UI 流程稿时使用。"
         },
         publishable: true
       }
     },
     pageTypes: {
+      concept: {
+        id: "concept",
+        label: "术语与总览",
+        dir: "concepts",
+        template: "concept.md",
+        requiredSections: [
+          "背景与目标",
+          "术语表（权威定义，禁止同义替换）",
+          "枚举定义（token 全库唯一）",
+          "ID 注册表（唯一权威，禁止越权注册）",
+          "配表引用",
+          "未决问题 / 风险"
+        ],
+        requiredFacts: ["definition", "source"],
+        evidenceRequired: false,
+        publishable: true
+      },
+      numeric: {
+        id: "numeric",
+        label: "数值与公式",
+        dir: "numeric_rules",
+        template: "numeric_rule.md",
+        requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+        requiredFacts: ["formula", "parameter_source", "source"],
+        evidenceRequired: true,
+        publishable: true
+      },
       system: {
         id: "system",
         label: "系统规则",
         dir: "systems",
         template: "system_rule.md",
-        requiredSections: ["概览", "核心规则", "入口与条件", "配置表依赖", "数值与奖励", "边界与异常", "证据"],
-        requiredFacts: ["system_name", "entry_condition", "config_table", "source"],
+        requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+        requiredFacts: ["system_name", "config_table", "source"],
+        evidenceRequired: true,
+        publishable: true
+      },
+      table: {
+        id: "table",
+        label: "配表规范",
+        dir: "tables",
+        template: "table_schema.md",
+        requiredSections: [
+          "背景与目标",
+          "文件与编码",
+          "字段规范",
+          "外键清单（子表字段 → 父表主键，必须可验证）",
+          "配表引用",
+          "未决问题 / 风险"
+        ],
+        requiredFacts: ["table_name", "primary_key", "key_fields", "source"],
+        evidenceRequired: true,
+        publishable: true
+      },
+      qa: {
+        id: "qa",
+        label: "边界与 QA",
+        dir: "qa",
+        template: "qa_checklist.md",
+        requiredSections: [
+          "自检清单（逐条，全部 PASS）",
+          "边界异常用例（QA 必测）",
+          "跨 3 跳证据链（写入本文档，防断裂）",
+          "未决问题 / 风险"
+        ],
+        requiredFacts: ["checklist_status", "source"],
+        evidenceRequired: true,
+        publishable: true
+      },
+      changelog: {
+        id: "changelog",
+        label: "版本变更",
+        dir: "changelogs",
+        template: "changelog.md",
+        requiredSections: ["配表引用"],
+        requiredFacts: ["source"],
+        evidenceRequired: false,
+        publishable: true
+      },
+      field: {
+        id: "field",
+        label: "字段说明",
+        dir: "fields",
+        template: "field_spec.md",
+        requiredSections: ["字段含义", "取值规则", "枚举或单位", "关系推断"],
+        requiredFacts: ["field_name", "field_meaning", "value_rule", "source"],
         evidenceRequired: true,
         publishable: true
       },
@@ -730,38 +856,8 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
         label: "活动玩法",
         dir: "activities",
         template: "activity_gameplay.md",
-        requiredSections: ["概览", "活动目标", "开放条件", "玩法流程", "奖励与消耗", "关联配置表", "证据"],
-        requiredFacts: ["activity_name", "open_condition", "flow", "reward", "config_table", "source"],
-        evidenceRequired: true,
-        publishable: true
-      },
-      table: {
-        id: "table",
-        label: "配置表说明",
-        dir: "tables",
-        template: "table_schema.md",
-        requiredSections: ["概览", "表用途", "主键与粒度", "关键字段", "关联表", "常见误用", "证据"],
-        requiredFacts: ["table_name", "primary_key", "key_fields", "source"],
-        evidenceRequired: true,
-        publishable: true
-      },
-      field: {
-        id: "field",
-        label: "字段说明",
-        dir: "fields",
-        template: "field_spec.md",
-        requiredSections: ["字段含义", "取值规则", "枚举或单位", "关系推断", "证据"],
-        requiredFacts: ["field_name", "field_meaning", "value_rule", "source"],
-        evidenceRequired: true,
-        publishable: true
-      },
-      numeric: {
-        id: "numeric",
-        label: "数值规则",
-        dir: "numeric_rules",
-        template: "numeric_rule.md",
-        requiredSections: ["规则目标", "计算公式", "参数来源", "生效条件", "边界情况", "证据"],
-        requiredFacts: ["formula", "parameter_source", "effective_condition", "source"],
+        requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+        requiredFacts: ["activity_name", "reward", "config_table", "source"],
         evidenceRequired: true,
         publishable: true
       },
@@ -770,39 +866,38 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
         label: "操作流程",
         dir: "ui_flows",
         template: "ui_flow.md",
-        requiredSections: ["入口", "操作步骤", "状态变化", "关联系统", "证据"],
-        requiredFacts: ["entry", "steps", "state_change", "source"],
+        requiredSections: ["背景与目标", "配表引用", "未决问题 / 风险"],
+        requiredFacts: ["entry", "steps", "source"],
         evidenceRequired: true,
-        publishable: true
-      },
-      concept: {
-        id: "concept",
-        label: "概念说明",
-        dir: "concepts",
-        template: "concept.md",
-        requiredSections: ["概念定义", "适用范围", "相关系统", "不适用情况"],
-        requiredFacts: ["definition"],
-        evidenceRequired: false,
         publishable: true
       }
     },
     entityTypes: [
       { id: "system", label: "系统", publishable: true },
-      { id: "activity", label: "活动", publishable: true },
+      { id: "hero", label: "角色", publishable: true },
+      { id: "skill", label: "技能", publishable: true },
+      { id: "buff", label: "Buff/状态", publishable: true },
+      { id: "weapon", label: "武器", publishable: true },
+      { id: "equipment", label: "装备", publishable: true },
+      { id: "dungeon", label: "副本", publishable: true },
+      { id: "drop_table", label: "掉落组", publishable: true },
+      { id: "shop_item", label: "商店商品", publishable: true },
+      { id: "material", label: "材料", publishable: true },
+      { id: "currency", label: "货币", publishable: true },
+      { id: "breakthrough", label: "突破", publishable: true },
+      { id: "element", label: "元素", publishable: true },
+      { id: "attribute", label: "属性", publishable: true },
       { id: "config_table", label: "配置表", publishable: true },
       { id: "field", label: "字段", publishable: true },
       { id: "resource", label: "资源", publishable: true },
       { id: "item", label: "道具", publishable: true },
-      { id: "currency", label: "货币", publishable: true },
       { id: "reward", label: "奖励", publishable: true },
       { id: "cost", label: "消耗", publishable: true },
       { id: "condition", label: "条件", publishable: true },
       { id: "state", label: "状态", publishable: true },
       { id: "numeric_item", label: "数值项", publishable: true },
-      { id: "ui_element", label: "界面元素", publishable: true },
       { id: "progression", label: "成长线", publishable: true },
-      { id: "achievement", label: "成就", publishable: true },
-      { id: "task", label: "任务", publishable: true },
+      { id: "activity", label: "活动", publishable: true },
       { id: "concept", label: "概念", publishable: true }
     ],
     relationTypes: [
@@ -820,19 +915,28 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       { id: "unlocks", label: "解锁", direction: "source_to_target", publishable: true, autoGenerated: false },
       { id: "grants", label: "授予", direction: "source_to_target", publishable: true, autoGenerated: false },
       { id: "costs", label: "需要消耗", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "applies", label: "施加", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "counters", label: "克制", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "drops_from", label: "掉落自", direction: "source_to_target", publishable: true, autoGenerated: false },
+      { id: "upgrades", label: "升级/强化", direction: "source_to_target", publishable: true, autoGenerated: false },
       { id: "has_field", label: "拥有字段", direction: "source_to_target", publishable: true, autoGenerated: true },
       { id: "fk_to", label: "外键指向", direction: "source_to_target", publishable: true, autoGenerated: true }
     ],
     tableRules: {
-      autoConfirmFieldIdSuffixes: ["Id", "Ids", "TableId", "ConfigId", "RewardId", "ItemId", "CostId", "ConditionId", "StateId", "ActivityId"],
+      autoConfirmFieldIdSuffixes: [
+        "Id", "Ids",
+        "HeroId", "SkillId", "BuffId", "WeaponId", "EquipId", "DungeonId", "DropId", "ShopId",
+        "MaterialId", "PassiveSkillId", "ItemId", "CostId", "ConditionId", "StateId",
+        "TableId", "ConfigId", "RewardId", "ActivityId"
+      ],
       candidateFieldIdSuffixes: []
     },
     qualityRules: {
-      required_wiki_sections_missing: { enabled: true, severity: "blocking", description: "Wiki 缺少该文档类型要求的必填章节。" },
-      required_facts_missing: { enabled: true, severity: "blocking", description: "Wiki 缺少该文档类型要求的关键事实。" },
+      required_wiki_sections_missing: { enabled: true, severity: "blocking", description: "Wiki 缺少该文档类型要求的必填章节（须与 ## 标题精确一致）。" },
+      required_facts_missing: { enabled: true, severity: "warning", description: "Wiki 缺少该文档类型要求的关键事实。" },
       source_trace_missing: { enabled: true, severity: "blocking", description: "知识结论无法追溯到 source version 或 evidence。" },
       illegal_relation_type: { enabled: true, severity: "blocking", description: "图谱关系类型不在主策划定义范围内。" },
-      concept_overuse: { enabled: true, severity: "warning", description: "实体过度落入概念类型，说明类型定义或抽取质量不足。" },
+      concept_overuse: { enabled: true, severity: "warning", description: "实体过度落入概念类型；角色/技能/Buff/配表等应使用专用实体类型。" },
       candidate_relation_unconfirmed: { enabled: true, severity: "warning", description: "候选关系尚未被人工确认，试发布可先带风险放行。" },
       field_relation_unconfirmed: { enabled: true, severity: "info", description: "表字段推断关系先作为提示，不阻断试发布。" },
       stale_rule_profile: { enabled: true, severity: "warning", description: "资产包使用的规则 Profile 已不是当前启用版本，需要复审。" }
@@ -848,7 +952,7 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
       },
       evidence: {
         requiredComponentKinds: ["wiki_page", "table_wiki_page"],
-        citationRequiredOkfTypes: ["system_rule", "activity_template", "table_schema", "ui_flow", "numerical_convention"],
+        citationRequiredOkfTypes: ["system_rule", "numeric_rule", "table_schema", "qa_checklist", "activity_gameplay"],
         autoBackfillOnPublish: true,
         missingEvidenceSeverity: "blocking"
       },
@@ -878,15 +982,19 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     `INSERT INTO ${p}knowledge_rule_profiles (profile_id, name, active, hash, config_json, created_by, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (profile_id) DO NOTHING`,
-    ["default", "默认策划立法规则", true, "", defaultRuleProfile, "system", new Date(0).toISOString()]
+    ["default", "星轨猎手默认策划立法", true, "", defaultRuleProfile, "system", new Date(0).toISOString()]
   );
   await adapter.query(
     `UPDATE ${p}knowledge_rule_profiles
-     SET config_json = $2, hash = '', updated_at = $3
+     SET config_json = $2, hash = '', updated_at = $3, name = $4
      WHERE profile_id = $1
        AND created_by = 'system'
-       AND config_json #>> '{documentTypes,system_rule,id}' IS NULL`,
-    ["default", defaultRuleProfile, new Date(0).toISOString()]
+       AND (
+         config_json #>> '{documentTypes,system_rule,id}' IS NULL
+         OR NOT (COALESCE(config_json->'pageTypes'->'system'->'requiredSections', '[]'::jsonb) @> '"背景与目标"'::jsonb)
+         OR config_json #>> '{documentTypes,qa_checklist,id}' IS NULL
+       )`,
+    ["default", defaultRuleProfile, new Date(0).toISOString(), "星轨猎手默认策划立法"]
   );
   await adapter.query(
     `UPDATE ${p}knowledge_rule_profiles
