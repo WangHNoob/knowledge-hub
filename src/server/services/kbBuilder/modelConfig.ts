@@ -60,7 +60,9 @@ function optionalString(value: unknown): string | undefined {
 }
 
 export function extractMaxTokens(): number {
-  return readPositiveInt("KH_KB_EXTRACT_MAX_TOKENS", 4096);
+  // 默认 16384：推理模型（如 deepseek-v4-flash）的 thinking 会占用 max_tokens，
+  // 4096 时长文档的 content 会被耗尽（No output generated）。16384 实测可完整输出抽取 JSON。
+  return readPositiveInt("KH_KB_EXTRACT_MAX_TOKENS", 16384);
 }
 
 export function probeMaxTokens(): number {
@@ -69,7 +71,8 @@ export function probeMaxTokens(): number {
 
 /** 每次 LLM 请求的超时（毫秒）。防止慢/不可达的供应商让构建无限挂起、无法中止。 */
 export function requestTimeoutMs(): number {
-  return readPositiveInt("KH_LLM_REQUEST_TIMEOUT_MS", 180000);
+  // 默认 300s：推理模型单篇抽取实测约 60-120s（thinking + 输出），长文档需更大余量。
+  return readPositiveInt("KH_LLM_REQUEST_TIMEOUT_MS", 300000);
 }
 
 /** 连接探针的超时（毫秒）——比正式请求短，测试连接不该长时间转圈。 */

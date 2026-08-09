@@ -153,10 +153,13 @@ export async function runExtractStage(options: ExtractOptions): Promise<StageRes
     }
     normalizeTableRefs(extracted, tableAliases);
     if (!frozen) writeExtractCache(options.dataDir, cacheKey, extracted);
-    const pageType = options.specs.manifest.pageTypes[extracted.type];
+    let pageType = options.specs.manifest.pageTypes[extracted.type];
     if (!pageType) {
-      warnings.push(`${rel}: unknown page type "${extracted.type}", skipped`);
-      continue;
+      // 防御：模型输出了立法 Profile 之外的 type（如 wiki_page）时，降级为 concept 而非丢弃整篇文档，
+      // 保证知识不丢失；分类保守但可后续人工/规则修正。
+      warnings.push(`${rel}: unknown page type "${extracted.type}", coerced to "concept"`);
+      extracted.type = "concept";
+      pageType = options.specs.manifest.pageTypes.concept;
     }
 
     const slug = allocateSlug(slugForPage(rel, extracted.title), pageType.dir, usedSlugs);
