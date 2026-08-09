@@ -24,3 +24,7 @@ backups/
 # 本机 docker compose 端口覆盖（如 5432 冲突时映射 5544）
 docker-compose.override.yml
 
+
+# 运行时缓存与本地工具目录
+__pycache__/
+.zcode/
