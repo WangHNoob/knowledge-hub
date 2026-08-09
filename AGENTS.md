@@ -19,6 +19,7 @@ npm run test:watch       # vitest 监听模式
 npm run typecheck        # 仅类型检查（tsc --noEmit）
 npm run mcp:stdio        # 启动 MCP stdio 服务器（src/server/mcpStdio.ts）
 npm run okf:scan         # OKF markdown 一致性扫描 CLI
+npx tsx scripts/republish-bundle.ts   # 维护：重导出 OKF bundle 并发布为修订（不重跑构建/LLM）
 ```
 
 运行单个测试文件 / 单个用例：
@@ -34,7 +35,8 @@ npx vitest run -t "renames a source bundle"
 - **环境变量**（模板见 `.env.example`，通过 `src/server/config.ts` 读取，缺必填项会启动即抛错）：
   - 必填：`KH_JWT_SECRET`、`DATABASE_URL`（PostgreSQL 连接串）。
   - 测试必填：`KH_TEST_DATABASE_URL` —— **单元测试始终连真实 PostgreSQL**，每个用例建独立 schema 实现隔离。没有它 `npm test` 直接报错。
-  - 可选：`PORT`(4174)、`HOST`(0.0.0.0)、`KH_DATA_DIR`(`./data`，存上传 blobs 与 kb-build-runs 工作区)、`KH_LOG_*`、`KH_WEBIMPORT_RETENTION_HOURS`、`KH_KB_EXTRACT_MAX_TOKENS`、`OPENAI_*` 兜底。
+  - 可选：`PORT`(4174)、`HOST`(0.0.0.0)、`KH_DATA_DIR`(`./data`，存上传 blobs 与 kb-build-runs 工作区)、`KH_LOG_*`、`KH_WEBIMPORT_RETENTION_HOURS`、`KH_KB_EXTRACT_MAX_TOKENS`(16384，推理模型 thinking 占 token，勿调回 4096)、`OPENAI_*`（extract 抽取模型；**未配置时 extract 退化为 deterministic，页面全部归为 concept**）。
+  - 自进化默认值（`KH_PUBLISH_RELAXED=false` 规则档）：`KH_BLOCK_ON_QUALITY_REGRESSION`(true)、`KH_RETRIEVAL_EVAL_ENABLED`(true，基线 `evals/retrieval-gold.json`)、`KH_AUTO_ROLLBACK_ON_REGRESSION`(true)、`KH_GAP_FILL_AUTO_DISMISS_THRESHOLD`(3)。改这些默认值需同步更新 `.env.example` 与 README 变量表。
 - **首次启动**会在 PostgreSQL 中建/迁移 schema、seed 三个演示用户（admin/dev/viewer）、默认资料集、默认质量门禁 Profile 和默认策划立法规则 Profile（详见 `db.ts`）。
 - 生产模式下若存在 `dist/client/`，`index.ts` 注册 `@fastify/static` 并对非 `/api/` 路径回退 `index.html`，所以发布前需先 `npm run build`。
 
@@ -77,7 +79,12 @@ attributionAuditService.ts Agent 输出归因审计
 diagnosticService.ts       结构化日志 + trace/span（写文件和/或 DB）
 storageMaintenanceService.ts 存储扫描与回收
 tableAliasService.ts       表名别名
-okf/                        Open Knowledge Format 导出与一致性校验（发布时把资产导出为标准 bundle）
+releaseAutomationService.ts 自动发布编排：build.completed → 提案草稿 → autoMode 发布 → 发布后
+                            检索 eval 回归自动回滚（verifyAndMaybeRollback）
+taskPolicyService.ts       预设规则任务收敛：info 任务自动 dismiss、gap_fill 无源候选自动收敛
+gapFillCandidateService.ts 知识缺口候选（upsert 达阈值自动 dismiss）
+okf/                        Open Knowledge Format 导出与一致性校验；okf/indexTemplate.ts 为
+                            llms.txt 风格目录 index.md 生成器（分组/描述/关联表）
 kbBuilder/                  流水线各阶段实现（见下）
 ```
 
@@ -89,7 +96,7 @@ kbBuilder/                  流水线各阶段实现（见下）
 convert → extract → tables → graph → viz
 ```
 
-每阶段在 `kbBuilder/<stage>Stage.ts`。`extract` 阶段调用 LLM（`kbBuilder/llmClient.ts` + `modelConfig.ts`，支持 deterministic / openai-compatible / anthropic）。产物经 `collector.ts` 收集、`qualityGate.ts` 按质量门禁 Profile 评估，落成 `asset_packages` + `asset_components` + `evidence_records`，并把质量发现衍生为 `review_tasks`。run 状态记录在 `knowledge_build_runs`（含 stages/completed_stages/current_stage，支持增量缓存）。
+每阶段在 `kbBuilder/<stage>Stage.ts`。`extract` 阶段调用 LLM（`kbBuilder/llmClient.ts` + `modelConfig.ts`，支持 deterministic / openai-compatible / anthropic；llmClient 对不支持结构化输出的网关自动降级 json_object→纯文本）。页面 `type` 由立法 Profile 的 pageType 决定并决定目录（systems/concepts/numeric_rules/...）；LLM 输出非法 type 时降级为 concept 而非丢弃（`extractStage.ts`）。产物经 `collector.ts` 收集、`qualityGate.ts` 按质量门禁 Profile 评估，落成 `asset_packages` + `asset_components` + `evidence_records`，并把质量发现衍生为 `review_tasks`。run 状态记录在 `knowledge_build_runs`（含 stages/completed_stages/current_stage，支持增量缓存；extract 缓存 key 含 modelConfig，换模型自动失效）。
 
 ### 核心数据模型（均在 `db.ts:migrate()` 定义，PostgreSQL）
 
@@ -120,11 +127,11 @@ JSONB 列（`source_version_ids`、`quality_summary`、`package_ids`、`manifest
 
 ### MCP / Agent 消费面
 
-已发布的知识通过 `KnowledgeQueryService` 暴露的 `kb_*` 工具（kb_search、kb_get_page、kb_get_entity、kb_query_table 等）供 Agent 消费，两条入口共用同一份实现：
+已发布的知识通过 `KnowledgeQueryService` 暴露的 `kb_*` 工具（kb_get_index 目录、kb_search、kb_get_page、kb_get_entity、kb_query_table 等）供 Agent 消费，两条入口共用同一份实现：
 - HTTP：`POST /api/mcp/query`（`routes/agent.ts`，JWT 保护，写 mcp_audit）。
 - stdio：`npm run mcp:stdio`（`mcpStdio.ts`，标准 MCP 协议）。
 
-工具只读「当前发布版本」（release channel 指向的 release）的冻结快照，不读 draft 资产。
+工具只读「当前发布版本」（release channel 指向的 release）的冻结快照，不读 draft 资产。`kb_get_index` 返回发布物目录 index.md（`okf/indexTemplate.ts` 生成），引导 Agent 先查目录再定位。
 
 ### 可观测性
 
@@ -157,4 +164,9 @@ Vitest，环境 `node`。所有测试用 `app.inject()` 直接调用 Fastify，�
 - **迁移用 IF NOT EXISTS**：`db.ts:migrate()` 全部 `CREATE TABLE IF NOT EXISTS` + 末尾 `ALTER TABLE … ADD COLUMN IF NOT EXISTS`，二次启动幂等。加列时追加 ALTER，不要改已有 CREATE 破坏既有库。
 - **Seed 幂等**：演示数据靠 `users` 表为空判断是否注入；默认 Profile 用 `ON CONFLICT DO NOTHING` 兜底。
 - **旧 kb-builder 目录只读**：`scanLegacyKbBuilder` / `importLegacyAsDraftPackage`（`legacyScanner`/`legacyImportService`）必须保持「不修改源目录」契约。
+- **规则化自进化（默认开启，改动需同步测试与文档）**：
+  - 自动发布门禁在 `releaseService.ts:buildAutoPublishCheck`：质量回归（`qualityRegressedAgainstParent` 对比父发布 quality_gate，含未变更组件）、trust 下降、检索 eval 回归、阻塞任务、lint 队列未收敛都会挡 autoMode 发布；结构性变更（如页面迁移目录 → `removed_components_present`）必须手动发布确认。
+  - 发布后验证/回滚在 `releaseAutomationService.ts:verifyAndMaybeRollback`：autoMode 发布成功后对新内容跑检索 eval，回归自动 `rollback` 到父发布。
+  - 任务自动收敛在 `taskPolicyService.ts` + `gapFillCandidateService.ts`（info 自动 dismiss、无源候选达阈值自动 dismiss）；健康巡检（`runScheduledHealthCheck`）每轮先执行策略收敛。
+  - 新增发布门禁/自动动作时：登记新 `KnowledgeEventType`（`eventService.ts`）、reason code 进 `buildAutoPublishReasonDetails`、补测试。
 - **时间统一东八区**：前端展示时间一律走 `utils/format.ts` 的 `formatTime`/`formatClock`，不要直接渲染原始 ISO 字符串；DB 存 `TIMESTAMPTZ`（UTC）。

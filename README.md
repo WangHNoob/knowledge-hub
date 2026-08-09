@@ -69,11 +69,15 @@ convert → extract → tables → graph → viz
 
 ```text
 okf_bundle/
-  index.md · log.md · wiki/ · graph/ · tables/ · search/
+  index.md · log.md            # index.md 为 llms.txt 风格目录（按模块分组 + 一句话描述 + 关联配表）
+  systems/ · concepts/ · numeric_rules/ · qa/ · changelogs/   # 按立法 Profile pageType 分目录
+  graph/ · tables/ · search/ · meta/
 ```
 
+- 页面分类由 extract 阶段的立法 Profile pageType 决定（LLM 或源文档 frontmatter），不再全部塌缩为 `concept`。
+- `kb_get_index` 工具可直接读取目录 index.md，Agent 先查目录再定位，减少无效检索。
 - Release channel 指向 current release；revision 继承父发布只 patch 变更组件。
-- 自动发布门禁读取**项目治理 Profile**（删除 / trust 下降 / 待审纠正 / 最低分等）。
+- 自动发布门禁读取**项目治理 Profile**（删除 / trust 下降 / 待审纠正 / 最低分 / 发布级质量回归等）。
 
 ### 4. 检索与权限
 
@@ -88,6 +92,16 @@ okf_bundle/
 - 部分 lint 入队在 **publish 事务路径内同步写入**（避免异步写入打穿连接/事务边界）；新加异步订阅时需复测事务边界。
 - 高频负反馈簇可 **晋升** 为 rebuild 候选；健康巡检覆盖「过期未复审」等时间型问题。
 
+### 5b. 规则化自进化（几乎不依赖人工）
+
+以「预设规则保证知识质量只升不降」为目标，默认开启（可被 env / 项目治理 Profile 覆盖）：
+
+- **发布级质量回归门禁**：发布前对比父发布的 `quality_gate`（含未变更组件）——`averageScore` 下降或 `blockingCount` 上升即挡自动发布（`quality_regressed`）。
+- **检索黄金集回归闸**：自动发布前跑 `evals/retrieval-gold.json`（78 题）hit@k，低于门槛即 skip（`KH_RETRIEVAL_EVAL_*`）。
+- **发布后自动回滚**：自动发布成功后对新内容再跑一次检索 eval，回归则自动回滚到父发布（`release.auto_rolled_back` 事件；`KH_AUTO_ROLLBACK_ON_REGRESSION`）。
+- **任务规则化收敛**：info 级任务与「重复反馈 ≥N 次且无源」的 gap_fill 候选自动 dismiss（`taskPolicyService` + 健康巡检）。
+- 信任下降 / 待审纠正 / 组件删除默认全部阻断自动发布（`KH_PUBLISH_RELAXED=false`）；结构性变更（如页面迁移目录）需人工手动发布确认。
+
 ### 6. 轻量知识运营台（飞轮）
 
 - 一句话状态 + 一个主动作 + 例外中心（可软忽略、可恢复）。
@@ -101,7 +115,7 @@ okf_bundle/
 | Streamable HTTP `/mcp` | JWT 保护；进程内按用户限流 |
 | `npm run mcp:stdio` | 本地联调；生产建议强制 service token（`KH_MCP_STDIO_REQUIRE_TOKEN`） |
 
-工具面覆盖查询、证据/trust、反馈、纠正、飞轮状态、归因提交、反馈簇、健康检查等（约 30+ `kb_*`）。
+工具面覆盖查询、证据/trust、反馈、纠正、飞轮状态、归因提交、反馈簇、健康检查、目录（`kb_get_index`）等（36 个 `kb_*`）。
 
 **硬边界（产品决策，非细节）**：不能直接改 published OKF bundle、不能随意切 channel；写路径走 staged correction。管理员侧另有门禁受控的 `kb_rollback_release`（渠道回点），不等于开放「直接改真理」。
 
@@ -165,6 +179,9 @@ npm run eval:retrieval   # 检索黄金集离线评测
 npm run mcp:stdio
 npm run okf:scan
 npm run db:up | db:down | db:restore
+
+# 维护：重导出 OKF bundle 并发布为修订（不重跑构建/LLM；用于导出侧代码变更后刷新发布物）
+npx tsx scripts/republish-bundle.ts
 ```
 
 单测示例：
@@ -285,10 +302,17 @@ evals/             # 检索黄金集
 | `KH_PUBLIC_BASE_URL` | 公网 MCP 配置基址 |
 | `KH_AUTO_BUILD_ON_UPLOAD` | 上传即构建 |
 | `KH_AUTO_PUBLISH_REVISIONS` | 反馈/修订自动发布（可被 Profile 覆盖） |
+| `KH_PUBLISH_RELAXED` | 默认 `false`（规则档）；`true` 时放宽 trust/质量回归/待审纠正/删除门禁 |
+| `KH_BLOCK_ON_QUALITY_REGRESSION` | 发布级质量回归门禁（默认 true） |
+| `KH_RETRIEVAL_EVAL_ENABLED` | 自动发布前检索黄金集回归闸（默认 true，基线 `evals/retrieval-gold.json`） |
+| `KH_AUTO_ROLLBACK_ON_REGRESSION` | 发布后检索回归自动回滚（默认 true） |
+| `KH_GAP_FILL_AUTO_DISMISS_THRESHOLD` | 重复无源反馈自动收敛阈值（默认 3） |
+| `KH_KB_EXTRACT_MAX_TOKENS` | extract 阶段 LLM 输出上限（推理模型 thinking 占用，默认 16384） |
+| `KH_LLM_REQUEST_TIMEOUT_MS` | 构建用 LLM 请求超时（默认 300000，防无限挂起） |
+| `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL` | extract 抽取模型（OpenAI-compatible；未配置时退化为 deterministic 单类兜底） |
 | `KH_MCP_RATE_LIMIT_MAX` | `/mcp` 进程内限流 |
 | `KH_MCP_STDIO_REQUIRE_TOKEN` | 生产 stdio 强制令牌 |
 | `KH_EVENT_BUS_MODE` | `inline` \| `outbox` |
-| `KH_LLM_REQUEST_TIMEOUT_MS` | 构建用 LLM 请求超时（防无限挂起） |
 | `KH_UPLOAD_MAX_*` | 大包上传上限（需同步调反向代理） |
 
 上传大包时同时检查应用 multipart 与 Nginx `client_max_body_size`。无 TLS 时 MCP 使用 `http://`。
