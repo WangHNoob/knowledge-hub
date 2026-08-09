@@ -60,9 +60,11 @@ export const config = {
    * admin 可在前端切换到完整模式（localStorage），不改此配置。
    */
   uiMode: optional("KH_UI_MODE", "simple") === "full" ? "full" as const : "simple" as const,
-  /** 宽松自动发布：降低可信度门槛（试点优先能发布）。 */
-  publishRelaxed: flag("KH_PUBLISH_RELAXED", true),
-  minAutoPublishScore: Number(optional("KH_MIN_AUTO_PUBLISH_SCORE", "0.35")),
+  /** 规则化自动发布（默认）：信任下降/质量回归/待审修正均会挡住自动发布。 */
+  publishRelaxed: flag("KH_PUBLISH_RELAXED", false),
+  minAutoPublishScore: Number(optional("KH_MIN_AUTO_PUBLISH_SCORE", "0.5")),
+  /** 发布级质量回归门禁：quality_gate 对比父发布（averageScore 下降 / blockingCount 上升）即挡。 */
+  blockOnQualityRegression: flag("KH_BLOCK_ON_QUALITY_REGRESSION", true),
   svnWcPath: optional("KH_SVN_WC_PATH", ""),
   svnSyncEnabled: flag("KH_SVN_SYNC_ENABLED", false),
   svnUpdateCommand: optional("KH_SVN_UPDATE_CMD", "svn update"),
@@ -80,11 +82,15 @@ export const config = {
    */
   eventBusMode: optional("KH_EVENT_BUS_MODE", "inline") === "outbox" ? "outbox" as const : "inline" as const,
   eventOutboxIntervalMs: Number(optional("KH_EVENT_OUTBOX_INTERVAL_MS", "1000")),
-  retrievalEvalEnabled: flag("KH_RETRIEVAL_EVAL_ENABLED", false),
+  retrievalEvalEnabled: flag("KH_RETRIEVAL_EVAL_ENABLED", true),
   retrievalEvalGoldPath: optional("KH_RETRIEVAL_EVAL_GOLD_PATH", "evals/retrieval-gold.json"),
   retrievalEvalMinHitAtK: Number(optional("KH_RETRIEVAL_EVAL_MIN_HIT_AT_K", "0.85")),
   retrievalEvalMinCitationCoverage: Number(optional("KH_RETRIEVAL_EVAL_MIN_CITATION", "0")),
   retrievalEvalBlockOnRegression: flag("KH_RETRIEVAL_EVAL_BLOCK_ON_REGRESSION", true),
+  /** 自动发布后跑一次检索 eval，命中率低于门槛则自动回滚到父发布。 */
+  autoRollbackOnRegression: flag("KH_AUTO_ROLLBACK_ON_REGRESSION", true),
+  /** 同一知识缺口重复反馈 ≥N 次且始终无源 → 自动 dismiss（受控收敛，避免永久堆积）。 */
+  gapFillAutoDismissThreshold: positiveInt("KH_GAP_FILL_AUTO_DISMISS_THRESHOLD", 3),
 };
 
 export const testConfig = {

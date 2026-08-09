@@ -14,6 +14,7 @@ export interface GovernanceDefaults {
   blockOnDeletes: boolean;
   blockOnTrustDecline: boolean;
   blockOnPendingCorrections: boolean;
+  blockOnQualityRegression: boolean;
   autoClusterEnabled: boolean;
   highFrequencyThreshold: number;
   evalEnabled: boolean;
@@ -33,6 +34,7 @@ export const DEFAULT_GOVERNANCE_DEFAULTS: GovernanceDefaults = {
   blockOnDeletes: true,
   blockOnTrustDecline: true,
   blockOnPendingCorrections: true,
+  blockOnQualityRegression: true,
   autoClusterEnabled: true,
   highFrequencyThreshold: 2,
   evalEnabled: false,
@@ -75,6 +77,7 @@ export class GovernanceProfileService {
         blockOnDeletes: d.blockOnDeletes,
         blockOnTrustDecline: d.blockOnTrustDecline,
         blockOnPendingCorrections: d.blockOnPendingCorrections,
+        blockOnQualityRegression: d.blockOnQualityRegression,
       },
       feedback: { autoClusterEnabled: d.autoClusterEnabled, highFrequencyThreshold: d.highFrequencyThreshold },
       eval: {
@@ -176,6 +179,7 @@ function normalizeInput(raw: Record<string, unknown> | KnowledgeGovernanceProfil
     ...boolField(release, "blockOnDeletes"),
     ...boolField(release, "blockOnTrustDecline"),
     ...boolField(release, "blockOnPendingCorrections"),
+    ...boolField(release, "blockOnQualityRegression"),
   };
   if (Object.keys(releasePatch).length) out.release = releasePatch;
   const feedbackPatch = {

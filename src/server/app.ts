@@ -112,9 +112,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
           blockOnDeletes: false,
           blockOnTrustDecline: false,
           blockOnPendingCorrections: false,
+          blockOnQualityRegression: false,
         }
       : {
-          minAutoPublishScore: Number.isFinite(config.minAutoPublishScore) ? config.minAutoPublishScore : 0.7,
+          minAutoPublishScore: Number.isFinite(config.minAutoPublishScore) ? config.minAutoPublishScore : 0.5,
+          blockOnQualityRegression: config.blockOnQualityRegression,
         }),
   });
   const releaseService = createReleaseService(
@@ -195,6 +197,8 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     ? registerReleaseAutomation({
         db: options.db,
         releaseService: ctx.releaseService,
+        governanceProfileService: ctx.governanceProfileService,
+        autoRollbackOnRegression: config.autoRollbackOnRegression,
         diagnostics,
         autoPublishRevisions: async (projectId) => (await ctx.governanceProfileService.resolve(projectId)).release.autoPublishRevisions,
       })

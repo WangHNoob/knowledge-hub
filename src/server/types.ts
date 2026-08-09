@@ -654,6 +654,8 @@ export interface GovernanceReleasePolicy {
   blockOnDeletes: boolean;
   blockOnTrustDecline: boolean;
   blockOnPendingCorrections: boolean;
+  /** 发布级质量回归门禁：quality_gate（averageScore/blockingCount）对比父发布恶化即挡自动发布。 */
+  blockOnQualityRegression: boolean;
 }
 
 export interface GovernanceFeedbackPolicy {

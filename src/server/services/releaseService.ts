@@ -70,6 +70,8 @@ export interface AutoPublishCheck {
     minHitAtK: number;
     minCitationCoverage: number;
   } | null;
+  /** 发布级质量回归明细（quality_gate 对比父发布）。 */
+  qualityRegressions: string[];
 }
 
 export type RetrievalEvalGateFn = (input: {
@@ -262,7 +264,7 @@ export class ReleaseService {
       const revisionDiff = buildReleaseDiff(parentRelease, packages, trustedComponents);
       const revision = buildReleaseRevision(release, revisionDiff);
       const pendingSourceCorrections = await this.loadPendingSourceCorrections(packages);
-      const autoPublish = await this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode), pendingSourceCorrections);
+      const autoPublish = await this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode), pendingSourceCorrections, qualityGate);
       if (options.autoMode && !autoPublish.eligible) {
         throw new AutoPublishEligibilityError(autoPublish);
       }
@@ -415,6 +417,22 @@ export class ReleaseService {
       await span?.fail(error);
       throw error;
     }
+  }
+
+  /**
+   * 对当前发布通道跑一次检索 eval（发布后验证用）。eval 未启用、无黄金集或
+   * 未注入 retrievalEvalGate（测试环境）时返回 null，调用方应视为「无需验证」。
+   */
+  async runRetrievalEval(projectId = "default_project"): Promise<NonNullable<AutoPublishCheck["retrievalEval"]> | null> {
+    const governance = await this.governanceProfileService.resolve(projectId);
+    if (!governance.eval.enabled || !governance.eval.blockOnRegression || !this.retrievalEvalGate) return null;
+    const summary = await this.retrievalEvalGate({ projectId, goldPath: governance.eval.goldPath });
+    if (!summary || summary.total === 0) return null;
+    return {
+      ...summary,
+      minHitAtK: governance.eval.minHitAtK,
+      minCitationCoverage: governance.eval.minCitationCoverage,
+    };
   }
 
   async deleteRelease(releaseId: string, requestedBy: string): Promise<ReleaseRecord> {
@@ -631,6 +649,7 @@ export class ReleaseService {
     components: AssetComponent[],
     autoMode: boolean,
     pendingSourceCorrections: PendingSourceCorrection[],
+    qualityGate: Record<string, unknown>,
   ): Promise<AutoPublishCheck> {
     const governance = await this.governanceProfileService.resolve(release.projectId);
     const changedComponentIds = uniqueSorted([...revision.diff.componentIds.added, ...revision.diff.changedComponents]);
@@ -658,13 +677,21 @@ export class ReleaseService {
       governance.trust.minAutoPublishScore,
     );
     if (belowMinTrust.length > 0) reasons.push("changed_components_below_min_trust_score");
+    // 发布级质量回归门禁：quality_gate（含未变更组件）对比父发布，任一恶化即挡。
+    // 这是「知识质量只升不降」的硬保障：averageScore 下降或 blockingCount 上升都算回归。
+    const qualityRegressions = qualityRegressedAgainstParent(parentRelease, qualityGate);
+    if (governance.release.blockOnQualityRegression && qualityRegressions.length > 0) {
+      reasons.push("quality_regressed");
+    }
     const lintRemediation = await createLintRemediationService(this.db).summary(release.projectId);
     if (lintRemediation.pending > 0 || lintRemediation.failed > 0 || lintRemediation.needsHuman > 0) {
       reasons.push("knowledge_lint_remediation_unresolved");
     }
 
     let retrievalEval: AutoPublishCheck["retrievalEval"] = null;
-    if (governance.eval.enabled && governance.eval.blockOnRegression && this.retrievalEvalGate) {
+    // 检索黄金集回归闸只作用于自动发布（autoMode）：手动发布由发布者人工把关，
+    // 不为此承担全量黄金集检索成本。
+    if (autoMode && governance.eval.enabled && governance.eval.blockOnRegression && this.retrievalEvalGate) {
       const summary = await this.retrievalEvalGate({
         projectId: release.projectId,
         goldPath: governance.eval.goldPath,
@@ -697,6 +724,7 @@ export class ReleaseService {
       belowMinTrust,
       minAutoPublishScore: governance.trust.minAutoPublishScore,
       retrievalEval,
+      qualityRegressions,
     });
 
     return {
@@ -710,6 +738,7 @@ export class ReleaseService {
       pendingSourceCorrections,
       lintRemediation,
       retrievalEval,
+      qualityRegressions,
     };
   }
 
@@ -963,6 +992,7 @@ function buildAutoPublishReasonDetails(input: {
   belowMinTrust?: Array<{ componentId: string; score: number | null }>;
   minAutoPublishScore?: number;
   retrievalEval?: AutoPublishCheck["retrievalEval"];
+  qualityRegressions?: string[];
 }): AutoPublishReasonDetail[] {
   return input.reasons.map((reason) => {
     switch (reason) {
@@ -1067,6 +1097,16 @@ function buildAutoPublishReasonDetails(input: {
             `trustPass=${formatScore(input.retrievalEval?.trustPassRate ?? null)}`,
           ],
         };
+      case "quality_regressed":
+        return {
+          code: reason,
+          label: "发布级质量回归",
+          severity: "blocking",
+          description: "本次发布相对父发布的质量快照（quality_gate，覆盖全部组件）出现恶化；自动发布保证知识质量只升不降。",
+          action: "检查质量回归明细（averageScore 下降 / blockingCount 上升）对应的构建内容，修复后重新构建发布。",
+          count: input.qualityRegressions?.length ?? 0,
+          sampleIds: (input.qualityRegressions ?? []).slice(0, 8),
+        };
       default:
         return {
           code: reason,
@@ -1079,6 +1119,36 @@ function buildAutoPublishReasonDetails(input: {
         };
     }
   });
+}
+
+/**
+ * 发布级质量回归检测：对比父发布的 quality_gate（summarizePackages 产物，
+ * 覆盖**全部**组件——含未变更组件）。
+ * - averageScore 下降超过容差（吸收浮点噪声）→ 回归
+ * - blockingCount 上升 → 回归
+ * 父发布无质量快照（空对象/缺字段）时不做比较，返回空数组。
+ */
+const QUALITY_REGRESSION_SCORE_TOLERANCE = 0.005;
+
+function qualityRegressedAgainstParent(parentRelease: ReleaseRecord | null, next: Record<string, unknown>): string[] {
+  if (!parentRelease) return [];
+  const prev = parentRelease.qualityGate;
+  if (!prev || typeof prev !== "object" || Array.isArray(prev)) return [];
+  const prevScore = numberFromQuality(prev, ["averageScore"]);
+  const nextScore = numberFromQuality(next, ["averageScore"]);
+  if (prevScore === null && Number(prev.blockingCount ?? 0) === 0) return []; // 父发布无有效质量快照
+  const regressions: string[] = [];
+  if (prevScore !== null && nextScore !== null && nextScore + QUALITY_REGRESSION_SCORE_TOLERANCE < prevScore) {
+    regressions.push(`averageScore ${round2(nextScore)} < ${round2(prevScore)}（父发布）`);
+  } else if (prevScore !== null && nextScore === null) {
+    regressions.push("averageScore 无法计算（父发布有值）");
+  }
+  const prevBlocking = Number(prev.blockingCount ?? 0);
+  const nextBlocking = Number(next.blockingCount ?? 0);
+  if (nextBlocking > prevBlocking) {
+    regressions.push(`blockingCount ${nextBlocking} > ${prevBlocking}（父发布）`);
+  }
+  return regressions;
 }
 
 function changedComponentsBelowMinTrust(

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createReleaseService } from "../src/server/services/releaseService";
 import { createGovernanceProfileService } from "../src/server/services/governanceProfileService";
 import { emitKnowledgeEvent } from "../src/server/services/eventService";
-import { registerReleaseAutomation } from "../src/server/services/releaseAutomationService";
+import { registerReleaseAutomation, verifyAndMaybeRollback } from "../src/server/services/releaseAutomationService";
 import { createTestDb, type TestDbHandle } from "./helpers/testDb";
 
 describe("ReleaseService", () => {
@@ -334,6 +334,87 @@ describe("ReleaseService", () => {
       await fixture.cleanup();
     }
   }, 15000);
+
+  it("blocks auto-publish when package-level quality regresses vs the parent release", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_quality_regress" });
+    const service = createReleaseService(fixture.db, fixture.dataDir);
+
+    try {
+      const firstDraft = await service.createDraft({ version: "2026.06.15.qual.1", packageIds: ["pkg_quality_regress"], requestedBy: "admin" });
+      const first = await service.publish(firstDraft.releaseId, "admin");
+      // 发布时 quality_gate.averageScore 由组件 trust 分构成（≈0.96），作为父发布基线。
+      expect(Number(first.qualityGate.averageScore)).toBeGreaterThan(0.9);
+
+      // 内容变更 + 组件质量下降（confidence 0.92 → 0.40）：averageScore 应跌破父发布基线。
+      await fixture.db.adapter.query(
+        "UPDATE asset_components SET title = $2, quality = jsonb_set(quality, '{confidence}', '0.40') WHERE component_id = $1",
+        ["cmp_pkg_quality_regress_page", "Demo Page Updated"],
+      );
+
+      const secondDraft = await service.createDraft({ version: "2026.06.15.qual.2", packageIds: ["pkg_quality_regress"], requestedBy: "admin" });
+      await expect(service.publish(secondDraft.releaseId, "admin", { autoMode: true })).rejects.toThrow(/quality_regressed/u);
+      // 质量回归门禁挡住后，channel 仍指向父发布。
+      expect((await service.getCurrent())?.releaseId).toBe(first.releaseId);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 15000);
+
+  it("rolls back the channel after a post-publish retrieval eval regression", async () => {
+    const fixture = await setupReleaseFixture({ packageId: "pkg_rollback_verify" });
+    let gateCalls = 0;
+    const governance = createGovernanceProfileService(fixture.db, {
+      evalEnabled: true,
+      evalGoldPath: "evals/retrieval-gold.json",
+      evalMinHitAtK: 0.85,
+      evalBlockOnRegression: true,
+    });
+    // 有状态 gate：第 1 次调用（子发布 autoMode 前检）返回达标；第 2 次起（发布后验证）返回回归。
+    const service = createReleaseService(fixture.db, fixture.dataDir, undefined, governance, async () => {
+      gateCalls += 1;
+      const regressed = gateCalls >= 2;
+      return {
+        hitAtK: regressed ? 0.5 : 1,
+        citationCoverage: 1,
+        trustPassRate: 1,
+        total: 10,
+      };
+    });
+
+    try {
+      const firstDraft = await service.createDraft({ version: "2026.06.15.rollback.1", packageIds: ["pkg_rollback_verify"], requestedBy: "admin" });
+      const parent = await service.publish(firstDraft.releaseId, "admin");
+      await fixture.db.adapter.query(
+        "UPDATE asset_components SET title = $2 WHERE component_id = $1",
+        ["cmp_pkg_rollback_verify_page", "Demo Page Updated"],
+      );
+      const secondDraft = await service.createDraft({ version: "2026.06.15.rollback.2", packageIds: ["pkg_rollback_verify"], requestedBy: "admin" });
+      const published = await service.publish(secondDraft.releaseId, "admin", { autoMode: true });
+      expect(published.parentReleaseId).toBe(parent.releaseId);
+
+      const rolledBack = await verifyAndMaybeRollback({
+        db: fixture.db,
+        releaseService: service,
+        published,
+        requestedBy: "system",
+        runId: "run_rollback_verify",
+        packageId: "pkg_rollback_verify",
+        sourceEventId: "evt_build",
+        mode: "revision",
+      });
+      expect(rolledBack).toBe(true);
+      expect((await service.getCurrent())?.releaseId).toBe(parent.releaseId);
+      const { rows: events } = await fixture.db.adapter.query(
+        "SELECT * FROM knowledge_events WHERE event_type = 'release.auto_rolled_back'",
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0].entity_id).toBe(published.releaseId);
+      const payload = typeof events[0].payload_json === "string" ? JSON.parse(events[0].payload_json) : events[0].payload_json;
+      expect(payload).toMatchObject({ rolledBackTo: parent.releaseId, reason: "retrieval_eval_regression" });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 20000);
 
   it("diffs revisions by stable artifactId, not packageId-bearing componentId", async () => {
     // 回归：每次构建都产生新 package（新 componentId = cmp_<packageId>_...），

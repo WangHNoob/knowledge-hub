@@ -3,6 +3,9 @@ import { nanoid } from "nanoid";
 import type { DatabaseHandle, GapFillCandidate, GapFillCandidateStatus } from "../types";
 import { emitKnowledgeEvent } from "./eventService";
 
+/** 同一知识缺口重复反馈 ≥N 次且始终无源 → 自动 dismiss（受控收敛，避免永久堆积）。 */
+export const GAP_FILL_AUTO_DISMISS_THRESHOLD = 3;
+
 export function createGapFillCandidateService(db: DatabaseHandle): GapFillCandidateService {
   return new GapFillCandidateService(db);
 }
@@ -72,7 +75,45 @@ export class GapFillCandidateService {
         },
       });
     }
+    // 预设规则：同一缺口重复反馈已达阈值且始终无源 → 自动 dismiss（可在异常收件箱恢复）。
+    if (candidate.eventCount >= GAP_FILL_AUTO_DISMISS_THRESHOLD && candidate.status === "open") {
+      return this.autoDismiss(candidate);
+    }
     return candidate;
+  }
+
+  private async autoDismiss(candidate: GapFillCandidate): Promise<GapFillCandidate> {
+    const dismissed = await this.dismiss({ projectId: candidate.projectId, candidateId: candidate.candidateId });
+    const final = dismissed ?? candidate;
+    await emitKnowledgeEvent(this.db, {
+      eventType: "gap.fill_candidate_auto_dismissed",
+      entityType: "gap_fill_candidate",
+      entityId: final.candidateId,
+      payload: {
+        projectId: final.projectId,
+        candidateId: final.candidateId,
+        queryKey: final.queryKey,
+        eventCount: final.eventCount,
+        reason: `同 query 反馈达 ${GAP_FILL_AUTO_DISMISS_THRESHOLD} 次且无源，按预设规则自动收敛`,
+      },
+    });
+    return final;
+  }
+
+  /** 对既有 open 候选执行自动收敛（巡检/策略调用）：达阈值且无源 → dismiss。 */
+  async applyAutoDismissPolicies(projectId: string): Promise<number> {
+    const { rows } = await this.adapter.query(
+      `SELECT * FROM gap_fill_candidates
+       WHERE project_id = $1 AND status = 'open' AND event_count >= $2`,
+      [projectId, GAP_FILL_AUTO_DISMISS_THRESHOLD],
+    );
+    let dismissed = 0;
+    for (const row of rows) {
+      const candidate = mapGapFillCandidate(row);
+      const final = await this.autoDismiss(candidate);
+      if (final.status === "dismissed") dismissed += 1;
+    }
+    return dismissed;
   }
 
   async listOpen(projectId: string): Promise<GapFillCandidate[]> {
