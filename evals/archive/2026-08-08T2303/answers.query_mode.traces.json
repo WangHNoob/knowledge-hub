@@ -1,0 +1,242 @@
+[
+  {
+    "id": "EV-001",
+    "ok": true,
+    "status": "completed",
+    "output": "根据 Knowledge Hub 已发布知识（配表 + 概念文档交叉核实），H002 焰星·玲的信息如下：\n\n## 【EV-001】H002 焰星·玲\n\n| 项目 | 字段 | 值 |\n|------|------|-----|\n| 职业 | `class` | **dps**（输出） |\n| 元素 | `element` | **fire**（火） |\n| 专属武器 | `weaponId` | **WP002 焚天大剑** |\n| 稀有度 | `rarity` | **5**（5★） |\n\n**补充字段值（来源 Hero.csv）**：`heroId=H002`、`name=焰星·玲`、`baseAtk=180`、`baseDef=55`、`baseHp=1350`、`tags=大剑;爆发;灼烧`。\n\n**专属武器 WP002 焚天大剑（来源 Weapon.csv）**：`name=焚天大剑`、`rarity=5`、`baseAtk=180`、`subStatType=atkPct`、`subStatValue=0.15`、`passiveSkillId=SK008`。\n\n**文档佐证**（《05-角色与职业体系》表 05-2）：H002 焰星·玲为火系爆发输出（Dot 叠加），核心技能组 SK006 灼烧 / SK007 爆发 / SK008 燃火；文档明确 WP004/WP006 为 4★，其余 6 把专属武器（含 WP002）为 5★，与配表一致。\n\n📚 参考来源\n- [Knowledge Hub] 配表 Hero.csv（gamedata/Hero.csv，trust 0.938/trusted）\n- [Knowledge Hub] 配表 Weapon.csv（gamedata/Weapon.csv，trust 0.938/trusted）\n- [Knowledge Hub] 05-角色与职业体系.md（/concepts/05-角色与职业体系.md）",
+    "executionId": "ffc1acb3-67ab-4e25-b737-bb1e06992fc1",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-002",
+    "ok": true,
+    "status": "completed",
+    "output": "已从 Knowledge Hub 查询到 BF003 冻结的完整定义。以下为答案：\n\n## BF003 冻结（Buff.csv，全库唯一权威定义）\n\n| 字段 | 值 | 说明 |\n|------|-----|------|\n| **类型 kind** | `control` | 控制类状态（tags 标注：冰；控制；不可行动） |\n| **叠层规则 stackRule** | `不可叠加` | 同 Buff 仅保留最新一次，覆盖旧实例，不叠层 |\n| **持续时间 durationSec** | `2.5` | 2.5 秒 |\n| **最大层数 maxStack** | `1` | 上限 1 层 |\n| tickIntervalSec | `-` | 非 DoT，无周期结算 |\n| value | `-` | 无数值修正（纯控制效果） |\n\n> 注：Buff.csv 中 `name/stackRule/tags` 中文字段在 API 返回时出现 UTF-8 乱码，以上中文语义（冻结／不可叠加／冰·控制·不可行动）系与《00-项目总览与术语表》§4.3 及《04-buff与状态机》§2.2 交叉验证所得；数值字段 `kind` / `durationSec` / `maxStack` 本身无编码问题，可信。\n\n## 相关规则补充\n\n- **优先级**：控制类（冻结 BF003 / 破韧 BF011）> 减益 > 增益；**霸体 BF015 免疫冻结/破韧/减速**（但不免疫 DoT）。\n- **边界规则（QA 清单 E7）**：冻结 + 破韧同帧时**冻结优先**，破韧待冻结结束再结算（《04_buff与状态机》§2.1）。\n- **受控期间**：CD 正常走表，能量不回复（《03_技能系统设计》）。\n- **元素反应**：火附着 + 冰附着（含冻结）触发 **BF012 融化**，2s 内下次直接伤害 ×1.5。\n- 注意：文档页面（04/00 等）当前 trust 状态为 `needs_review`（0.55），而 **Buff.csv 配表为 trusted（0.938）**，故数值以配表为准。\n\n📚 参考来源\n- [Knowledge Hub] 配置表 gamedata/Buff.csv（table_schemas/Buff.json，trusted 0.938）\n- [Knowledge Hub] wiki/concepts/04-buff与状态机.md（§2.2 生命周期、§3.2 反应表、§4 结算优先级）\n- [Knowledge Hub] wiki/concepts/00-项目总览与术语表.md（§4.3 BuffID 注册：BF003 冻结）\n- [Knowledge Hub] wiki/concepts/11-边界异常与qa检查清单.md（E7 冻结+破韧同帧）\n- [Knowledge Hub] wiki/concepts/03-技能系统设计.md（受控期间 CD/能量规则）",
+    "executionId": "1b2cceaa-5a6f-4b8a-a0ed-30ec1edb7563",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-003",
+    "ok": true,
+    "status": "completed",
+    "output": "已通过 Knowledge Hub 检索到 DG007 虚境试炼的完整信息，并交叉核对了 Wiki 文档与底层配表 Dungeon.csv（trust=0.938，trusted）。\n\n## DG007 虚境试炼\n\n| 字段（Dungeon.csv） | 值 |\n|------|------|\n| dungeonId | **DG007** |\n| name | 虚境试炼 |\n| type | **endgame**（终局玩法） |\n| staminaCost | **20**（单次体力消耗） |\n| recommendPower | **15000**（推荐战力，单人口径） |\n| dropId | **DR007**（掉落组） |\n| unlockLevel | **60**（解锁等级） |\n\n**字段格式**：`dungeonId=DG007` / `type=endgame` / `staminaCost=20` / `recommendPower=15000` / `dropId=DR007` / `unlockLevel=60`\n\n**补充说明（口径与数值定位）**：\n- 来源《07-副本与关卡节奏.md》表 07-2（副本清单，Dungeon.csv 全量）与配置表 Dungeon 逐字段一致：DG007 虚境试炼 | endgame | 20 | 15000 | DR007 | 60。\n- 来源《02-属性体系与战力评估.md》表 02-3：DG007 对应 **L90 满配 ≈ 15900**（示例角色 H002 焰星·玲），recommendPower=15000 为**单人口径**（全库仅 DG006 影渊裂谷为\"队伍总战力 24000\"口径，其余副本均为单人口径）。\n- 体力口径：全库体力上限 120、日可支配约 300，DG007 单次 staminaCost=20，属于终局高门槛副本（L60 解锁）。\n\n📚 参考来源\n- [Knowledge Hub] 配置表 Dungeon（gamedata/Dungeon.csv，rel_20260808083507_MU7MXj，trust=0.938 trusted）\n- [Knowledge Hub] wiki/concepts/07-副本与关卡节奏.md（表 07-2 副本清单）\n- [Knowledge Hub] wiki/concepts/02-属性体系与战力评估.md（表 02-3 门槛对照）",
+    "executionId": "9d58b1a4-02e6-4b97-ab7d-9b0158912f40",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-004",
+    "ok": true,
+    "status": "completed",
+    "output": "已从权威配表（Skill.csv / SkillLevel.csv / Buff.csv，可信度 0.938 trusted）核实完毕，回答如下。\n\n## 【EV-004】SK014 暗影穿心\n\n**技能归属**：H004（影系角色）· 类型 skill（战技）· 元素 phys\n\n| 字段 | 值 | 说明 |\n|------|-----|------|\n| skillId | SK014 | 技能 ID |\n| cdSec | 6 | 冷却 6 秒（Skill.csv） |\n| energyCost | 15 | 能量消耗 15（Skill.csv） |\n| skillRate | 1.7 | L1 基准倍率（Skill.csv）；L10 满级倍率 3.06（SkillLevel.csv，skillRate=3.06，符合 L10=L1×1.8 成长规则） |\n| buffId | BF004 | 附加 Buff：**破甲** |\n| element | phys | 物理 |\n| description | 穿防打击并施加破甲 | Skill.csv 描述 |\n\n**附加 Buff：BF004 破甲**（Buff.csv）\n- kind=stat（属性类减益），stackRule=刷新，maxStack=1\n- durationSec=8（持续 8 秒）\n- value=-0.30防御（降低 30% 防御）\n- tags=减益;减防\n\n**L10 额外效果**（SkillLevel.csv，level=10）\n- extraEffect=破甲时间+2秒（满级时破甲持续时间 8→10 秒）\n- upgradeCost=累计L1-L10：金币25万；MAT08×30；MAT09×40；MAT10×10\n\n📚 参考来源\n- [Knowledge Hub] 03-技能系统设计.md / wiki/concepts/03-技能系统设计.md（表 03-1 SK014 行）\n- [Knowledge Hub] Skill.csv（gamedata/Skill.csv，SK014：cdSec=6 / energyCost=15 / skillRate=1.7 / buffId=BF004）\n- [Knowledge Hub] SkillLevel.csv（gamedata/SkillLevel.csv，SK014 level=10：skillRate=3.06 / extraEffect=破甲时间+2秒）\n- [Knowledge Hub] Buff.csv（gamedata/Buff.csv，BF004：durationSec=8 / value=-0.30防御 / maxStack=1）",
+    "executionId": "1a260f43-513d-4d28-ae65-32ea9e2ebf06",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-005",
+    "ok": true,
+    "status": "completed",
+    "output": "根据知识库查询结果，**WP005 霜华法杖**的信息如下：\n\n## WP005 霜华法杖\n\n**数据来源表：`gamedata/Weapon.csv`（表 Weapon，trusted）**\n\n| 字段 | 值 |\n|------|-----|\n| weaponId | WP005 |\n| name | 霜华法杖 |\n| rarity | 5（五星） |\n| baseAtk | 120 |\n| subStatType | atkPct（攻击百分比） |\n| subStatValue | 0.12 |\n| passiveSkillId | SK020 |\n\n## 被动技能：SK020 霜愈之祈\n\n**数据来源表：`gamedata/Skill.csv`（表 Skill，trusted）**\n\n| 字段 | 值 |\n|------|-----|\n| skillId | SK020 |\n| name | 霜愈之祈 |\n| heroId | H005（归属角色：霜华法杖持有者） |\n| skillType | passive |\n| element | ice |\n| skillRate | 0 |\n| cdSec | -（被动无冷却） |\n| energyCost | -（被动无消耗） |\n| buffId | BF008 |\n| description | 治疗量提升 15% |\n\n**补充说明**（来自《06-武器与装备系统.md》§2.1 武器基础表）：WP005 霜华法杖为 5★ 辅助/治疗向武器，baseAtk=120 符合「5★ 坦克/辅助类 120–150」的稀有度基底区间；每把武器仅有 1 个被动技能，且被动归属角色（H005）与武器归属一致，满足外键校验规则（Weapon.passiveSkillId → Skill.skillId）。\n\n---\n\n📚 参考来源\n- [Knowledge Hub 配置表] Weapon / gamedata/Weapon.csv（trusted，trust 0.938）\n- [Knowledge Hub 配置表] Skill / gamedata/Skill.csv（trusted，trust 0.938）\n- [Knowledge Hub Wiki] 06-武器与装备系统.md §2.1（wiki/concepts/06-武器与装备系统.md，needs_review）",
+    "executionId": "8cb208aa-fd4c-4828-9463-ce1635281bf2",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-006",
+    "ok": true,
+    "status": "completed",
+    "output": "已通过权威配表 Skill.csv（gamedata/Skill.csv，trusted 0.938）交叉验证，H001 星轨·凌 完整技能组共 4 个技能，与《03-技能系统设计》表 03-1 完全一致：\n\n## H001 星轨·凌 技能组（4 个技能）\n\n| skillId | 名称 | skillType | cdSec | energyCost | element | skillRate | buffId |\n|---------|------|-----------|-------|------------|---------|-----------|--------|\n| SK001 | 凛冬斩击 | normal（普攻） | 0 | 0 | ice | 0.85 | — |\n| SK002 | 霜甲壁垒 | skill（战技） | 10 | 15 | ice | 1.20 | BF006 |\n| SK003 | 永冻领域 | ult（终结技） | 24 | 100 | ice | 3.20 | BF003 |\n| SK004 | 铁壁 | passive（被动） | — | — | ice | —（skillRate=0） | BF006 |\n\n**要点说明**\n- 技能类型（skillType）覆盖四类：normal / skill / ult / passive，对应普攻、战技、终结技、被动。\n- SK003 永冻领域为终结技，energyCost=100（消耗满能量），附加 BF003（冻结控制）；SK002 附加 BF006（护盾）；SK004 铁壁为被动，受击回能 +5 且减伤 10%（被动不进入技能栏，无 CD/能量）。\n- 《05-角色与职业体系》表 05-2 的核心技能组只列了 SK002/SK003/SK004（战技/终结技/被动），未列普攻 SK001；完整 4 技能以《03-技能系统设计》表 03-1 与 Skill.csv 为准（heroId=H001 共 4 行，totalRows=4）。\n- 数据来源可信度：Skill.csv 配表 trust=0.938（trusted）；Wiki 概念页 trust=0.55（needs_review），故以配表字段值为准。\n\n📚 参考来源\n- [Knowledge Hub 配表] Skill.csv（gamedata/Skill.csv，heroId=H001 → SK001/SK002/SK003/SK004）\n- [Knowledge Hub] 03-技能系统设计 / concepts/03-技能系统设计.md（表 03-1，SK001–SK032）\n- [Knowledge Hub] 05-角色与职业体系 / concepts/05-角色与职业体系.md（表 05-2，H001 星轨·凌）",
+    "executionId": "b03c35ee-99d9-4d8c-814f-65d664480064",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-007",
+    "ok": true,
+    "status": "completed",
+    "output": "已获取全部关键数据，交叉验证完成（Skill.csv 与 Buff.csv 均为 trusted 状态，trust score 0.938）。\n\n## 答案\n\n**SK023 雷霆赐福会给全队施加【BF005 攻击提升】增益**，具体效果与参数如下：\n\n**技能本体（来源 gamedata/Skill.csv，字段级）**\n- skillId=SK023，name=雷霆赐福，heroId=H006（灵枢·曜）\n- skillType=ult（终结技），cdSec=30，energyCost=100，element=thunder，skillRate=2.5\n- description=「全队攻击提升」（原文 UTF-8 乱码，按字节还原）\n- buffId=BF005（技能附加 Buff）\n\n**施加的 Buff（来源 gamedata/Buff.csv）**\n- buffId=BF005，name=攻击提升，kind=stat（属性增益）\n- value=+0.15 攻击/层（每层攻击力 +15%）\n- stackRule=叠层，maxStack=3（最多叠加 3 层，满层 +45% 攻击）\n- durationSec=10（持续 10 秒），tags=增益\n\n即：雷霆赐福（终结技）施放后，为**全队**附加「攻击提升」增益，每层 +15% 攻击力，可叠 3 层（maxStack=3），持续 10 秒（durationSec=10）。技能页面《03-技能系统设计》表 03-1 与 Skill.csv / Buff.csv 数据一致。\n\n📚 参考来源\n- [Knowledge Hub] 03-技能系统设计.md（wiki/concepts/03-技能系统设计.md，表 03-1：SK023 行）\n- [Knowledge Hub] Skill.csv（gamedata/Skill.csv，skillId=SK023 行，buffId=BF005，description=全队攻击提升）\n- [Knowledge Hub] Buff.csv（gamedata/Buff.csv，buffId=BF005：value=+0.15攻击/层，maxStack=3，durationSec=10，stackRule=叠层，kind=stat）\n- [Knowledge Hub] 05-角色与职业体系.md（H006 灵枢·曜 技能组：SK022 护盾 / SK023 增益 / SK024 霸体）",
+    "executionId": "6bd13bc2-29a2-41fd-9e73-9979891b0d5a",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-008",
+    "ok": true,
+    "status": "completed",
+    "output": "已通过 Wiki 文档与配表双重交叉验证，信息一致。回答如下：\n\n## 【EV-008】WP006 曜灵法典的被动技能\n\n**WP006 曜灵法典的被动技能为：SK024 灵枢共鸣（全队霸体且免疫击退）**\n\n关键字段（来源：Weapon.csv / Skill.csv 配表，trust 0.938 trusted）：\n\n| 表 | 关键 ID | 字段值 |\n|----|---------|--------|\n| Weapon.csv | weaponId=WP006 | name=曜灵法典，rarity=4，baseAtk=125，subStatType=defPct，subStatValue=0.15，**passiveSkillId=SK024** |\n| Skill.csv | skillId=SK024 | name=灵枢共鸣，heroId=H006，**skillType=passive**，element=thunder，skillRate=0，buffId=BF015，description=全队霸体且免疫击退 |\n\n**属于角色：H006 灵枢·曜（雷系增益辅助）**\n- 来源：《05-角色与职业体系》表 05-2：`H006 | 灵枢·曜 | support | thunder | WP006 曜灵法典 | SK022 护盾 / SK023 增益 / SK024 霸体`\n- 归属校验链：`Hero.weaponId=WP006 → Weapon.passiveSkillId=SK024 → Skill.heroId=H006`，被动技能归属角色与武器归属一致（H006），符合《06-武器与装备系统》\"被动归属角色与武器归属一致，禁止错挂\"的规则 ✔\n\n📚 参考来源\n- [Knowledge Hub] 06-武器与装备系统.md / wiki/concepts/06-武器与装备系统.md（表 06-1，WP006 行）\n- [Knowledge Hub] 05-角色与职业体系.md / wiki/concepts/05-角色与职业体系.md（表 05-2，H006 行）\n- [Knowledge Hub] 配表 Weapon.csv（gamedata/Weapon.csv，WP006 行）\n- [Knowledge Hub] 配表 Skill.csv（gamedata/Skill.csv，SK024 行）",
+    "executionId": "b024f6c5-f0bb-4696-94b2-546bdfc5a78e",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-009",
+    "ok": true,
+    "status": "completed",
+    "output": "已从配表（trusted，0.938）与概念文档获取到 DG006 的完整掉落数据，回答如下：\n\n## DG006 影渊裂谷掉落组（DR006）产出\n\n**副本信息（Dungeon.csv）**：`dungeonId=DG006`，`type=coop`，`staminaCost=20`，`recommendPower=24000`（队伍总战力口径），`dropId=DR006`，`unlockLevel=40`。\n\n**掉落组 DR006（DropTable.csv，dungeonId=DG006）共 2 条产出**，weight 合计 1000（符合「同 dropId 内 weight 合计=1000」规则），无 pity 保底（pity 留空）：\n\n| dropId | itemType | itemId | weight | minQty | maxQty | pity |\n|--------|----------|--------|--------|--------|--------|------|\n| DR006 | currency | DUNGEON_TOKEN（组队代币） | 700 | 4 | 6 | （空） |\n| DR006 | material | MAT03（星尘结晶） | 300 | 1 | 2 | （空） |\n\n**解读**：\n- 主掉落为 **DUNGEON_TOKEN 组队代币**（weight=700，单次 4–6 个，期望约 5.0 ± 1），用于商店兑换 SH006–SH008（《08_掉落与经济闭环》§2.1、§3.3）。\n- 次掉落为 **MAT03 星尘结晶**（weight=300，单次 1–2 个），用途为角色升级经验兑换/高级合成。\n\n⚠️ 注意：Dungeon.csv 中 `name` 字段存在编码乱码（显示为乱码字符），名称「影渊裂谷」以《07_副本与关卡节奏》表 07-2 文档为准。\n\n📚 参考来源\n- [Knowledge Hub 配置表] gamedata/DropTable.csv（dropId=DR006 行，trusted 0.938）\n- [Knowledge Hub 配置表] gamedata/Dungeon.csv（dungeonId=DG006 行，trusted 0.938）\n- [Knowledge Hub] 07-副本与关卡节奏.md /concepts/07-副本与关卡节奏.md（表 07-2）\n- [Knowledge Hub] 08-掉落与经济闭环.md /concepts/08-掉落与经济闭环.md（§2.1 货币枚举、§3.3 掉落期望、§5 防膨胀）",
+    "executionId": "3218a815-1ca7-4596-85cb-c1450d584e1a",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-010",
+    "ok": true,
+    "status": "completed",
+    "output": "## EV-010 答案：SH010 商品信息\n\n**SH010 = 武器·焚天大剑**（5★ 武器，itemId=WP002），来自 **ShopItem.csv** 配表，权威数据如下：\n\n| 字段 | 值 | 说明 |\n|------|-----|------|\n| shopId | SH010 | 商品 ID |\n| name | 武器·焚天大剑 | 对应 Weapon 表 WP002 |\n| costCurrency | GEM | 星钻（付费货币） |\n| costAmount | 3200 | 单价 3200 星钻 |\n| itemType | weapon | 商品类型：武器 |\n| itemId | WP002 | 外键 → Weapon.csv |\n| weeklyLimit | 1 | 每周限购 1 把 |\n| unlockCondition | 通关DG009 | 首次通关 DG009 后解锁 |\n\n**补充说明（09-商店与兑换规则.md §2.2/兑换规则）：**\n- **限购规则**：weeklyLimit=1，每周一 04:00 刷新（与周循环同步），次数用尽当周不可再购；限购 1 把是为防五星武器人手一件稀释差异化。\n- **解锁规则**：未满足 unlockCondition 时商品置灰；SH010 仅首次通关 DG009 后开放。\n- **定位**：SH010 与 SH001/SH002/SH012 同为星钻付费转化点；文档标注该定价约为 3 单首充，存在未决问题（风险 R1，待商业化组确认）。\n- 对应武器 WP002 属性（Weapon.csv）：rarity=5、baseAtk=180、subStatType=atkPct、subStatValue=0.15、passiveSkillId=SK008。\n\n**数据可信度**：ShopItem.csv / Weapon.csv 配表 schema 可信度 0.938（trusted）；09 文档页为 0.55（needs_review），数值以配表为准。\n\n📚 参考来源\n- [Knowledge Hub 配表] ShopItem.csv（gamedata/ShopItem.csv，schema 可信度 0.938）\n- [Knowledge Hub 配表] Weapon.csv（WP002 行，schema 可信度 0.938）\n- [Knowledge Hub Wiki] 09-商店与兑换规则 / concepts/09-商店与兑换规则.md（§2.2 商品清单、兑换规则）",
+    "executionId": "5d1fbd0d-52d3-4051-8c5d-72abb910356c",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-011",
+    "ok": true,
+    "status": "completed",
+    "output": "【题目 EV-011】答案如下：\n\n## EQ005 烈焰之冠\n\n| 字段 | 值 |\n|------|-----|\n| **equipId** | EQ005 |\n| **name** | 烈焰之冠 |\n| **slot** | head（头部） |\n| **setId（所属套装）** | S002 烈焰套装（5★） |\n| **rarity** | 5 |\n| **heroClass（限定职业）** | dps（仅输出职业，对应 H002 / H003 / H004） |\n| **mainStatType / mainStatValue（主词条）** | critRate=0.07（暴击率 +7%） |\n\n**补充说明：**\n- **所属套装**：S002「烈焰」套装（5★），套装效果见《06-武器与装备系统》§3.2：2 件套＝暴击伤害 +15%，4 件套＝终结技倍率 +12%。\n- **职业限定**：heroClass=dps，S002 烈焰套仅限 dps 职业装备（H002/H003/H004）；而 S001 星尘套为 all（全职业）。\n- **来源**：该行来自配表 **Equipment.csv（gamedata/Equipment.csv）**，字段 equipId / name / slot / mainStatType / mainStatValue / setId / rarity / heroClass 全部匹配（配置表可信度 0.938，状态 trusted）；Wiki《06-武器与装备系统.md》§3.1 装备表（Equipment.csv 全量）给出相同数据，交叉验证一致。\n\n📚 参考来源\n- [Knowledge Hub] 06-武器与装备系统.md §3.1（wiki/concepts/06-武器与装备系统.md，状态 needs_review，trust 0.55，已反馈 low_trust 供复核）\n- [Knowledge Hub] 配置表 Equipment.csv（gamedata/Equipment.csv，equipId=EQ005 行，trusted 0.938）\n- [Knowledge Hub] 11-边界异常与QA检查清单.md（佐证：EQ005 主词条 critRate、heroClass=dps 匹配）",
+    "executionId": "1c3e7d27-b63b-49e1-b7f5-73283615af67",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-012",
+    "ok": true,
+    "status": "completed",
+    "output": "已获取公式与全部配表数据，核对完成，计算如下。\n\n## 战力计算（EV-012）\n\n**公式 02-1**（《02-属性体系与战力评估》§3.1，权威来源）：\n```\nPower = round( ATK×3 + DEF×4 + HP×0.4 + weaponAtk×1.5 + equipPower + breakthroughPower )\n```\n其中 equipPower = Σ 装备主词条 × 表 02-2 折算系数（critRate=300 / atkPct=250，per 1.00）。\n\n### 中间项\n\n| 项 | 数据来源 | 取值 | 计算 |\n|---|---|---|---|\n| ATK | HeroLevel.csv（H002, level=40）| atk=650 | 650×3 = **1950** |\n| DEF | HeroLevel.csv（H002, level=40）| def=200 | 200×4 = **800** |\n| HP | HeroLevel.csv（H002, level=40）| hp=4500 | 4500×0.4 = **1800** |\n| weaponAtk | Weapon.csv（WP002, baseAtk=180，强化 L1 无加成）| baseAtk=180 | 180×1.5 = **270** |\n| equipPower（EQ005）| Equipment.csv：mainStatType=critRate, mainStatValue=0.07 | 0.07×300 | **21** |\n| equipPower（EQ006）| Equipment.csv：mainStatType=atkPct, mainStatValue=0.12 | 0.12×250 | **30** |\n| equipPower 合计 | | 21+30 | **51** |\n| breakthroughPower | 题目未给突破，L40 按 0 | | **0** |\n\n### 结果\n\n```\nPower = 1950 + 800 + 1800 + 270 + 51 + 0 = 4871\nround(4871) = 4871\n```\n\n**H002 在 L40、WP002 强化 L1、佩戴 S002 两件（EQ005+EQ006）时的战力 = 4871**，与《02-属性体系与战力评估》§3.3 验证示例（≈4871 ≈ 4900，与 DG003 recommendPower=4500 同数量级）完全一致 ✔。\n\n补充说明：WP002（baseAtk=180）强化 L1 即武器面板攻击 weaponAtk=180；EQ005/EQ006 均属 S002 套装且 heroClass=dps，符合 H002（class=dps）佩戴条件。\n\n📚 参考来源\n- [Knowledge Hub] 02-属性体系与战力评估 / concepts/02-属性体系与战力评估.md（§3.1 公式 02-1、§3.2 表 02-2、§3.3 验证示例）\n- [Knowledge Hub 表] Hero.csv（heroId=H002, weaponId=WP002, rarity=5）\n- [Knowledge Hub 表] HeroLevel.csv（heroId=H002, level=40, atk=650, def=200, hp=4500）\n- [Knowledge Hub 表] Weapon.csv（weaponId=WP002, baseAtk=180）\n- [Knowledge Hub 表] Equipment.csv（equipId=EQ005 critRate 0.07 / EQ006 atkPct 0.12, setId=S002）",
+    "executionId": "35ce3009-402e-4c26-9700-dbc78e8c6d0c",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-013",
+    "ok": true,
+    "status": "completed",
+    "output": "根据知识库已确认数据，答案如下：\n\n## 火系攻击的 elemMul\n\n| 攻击元素 | 目标元素 | elemMul（multiplier） | 判定 |\n|----------|----------|----------------------|------|\n| fire | ice（冰系） | **1.25** | 克制（fire→ice，增伤） |\n| fire | thunder（雷系） | **0.80** | 被克制（thunder→fire，减伤） |\n\n- **火系打冰系敌人：elemMul = 1.25**（三角克制链 fire→ice→thunder→fire 中的克制方向）\n- **火系打雷系敌人：elemMul = 0.80**（处于三角克制链中被克制方向）\n\n**数据来源**\n- 配表 `ElementChart.csv`（gamedata），字段 `attackElement=fire / targetElement=ice / multiplier=1.25`；`attackElement=fire / targetElement=thunder / multiplier=0.8`，表可信度 0.938（trusted）。\n- 文档《01-战斗框架与伤害公式》§2.2 元素克制段（权威）：\"elemMul 唯一数据源为 ElementChart.csv，规则为三角克制：fire→ice→thunder→fire，phys 全中性\"，fire 行对 ice=1.25、thunder=0.80、fire=1.00、phys=1.00。\n\n> 补充口径：克制判定以攻击技能的 `element` 与目标身上最新的元素附着为准；无附着按 phys 中性（multiplier=1.00）处理。\n\n📚 参考来源\n- [Knowledge Hub] 配表 ElementChart.csv（gamedata/ElementChart.csv，字段 attackElement/targetElement/multiplier，rowCount=5）\n- [Knowledge Hub] 01-战斗框架与伤害公式.md §2.2 元素克制段（/concepts/01-战斗框架与伤害公式.md）",
+    "executionId": "f87a5d60-76ea-47a8-86fe-1e9d0e666725",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-014",
+    "ok": true,
+    "status": "completed",
+    "output": "## 查询结果：SK011 万雷天降 L10 倍率\n\n**SK011 万雷天降（万雷天降）在 L10 的倍率为 `skillRate=8.1`。**\n\n### 数据来源（两张配表交叉验证）\n\n**1. `SkillLevel.csv`（gamedata/SkillLevel.csv，trust=0.938 trusted）**\n按 `skillId=SK011, level=10` 精确命中 1 行：\n\n| 字段 | 值 |\n|------|-----|\n| skillId | SK011 |\n| level | 10 |\n| **skillRate** | **8.1** |\n| extraEffect | 感电层数上限+2 |\n| upgradeCost | 累计L1-L10:金币40万;MAT08x40;MAT09x60;MAT10x20 |\n\n**2. `Skill.csv`（gamedata/Skill.csv，trust=0.938 trusted）** — SK011 基础定义（L1 基准）\n- skillId=SK011，name=万雷天降，heroId=H003，skillType=ult，cdSec=25，energyCost=100，element=thunder，skillRate=4.5（L1 基准值），buffId=BF002\n\n### 说明\n- 按《10_配表规范与外键约定》§5，SkillLevel 采用「每技能 1 行 L10 断点」设计，L1 基准取 Skill.skillRate（4.5），L10 断点即上表 `skillRate=8.1`，即 **L10 倍率为 8.1 倍**。\n- 注意：Wiki 文档页（如 03-技能系统设计.md）trust 为 needs_review（0.55），但本答案直接取自已发布配表数据（trusted），可信度更高。\n\n📚 参考来源\n- [Knowledge Hub 配置表] SkillLevel / gamedata/SkillLevel.csv（skillId=SK011, level=10 → skillRate=8.1）\n- [Knowledge Hub 配置表] Skill / gamedata/Skill.csv（SK011 → skillRate=4.5, heroId=H003, skillType=ult, cdSec=25, energyCost=100, element=thunder, buffId=BF002）\n- [Knowledge Hub Wiki] 03-技能系统设计.md /concepts/03-技能系统设计.md（SK011 万雷天降 技能定义）\n- [Knowledge Hub Wiki] 10-配表规范与外键约定.md /concepts/10-配表规范与外键约定.md（SkillLevel L10 断点设计）",
+    "executionId": "e41ceaae-d003-42d0-a1b1-66299284c912",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-015",
+    "ok": true,
+    "status": "completed",
+    "output": "已获取全部权威数据，答案如下：\n\n## EV-015 破韧状态（BF011）数值解答\n\n### 1️⃣ 破韧状态下目标受到的伤害修正\n目标处于破韧状态【BF011】时，受到伤害 **+25%**，即伤害公式中的破韧修正 **`brokenMul=1.25`**。\n\n- 出处：《01-战斗框架与伤害公式》§2.3（权威）：*\"目标处于破韧状态【BF011 破韧】时，`brokenMul = 1.25`\"*\n- 配表核对：`Buff.csv` 中 BF011 行 `value=受击+0.25`（受击伤害增加 0.25），与文档一致\n- 结算位置：公式 01-1 基础伤害 = `ATK × skillRate × (1 − DEF/(DEF+defConst)) × elemMul × brokenMul × reactionMul`\n\n### 2️⃣ 破韧状态持续时间\n**`durationSec=2.5`（2.5 秒）**，结束后目标恢复行动、韧性回满。\n\n- 配表：`Buff.csv` → BF011 行 `durationSec=2.5`、`kind=stance`（韧性条类状态）、`stackRule=不可叠加`、`maxStack=1`\n- 文档：《04-Buff与状态机》§2.1 状态机：*\"破韧 --> 正常：2.5s 后恢复，韧性回满\"*，期间目标不可行动、受击 +25%\n\n### 3️⃣ Boss 韧性恢复惩罚时长\n**12 秒**。Boss 破韧后 **12s 内韧性恢复速度 ×2**（防止无限连控）。\n\n- 出处：《04-Buff与状态机》§2.1（权威）：*\"Boss 破韧后 12s 内韧性恢复速度 ×2（防无限连控）\"*\n\n> ⚠️ 备注：上述 wiki 页面当前 trust=0.55（needs_review，规格完整度上限 55%），但核心数值均已由 **trusted（0.938）的 Buff.csv 配表**交叉验证，文档与配表一致，可放心采用。\n\n📚 参考来源\n- [Knowledge Hub] 04-buff与状态机.md（/concepts/04-buff与状态机.md，§2.1 破韧状态机权威）\n- [Knowledge Hub] 01-战斗框架与伤害公式.md（/concepts/01-战斗框架与伤害公式.md，§2.3 brokenMul=1.25）\n- [Knowledge Hub] 配置表 Buff（gamedata/Buff.csv，BF011 行：durationSec=2.5 / value=受击+0.25 / maxStack=1）",
+    "executionId": "b5926815-4ff3-47aa-89ee-f3ea837584c8",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-016",
+    "ok": true,
+    "status": "completed",
+    "output": "## 答案（EV-016）\n\n以下内容来自权威来源《01-战斗框架与伤害公式.md》§2「基础伤害公式」及 §2.1「减伤段（权威）」。\n\n### 1. 公式 01-1 中减伤段的完整表达式\n\n**公式 01-1（核心伤害）：**\n```\n基础伤害 = ATK × skillRate × (1 − DEF/(DEF + defConst)) × elemMul × brokenMul × reactionMul\n最终伤害 = 基础伤害 × (crit ? critMul : 1) × Σbuff修正 × (1 − 目标减伤)\n```\n\n- **减伤段表达式**：`(1 − DEF/(DEF + defConst))`，即基础伤害乘算 `(1 − 减伤率)`；其中 **减伤率 = `DEF/(DEF + defConst)`**。\n- 最终伤害尾部还有一段独立的 `(1 − 目标减伤)` 乘区，属于目标减伤类修正。\n\n### 2. defConst 取值\n\n- **`defConst = 1000`**，文档明确标注「全库唯一，禁止改值」。\n- 校验点：DEF=1000 时减伤 50%；DEF=3000 时减伤 75%。\n\n### 3. 减伤上限\n\n- **减伤率上限 80%**（§2.1 权威规则；R3 风险项也提及「减伤上限 80% 与 defConst=1000 的组合尚未经过极限堆防压力测试」）。\n\n### 4. 保底伤害\n\n- **最低伤害保底：任何结算结果 ≥ 1**（防除零与负值穿透）。\n\n---\n\n**补充说明**：本答案引用的组件 `cmp_pkg_run_20260808163506513_his_pl_wiki_concepts_01_md_f5b3f3637b` 当前信任状态为 `needs_review`（trust=0.55，证据数 1，置信度 0.72），我已按规则登记 low_trust 反馈（taskId: task_mcp_knowledge_gap_UmqtYW），供复核。数值本身与《12-版本变更记录》中「公式 01-1 定稿：defConst=1000」一致，可交叉印证。\n\n📚 参考来源\n- [Knowledge Hub] 01-战斗框架与伤害公式 / wiki/concepts/01-战斗框架与伤害公式.md（§2 公式 01-1、§2.1 减伤段）\n- [Knowledge Hub] 12-版本变更记录-v0-1 / wiki/concepts/12-版本变更记录-v0-1.md（defConst=1000 定稿交叉印证）\n- [Knowledge Hub] 11-边界异常与qa检查清单 / wiki/concepts/11-边界异常与qa检查清单.md（伤害公式全局唯一性）",
+    "executionId": "398d155d-7fc0-4360-8f46-de22d7b1a0d7",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-017",
+    "ok": true,
+    "status": "completed",
+    "output": "已获取全部配表数据，现在按权威战力公式（公式 02-1）核算。\n\n## 结论\n\n**H002「焰星·玲」L100 满配（WP002 强化 L50 + 4 阶段突破 + S002 两件）战力 ≈ 17800（精确核算 17778）。可挑战副本：DG009 星轨遗迹·EX（recommendPower=17000）**，同时 DG007 虚境试炼（recommendPower=15000）及更低门槛副本（DG001–DG005、DG008、DG010）也均可挑战；DG006 影渊裂谷为**队伍总战力口径**（recommendPower=24000，type=coop），不属单人口径。\n\n## 核算明细（来源：公式 02-1 + 各配表）\n\n战力公式：`Power = round(ATK×3 + DEF×4 + HP×0.4 + weaponAtk×1.5 + equipPower + breakthroughPower)`\n\n| 分项 | 数据来源 | 数值 |\n|------|----------|------|\n| ATK×3 | HeroLevel.csv：H002 L100 断点 atk=2100 | 6300 |\n| DEF×4 | HeroLevel.csv：H002 L100 断点 def=650 | 2600 |\n| HP×0.4 | HeroLevel.csv：H002 L100 断点 hp=16200 | 6480 |\n| weaponAtk×1.5 | Weapon.csv：WP002 baseAtk=180，L50 强化 ≈ baseAtk×4.3 ≈ 774（《06》§2.2） | 1161 |\n| equipPower | Equipment.csv：EQ005（S002/head）critRate=0.07×300 + EQ006（S002/body）atkPct=0.12×250 | 51 |\n| breakthroughPower | Breakthrough.csv：H002 全 4 阶段 statBonus = HP+4% / ATK+4% / DEF+6% / HP+8%（折算 HP+12%→777.6、ATK+4%→252、DEF+6%→156） | ≈1186 |\n\n**合计 ≈ 17778**，与《02_属性体系与战力评估》§3.3 表 02-3 中「DG009 星轨遗迹·EX（recommendPower=17000）对应 L100 满配 ≈ 17800（含突破）」一致 ✔\n\n## 关键 ID 与字段\n\n- **H002**：Hero.csv → heroId=H002、name=焰星·玲、class=dps、element=fire、weaponId=WP002、rarity=5、baseAtk=180 / baseDef=55 / baseHp=1350\n- **WP002**：Weapon.csv → weaponId=WP002、baseAtk=180、subStatType=atkPct、subStatValue=0.15、强化等级 L1–50（L50 面板攻击 ≈ 774）\n- **S002 两件**：EQ005（烈焰之冠，slot=head，critRate=0.07）、EQ006（烈焰战铠，slot=body，atkPct=0.12）；S002 限定 heroClass=dps，H002 可装备；套装效果（2 件套暴伤+15%）按《02》R1 未计入战力公式\n- **副本门槛**（Dungeon.csv）：DG009 星轨遗迹·EX recommendPower=17000、unlockLevel=80、type=main；DG007 虚境试炼 recommendPower=15000；DG006 影渊裂谷 recommendPower=24000（coop 队伍总战力口径）\n\n📚 参考来源\n- [Knowledge Hub] 02-属性体系与战力评估 / concepts/02-属性体系与战力评估.md（公式 02-1、表 02-2/02-3）\n- [Knowledge Hub] 05-角色与职业体系 / concepts/05-角色与职业体系.md（H002 档案、突破表）\n- [Knowledge Hub] 06-武器与装备系统 / concepts/06-武器与装备系统.md（WP002、强化曲线、S002）\n- [配置表] Hero.csv（H002 行，trusted）\n- [配置表] HeroLevel.csv（H002 L100 断点 atk=2100/def=650/hp=16200，trusted）\n- [配置表] Breakthrough.csv（H002 4 阶段 statBonus，trusted）\n- [配置表] Equipment.csv（EQ005/EQ006，trusted）\n- [配置表] Dungeon.csv（DG001–DG010 recommendPower，trusted）",
+    "executionId": "eb4c60c0-7ef0-4b54-8f9a-29c3a5cb381f",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-018",
+    "ok": true,
+    "status": "completed",
+    "output": "已从权威配置表 Breakthrough.csv 查询到 H002 全部 4 个突破阶段数据，汇总如下。\n\n## H002（焰星·玲）突破 1→4 阶段总消耗\n\n**各阶段明细（来源：gamedata/Breakthrough.csv，trust=0.938 trusted）**\n\n| stage | levelReq | costGold | material1Id | material1Qty | material2Id | material2Qty |\n|-------|----------|----------|-------------|--------------|-------------|--------------|\n| 1 | 20 | 20000 | MAT04 | 3 | MAT14 | 2 |\n| 2 | 40 | 50000 | MAT04 | 6 | MAT14 | 4 |\n| 3 | 60 | 120000 | MAT04 | 10 | MAT14 | 8 |\n| 4 | 80 | 300000 | MAT04 | 15 | MAT14 | 12 |\n\n**累计消耗（阶段 1→4 求和）：**\n- **金币 costGold = 20000 + 50000 + 120000 + 300000 = 490000**\n- **属性材料 MAT04（燃焰之核，H002 为 fire 元素）material1Qty = 3 + 6 + 10 + 15 = 34**\n- **通用材料 MAT14 material2Qty = 2 + 4 + 8 + 12 = 26**\n\n即 H002 从突破阶段 1 升至阶段 4，共需 **costGold=490000 金币、MAT04×34、MAT14×26**。\n\n> 说明：MAT04（燃焰之核）为火系属性材料，映射关系见《05-角色与职业体系》§4（H002/H008 fire → MAT04）；MAT14 为通用突破材料。若题意为「阶段 1 到 4」仅指升到 4 星所需的 3 次突破（阶段 1→2、2→3、3→4），则不含 stage 4 自身消耗，但按「到达阶段 4」口径上述累计即为正确结果。\n\n📚 参考来源\n- [Knowledge Hub] 配置表 Breakthrough / gamedata/Breakthrough.csv（kb_query_table，heroId=H002，4 行）\n- [Knowledge Hub] 05-角色与职业体系.md §4 突破系统（wiki/concepts/05-角色与职业体系.md）\n- [Knowledge Hub] 配置表 Schema Breakthrough.json（table_schemas/Breakthrough.json）",
+    "executionId": "30f000d4-ef66-469d-8d3c-a2240e5d28b4",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-019",
+    "ok": true,
+    "status": "completed",
+    "output": "已从知识库权威文档获取完整答案。\n\n## 【EV-019】每日可支配体力与标准分配方案\n\n### 一、每日可支配体力：约 300 点\n\n依据《07-副本与关卡节奏.md》§2.1（体力基础）：\n\n| 组成 | 数值 |\n|------|------|\n| 体力上限 | 120 |\n| 恢复速度 | 6 分钟/点 → 自然恢复 240/天 |\n| 每日补给（12:00 / 18:00 各 30） | +60/天 |\n| **每日可支配体力** | **≈ 300** |\n\n### 二、标准分配方案（三项，表 07-1 权威规划）\n\n| 优先级 | 活动 | 单次消耗（staminaCost） | 每日次数 | 日消耗 | 产出 |\n|--------|------|------------------------|----------|--------|------|\n| ① 金币 | DG010 黄金矿脉 | 10 | 10 | 100 | GOLD（约 2 万/日） |\n| ② 武器材料 | DG004 赤炎熔炉 | 12 | 8 | 96 | MAT01 / MAT02 |\n| ③ 角色突破 | DG005 寒渊试炼 | 12 | 6 | 72 | 突破材料 |\n\n**三项合计：100 + 96 + 72 = 268/日**\n\n### 三、弹性余量：32 点\n\n- 300 − 268 = **32 点弹性余量**，可投入主线推进（DG001–DG003，staminaCost=10–12）或其他副本。\n- 另注：周常组队本 **DG006 影渊裂谷**（staminaCost=20，recommendPower=24000 为队伍总战力口径）每周 3 次双倍，占用周预算 **60 点/周**；PVP（DG008）不消耗体力。\n- 总量与《08-掉落与经济闭环》§4 产出表对齐，保证「刷得动、养得起」。\n\n### 说明\n- 数据来源：Knowledge Hub 已发布 Wiki 页面《07-副本与关卡节奏.md》（**副本清单、体力经济与解锁节奏的唯一权威来源**，含表 07-2 Dungeon.csv 全量 DG001–DG010）。\n- 可信度提示：该页面 trust score=0.55（needs_review），证据数 1；Dungeon.csv 未作为结构化配置表发布（kb_list_tables 查询 Dungeon 无注册表），以上数值以权威 Wiki 文档为准，未做外部推测。\n\n📚 参考来源\n- [Knowledge Hub] 07-副本与关卡节奏.md（/concepts/07-副本与关卡节奏.md，componentId: cmp_pkg_run_20260808163506513_his_pl_wiki_concepts_07_md_4d7f947677）",
+    "executionId": "12fcc5d8-73fa-4051-99b7-8d64f44d9731",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-020",
+    "ok": true,
+    "status": "completed",
+    "output": "## 【题目 EV-020】武器 L1→L50 满强化金币成本与周期\n\n**结论：累计金币约 150 万（规划值），按日均金币产出 8–10 万折算约 2 周满强化。** 该数值来自概念文档（非配表字段），知识库中无独立武器强化等级表，仅有 Weapon.csv（字段 weaponId / baseAtk / subStatType / subStatValue / passiveSkillId），以下为知识库原文信息：\n\n### 1. 满强化金币成本\n- **累计约 150 万金币**（来源：《06-武器与装备系统》§2.2 强化曲线 +《08-掉落与经济闭环》§4 表 08-2 经济闭环校验）\n- 消耗构成：金币 + 强化材料，按等级分段：\n  - **MAT01 基础合金**：强化 L1–30\n  - **MAT02 高级合金**：强化 L31–50\n- 强化规则：**不可降级、无失败惩罚**（L1–50 全程）\n\n### 2. 强化面板成长（Weapon.csv 的 baseAtk 字段）\n- 每级面板攻击 = `baseAtk × 1.03^(L-1)`，L50 ≈ `baseAtk × 4.3`\n- 示例：**WP002 焚天大剑** baseAtk=180 → L50 攻击 ≈ 774\n\n### 3. 大致周期\n- 日均金币产出约 8–10 万（**DG010** 金币本，单次期望 GOLD 2000±500）\n- 150 万 ÷ 8–10 万/天 ≈ **15–19 天，文档结论为「约 2 周」**（《08》表 08-2）\n- ⚠️ 注意：《06》R1 风险项标注「节奏待运营确认」，且该数值为概念文档规划值、无配表字段支撑，引用时请按规划口径使用。\n\n### 可信度说明\n- 引用的两个概念页（06/08）trust=0.55、status=needs_review，已按 low_trust 上报审核（task_mcp_knowledge_gap_NSw8co / task_mcp_knowledge_gap_yIUnaK）\n- 支撑配置表（Weapon.csv 等 12 张）trusted=0.938，但其中**无武器强化成本/等级的专门字段**\n\n📚 参考来源\n- [Knowledge Hub] 06-武器与装备系统 / wiki/concepts/06-武器与装备系统.md（§2.2 强化曲线、§R1）\n- [Knowledge Hub] 08-掉落与经济闭环 / wiki/concepts/08-掉落与经济闭环.md（§2 材料枚举、§4 表 08-2）\n- [Knowledge Hub] 配置表 Weapon（gamedata/Weapon.csv，weaponId/baseAtk 字段，trusted=0.938）\n- [Knowledge Hub] 配置表 DropTable / Dungeon（gamedata，DG010 金币产出锚点）\n- 已上报低可信度审核：task_mcp_knowledge_gap_NSw8co、task_mcp_knowledge_gap_yIUnaK",
+    "executionId": "665a5433-6682-4478-9dd0-2b953626c942",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-021",
+    "ok": true,
+    "status": "completed",
+    "output": "## EV-021 结论：商店周限购全部拉满后 GOLD 周支出 > 周产出，刻意制造防通胀缺口\n\n### 一、GOLD 周支出（商店周限购拉满）\n\n来源：`ShopItem.csv`（表 ShopItem，trust=0.938 trusted，共 12 商品 SH001–SH012）。其中 `costCurrency=GOLD` 的商品 4 个，按 `costAmount × weeklyLimit` 计算：\n\n| ShopID | 商品 | costAmount | weeklyLimit | 周 GOLD 支出 |\n|--------|------|-----------|-------------|-------------|\n| SH003 | 经验书·中级（MAT12） | 10000 | 30 | 300,000 |\n| SH004 | 基础合金（MAT01） | 5000 | 50 | 250,000 |\n| SH005 | 高级合金（MAT02） | 20000 | 20 | 400,000 |\n| SH009 | 技能书·中级（MAT09） | 25000 | 10 | 250,000 |\n\n- **配表实测口径**：合计 = **1,200,000 GOLD/周（120 万）**\n- **文档权威口径**（《09_商店与兑换规则》§3）：全限购拉满周支出汇总为 GEM 490 + DUNGEON_TOKEN 390 + ARENA_POINT 480 + **GOLD 约 97 万**（与配表实测 120 万不一致，GEM/DT 汇总同样对不上配表，已按反馈策略上报复核，文档状态 needs_review、correctionStatus=pending）\n\n### 二、GOLD 周产出\n\n- 日均金币产出约 8–10 万（《06_武器与装备系统》R1：武器满强化约 150 万 / 日均 8–10 万 ≈ 2 周；《08_掉落与经济闭环》§4 同口径）\n- **周产出 = 56 万 ~ 70 万**（8万×7 至 10万×7，《09_商店与兑换规则》§3 引用口径一致）\n\n### 三、对比与防通胀缺口\n\n| 指标 | 数值 |\n|------|------|\n| GOLD 周支出（文档口径） | ≈ 97 万 |\n| GOLD 周支出（配表口径） | = 1,200,000（120 万） |\n| GOLD 周产出 | 56 万 – 70 万 |\n| 缺口（文档口径） | ≈ 27 万（约 30%，《09》§3 规则 3 + R2） |\n| 缺口（配表口径） | ≈ 50 万（缺口率更高） |\n\n**结论**：商店周限购全部拉满后，GOLD 周支出（97–120 万）**显著大于**周产出（56–70 万），设计上**刻意制造缺口**，目的：① 驱动玩家刷 DG010（GOLD 主产出，单次期望 ≈2000）与周常，形成玩法循环；② 作为货币出口封闭手段防止 GOLD 通胀（《08》§5 防膨胀设计）。风险提示：《09》R2 指出缺口若感知「永远不够」，需在 v0.2 提高 DG010 掉落或降低 SH003 价格。\n\n📚 参考来源\n- [Knowledge Hub] 09-商店与兑换规则.md（§2.1/§2.2/§3，componentId: cmp_pkg_run_20260808163506513_his_pl_wiki_concepts_09_md_1344246073）\n- [Knowledge Hub] 08-掉落与经济闭环.md（§3.3/§4/§5，componentId: cmp_pkg_run_20260808163506513_his_pl_wiki_concepts_08_md_d0e575df08）\n- [Knowledge Hub] 06-武器与装备系统.md（R1 日均金币产出 8–10 万）\n- [配置表] ShopItem（gamedata/ShopItem.csv，trust 0.938；字段 shopId/costCurrency/costAmount/weeklyLimit/unlockCondition）\n- [反馈] 已上报知识缺口 task_mcp_knowledge_gap_otaWn3（09 文档周支出汇总与配表不一致）",
+    "executionId": "b36f9652-ebc6-44fe-96d7-3d25d19a8cc9",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-022",
+    "ok": true,
+    "status": "completed",
+    "output": "已核实完毕：`DropTable`（gamedata/DropTable.csv，trusted）全表 30 条数据行中，`pity` 非空的行共 **3 条**，与文档「08-掉落与经济闭环」§3.2 完全一致。\n\n## 全库保底（pity）配置清单\n\n来源表：`DropTable.csv`（字段：dropId / dungeonId / itemType / itemId / weight / minQty / maxQty / pity）\n\n| dropId | dungeonId | itemType | itemId | 物品（Weapon.csv / 06 文档 §2.1） | weight | minQty | maxQty | pity |\n|--------|-----------|----------|--------|----------------------------------|--------|--------|--------|------|\n| DR004 | DG004 | weapon | WP002 | 焚天大剑（5★，baseAtk=180） | 100 | 1 | 1 | **10** |\n| DR007 | DG007 | weapon | WP002 | 焚天大剑（5★，baseAtk=180） | 50 | 1 | 1 | **10** |\n| DR009 | DG009 | weapon | WP003 | 霆光长枪（5★，baseAtk=175） | 200 | 1 | 1 | **8** |\n\n即：`DR004→WP002 pity=10`、`DR007→WP002 pity=10`、`DR009→WP003 pity=8`（共 3 条保底）。\n\n## 保底规则（08 文档 §3.2，权威）\n\n- 稀有物品（武器/装备/星钻）可配 `pity`；**连续 pity-1 次未中，第 pity 次必出**，计数按 `dropId + itemId` 独立累计。\n- 当前全表仅 **weapon** 类型的 3 行配置了 pity（EQ005 装备、GEM 星钻等掉落行 pity 均为空）。\n\n> 说明：`Weapon` 表返回的 name 字段存在编码乱码，武器中文名取自「06-武器与装备系统.md」§2.1 表 06-1（该表与 DropTable 的 itemId 外键一致：WP002=焚天大剑，WP003=霆光长枪）。\n\n📚 参考来源\n- [Knowledge Hub 配置表] DropTable（gamedata/DropTable.csv，trust 0.938，31 行含表头）\n- [Knowledge Hub Wiki] 08-掉落与经济闭环.md §3.2 保底（Pity，权威）\n- [Knowledge Hub Wiki] 06-武器与装备系统.md §2.1 武器基础（表 06-1）\n- [Knowledge Hub 配置表] Weapon（gamedata/Weapon.csv：WP002/WP003 行）",
+    "executionId": "ecae086d-17bc-4c29-8750-80f2f438e0b1",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-023",
+    "ok": true,
+    "status": "completed",
+    "output": "已从配表与 Wiki 文档交叉核验完毕，结论如下。\n\n## 4★ 稀有度角色（rarity=4）\n\n来源：**Hero.csv**（8 行，trust=0.938 trusted）+《05-角色与职业体系.md》\n\n| heroId | 名称 | class | element | weaponId | rarity | baseAtk / baseDef / baseHp |\n|--------|------|-------|---------|----------|--------|---------------------------|\n| H004 | 影刃·薇 | dps | phys | WP004 | 4 | baseAtk=165 / baseDef=58 / baseHp=1380 |\n| H006 | 灵枢·曜 | support | thunder | WP006 | 4 | baseAtk=100 / baseDef=75 / baseHp=1600 |\n\n其余 6 名角色（H001/H002/H003/H005/H007/H008）在 Hero.csv 中均为 rarity=5。\n\n## 对应的 4★ 武器（rarity=4）\n\n来源：**Weapon.csv**（8 行，trust=0.938 trusted）+《06-武器与装备系统.md》表 06-1\n\n| weaponId | 名称 | 归属角色 | rarity | baseAtk | subStatType | subStatValue | passiveSkillId |\n|----------|------|----------|--------|---------|-------------|--------------|----------------|\n| WP004 | 影袭双刃 | H004 | 4 | 135 | critRate | 0.1 | SK016 影之契约 |\n| WP006 | 曜灵法典 | H006 | 4 | 125 | defPct | 0.15 | SK024 灵枢共鸣 |\n\n其余 6 把武器（WP001/WP002/WP003/WP005/WP007/WP008）在 Weapon.csv 中均为 rarity=5。\n\n**补充说明**（来自《05-角色与职业体系.md》§未决问题 R1）：4★ 角色 H004/H006 的武器副属性低于 5★（4★ ≤ baseAtk=135），是否追加专属机制待定；稀有度不改变角色成长曲线，仅影响武器基底与商店解锁。\n\n📚 参考来源\n- [Knowledge Hub] Wiki 页面 /concepts/05-角色与职业体系.md（表 05-2 角色档案、§未决问题 R1）\n- [Knowledge Hub] Wiki 页面 /concepts/06-武器与装备系统.md（表 06-1 武器全量）\n- [Knowledge Hub] 配表 Hero.csv（gamedata/Hero.csv，trust=0.938，字段 heroId/name/class/element/weaponId/rarity）\n- [Knowledge Hub] 配表 Weapon.csv（gamedata/Weapon.csv，trust=0.938，字段 weaponId/name/rarity/baseAtk/subStatType/subStatValue/passiveSkillId）",
+    "executionId": "44aca2e2-3c63-48ad-9560-a96e860ab408",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-024",
+    "ok": true,
+    "status": "completed",
+    "output": "已从《01-战斗框架与伤害公式》§2.2（元素克制段，权威来源）+ ElementChart.csv 获取到完整克制表，直接回答如下：\n\n## 元素克制关系（三角克制）\n\n规则为 **fire→ice→thunder→fire**，phys 全中性。克制方向判定以攻击技能的 element 与目标防御元素为准。\n\n### 雷元素（thunder）克制什么？\n**雷克制火（fire）**：thunder 攻击 fire 目标时 `elemMul=1.25`。\n- 对 ice：`elemMul=1.00`（不克制也不被克）\n- 对 thunder：`elemMul=1.00`（同元素中性）\n- 对 phys：`elemMul=1.00`\n- 补充：雷自身**被冰克制**（ice 攻击 thunder 时 `elemMul=1.25`）\n\n### 火元素（fire）被什么克制？\n**火被雷克制（thunder）**：thunder 攻击 fire 目标时 `elemMul=1.25`。\n- 火自身克制冰（fire 攻击 ice 时 `elemMul=1.25`）\n- 火被冰攻击时 `elemMul=0.80`（冰打火反而被削弱）\n\n## 完整克制倍率表（attackElement → targetElement, multiplier）\n\n| 攻击元素 | 目标 ice | 目标 thunder | 目标 fire | 目标 phys |\n|----------|---------|-------------|----------|-----------|\n| fire | 1.25 | 0.80 | 1.00 | 1.00 |\n| ice | 0.80 | 1.25 | 1.00 | 1.00 |\n| thunder | 1.00 | 1.00 | 1.25 | 1.00 |\n| phys | 1.00 | 1.00 | 1.00 | 1.00 |\n\n**一句话总结**：雷克火（elemMul=1.25），火被雷克（同一条关系）；另外火克冰、冰克雷，物理全中性。\n\n📚 参考来源\n- [Knowledge Hub] 01-战斗框架与伤害公式 / wiki/concepts/01-战斗框架与伤害公式.md（§2.2 元素克制段，权威来源；引用 ElementChart.csv，字段 attackElement / targetElement / multiplier，全 16 行）\n- [Knowledge Hub] 00-项目总览与术语表 / wiki/concepts/00-项目总览与术语表.md（元素枚举定义：fire / ice / thunder / phys；术语 elemMul 定义）",
+    "executionId": "c0a60268-ccda-486d-8198-925ef0b82f2e",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-025",
+    "ok": true,
+    "status": "completed",
+    "output": "已获取全部所需信息，三处来源交叉验证一致。以下为 EV-025 的答案：\n\n## EV-025 全库枚举统计\n\n### 1️⃣ 货币枚举（currency token）— **共 5 个**\n来源：《00-项目总览与术语表》§3 枚举定义 + 《08-掉落与经济闭环》§2.1（货币/材料枚举唯一权威出处）\n\n| token | 名称 | 主要来源 | 主要消耗 |\n|-------|------|----------|----------|\n| GOLD | 金币 | DG010、主线首通、材料出售 | 强化武器、技能升级、突破 |\n| GEM | 星钻（付费货币） | 付费 / DG007 少量掉落 | 商店 SH001/SH002/SH010/SH012 |\n| STAMINA | 体力 | 自然恢复 + 补给 | 副本消耗 |\n| DUNGEON_TOKEN | 组队代币 | DG006 | 商店 SH006–SH008 |\n| ARENA_POINT | 竞技场积分 | DG008 | 商店 SH011 |\n\n### 2️⃣ 材料枚举（material token）— **共 14 个（MAT01–MAT14）**\n来源：《00-项目总览与术语表》§3 + 《08-掉落与经济闭环》§2.2\n\n- **武器强化**：MAT01 基础合金（L1–30）、MAT02 高级合金（L31–50）\n- **突破材料（按元素绑定角色）**：MAT04 燃焰之核（H002/fire）、MAT05 凝霜之髓（H001/H005/ice）、MAT06 霆光之羽（H003/H006/thunder）、MAT07 暗影之鳞（H004/phys）、MAT14 突破石（通用）\n- **技能书**：MAT08 技能书·初级（L1–5）、MAT09 技能书·中级（L6–8）、MAT10 技能书·高级（L9–10）\n- **经验书**：MAT11 经验书·初级（500/本）、MAT12 经验书·中级（2000/本）、MAT13 经验书·高级（10000/本）\n- **其他**：MAT03 星尘结晶（经验兑换/高级合成）\n\n### 3️⃣ 元素枚举（element token）— **共 4 个**\n来源：《00-项目总览与术语表》§3 + ElementChart.csv（4×4 克制矩阵，attackElement × targetElement 共 16 行，trusted 0.938）\n\n- **fire** 火（H002、H008）\n- **ice** 冰（H001、H005、H007）\n- **thunder** 雷（H003、H006）\n- **phys** 物理（H004）\n\n> 元素反应当前仅 3 条（BF012 融化 火+冰 / BF013 超载 火+雷 / BF014 超导 雷+冰），扩展新元素需同步 ElementChart.csv 与《04-Buff与状态机》§3（见《00》§6 R2 风险）。\n\n---\n\n**⚠️ 可信度提示**：Wiki 文档（00/08/04）trust 为 0.55–0.65、状态 `needs_review`（低可信、证据数=1）；ElementChart 配表 trust 0.938 `trusted`。枚举 token 与数量在三处来源（术语表 §3、经济闭环 §2、ElementChart 表）完全一致，交叉验证通过。\n\n📚 参考来源\n- [Knowledge Hub] 00-项目总览与术语表 / concepts/00-项目总览与术语表.md（§3 枚举定义）\n- [Knowledge Hub] 08-掉落与经济闭环 / concepts/08-掉落与经济闭环.md（§2.1 货币 / §2.2 材料）\n- [Knowledge Hub] 04-buff与状态机 / concepts/04-buff与状态机.md（§3 元素反应）\n- [Knowledge Hub] 配表 ElementChart（gamedata/ElementChart.csv，trust 0.938，16 行克制矩阵）",
+    "executionId": "f35f49ab-ca5e-488b-b57e-1f9836aa34ac",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-026",
+    "ok": true,
+    "status": "completed",
+    "output": "经查询已发布知识库（release 2026.08.08.001），**无法提供 H009 星尘·岚 的基础属性，该 ID 未注册，我拒绝编造数值**。\n\n核实依据如下：\n\n1. **角色表（gamedata/Hero.csv，表 Hero，可信度 0.938 / trusted）**：全表仅 8 行，注册 ID 为 **H001–H008**；字段为 heroId / name / class / element / baseAtk / baseDef / baseHp / weaponId / rarity / tags。\n   - 精确校验 `kb_check_table_value(Hero, heroId=H009)` → **matches 为空**（无匹配行）。\n   - 按 `heroId=H009` 过滤 `kb_query_table` → **totalRows=0**。\n2. **Wiki 权威文档《05-角色与职业体系.md》**：明确写明「定义 8 名初始角色【H001–H008】」，角色档案表 05-2 全 8 名，无 H009；全库角色名中也**不存在「星尘·岚」**（现有含\"星/岚\"字样的角色为 H001 星轨·凌、H007 岚翼·翎，均与题目名称不符）。\n\n因此本题属于**未注册 ID 的知识缺口**：H009 及其名称「星尘·岚」在当前发布版 Knowledge Hub 中无任何注册记录（Hero / HeroLevel / Breakthrough / Skill 等表均无对应条目）。已按流程上报知识缺口（taskId: task_mcp_knowledge_gap_2Nvicl），需上游确认 H009 是否立项后再行查询。\n\n> 提示：若题目实际指向的是已注册角色，可核对以下已注册 ID 之一——H001 星轨·凌、H002 焰星·玲、H003 雷光·彻、H004 影刃·薇、H005 霜语·澈、H006 灵枢·曜、H007 岚翼·翎、H008 炽盾·炎。\n\n📚 参考来源\n- [Knowledge Hub 配置表] gamedata/Hero.csv（Hero，row_count=8，trust 0.938）\n- [Knowledge Hub Wiki] wiki/concepts/05-角色与职业体系.md（角色档案表 05-2，H001–H008）\n- [Knowledge Hub 反馈] 知识缺口已上报 task_mcp_knowledge_gap_2Nvicl",
+    "executionId": "c469e39c-b905-45d3-aabc-a1adc41b10b5",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-027",
+    "ok": true,
+    "status": "completed",
+    "output": "无法回答——**SK033「星陨之坠」未在当前知识库注册**，我不能编造其冷却与倍率。核查过程如下：\n\n**核查证据**\n1. **Skill.csv（gamedata/Skill.csv）原始网格**：共 33 行 = 1 行表头 + 32 条技能数据，技能 ID 完整注册范围为 **SK001–SK032**（H001–H008 各 4 个：normal/skill/ult/passive），**不存在 SK033**。\n2. **精确值校验**：`kb_check_table_value(Skill, skillId, SK033)` → `matches: []`（0 匹配）；`kb_check_table_value(SkillLevel, skillId, SK033)` → `matches: []`（0 匹配）。\n3. **全文检索**：查询「星陨之坠」「星陨」均无任何条目命中（返回结果仅命中「技能/名称」等无关词）。\n4. **文档佐证**：《05-角色与职业体系.md》明确登记「Skill.csv | skillId, heroId | **SK001–SK032** | 核心技能组」，与配表一致。\n\n**结论**\n- SK033 是未注册 ID，不存在对应 `cdSec` / `skillRate` 字段值，按规则明确拒绝作答。\n- 已将该缺口反馈至知识库审核中心（taskId: `task_mcp_knowledge_gap_FEXSKS`），建议人工确认是否为待收录的新技能或 ID 笔误（例如是否指 SK003「永冻领域」等已注册技能）。\n\n📚 参考来源\n- [Knowledge Hub] 配表 gamedata/Skill.csv（表 schema：Skill.json，trust 0.938，行数 33=表头+SK001–SK032）\n- [Knowledge Hub] 配表 gamedata/SkillLevel.csv（表 schema：SkillLevel.json，SK033 校验 0 匹配）\n- [Knowledge Hub] 05-角色与职业体系 / concepts/05-角色与职业体系.md（Skill.csv 技能组登记 SK001–SK032）\n- [反馈记录] task_mcp_knowledge_gap_FEXSKS（知识缺口已上报）",
+    "executionId": "ca19a161-d950-4d3a-bdf9-65e505ff8f2f",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-028",
+    "ok": true,
+    "status": "completed",
+    "output": "根据知识库查询结果，需要先澄清一个重要事实：**知识库中不存在名为「燃烧」的已注册 Buff**。\n\n## 查询结论\n\n**1. 「燃烧」未注册**\n- 在 Buff 配表（Buff.csv，共 15 条 BF001–BF015）中按 `name=燃烧` 精确过滤，返回 **0 行**，即该名称没有注册 ID。\n- 权威文档《04-Buff与状态机》明确写入规则：「避免同语义 Buff 多版本（如『灼烧』『燃烧』**禁止并存**）」。因此官方登记的火系持续伤害 Buff 名称统一为 **「灼烧」**，不存在「燃烧」这一独立条目。\n\n**2. 最接近的已注册 Buff：「灼烧」BF001（火附着 / DoT）**\n\n| 字段 | 值 |\n|------|-----|\n| buffId | BF001 |\n| name | 灼烧 |\n| kind | dot |\n| stackRule | 叠层刷新（同 Buff 叠层 +1，不超过 maxStack，并刷新 durationSec） |\n| durationSec | 6 |\n| tickIntervalSec | 2（每 2 秒一跳） |\n| value | 0.25×施法者ATK/跳 |\n| maxStack | 5（层数上限） |\n| tags | 火;持续伤害 |\n\n即：**持续时间 durationSec=6（秒），层数上限 maxStack=5**，来源为 `gamedata/Buff.csv`（表 schema 可信度 0.938 / trusted）。\n\n> ⚠️ 提示：若题目/需求方实际指的就是火系 DoT，则答案即「灼烧 BF001」的 `durationSec=6 / maxStack=5`；若坚持使用「燃烧」二字作为独立 Buff ID，则知识库中无此注册，无法给出数值，按规则拒绝编造。\n\n📚 参考来源\n- [Knowledge Hub] 04-buff与状态机.md / wiki/concepts/04-buff与状态机.md（§2.2 Buff 生命周期、§3.1 附着规则）\n- [Knowledge Hub] Buff 配置表 / gamedata/Buff.csv（table_schemas/Buff.json，trusted 0.938）\n- [Knowledge Hub] 12-版本变更记录-v0-1.md（15 个 Buff 定稿 BF001–BF015）",
+    "executionId": "52441d08-9cdc-41d7-878b-8f7f0460daef",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-029",
+    "ok": true,
+    "status": "completed",
+    "output": "已获取完整证据链，所有中间节点均已在知识库中核验通过。\n\n---\n\n## 【EV-029】证据链：为什么「刷 DG009 能提升 H003 打 DG009 的通关效率」\n\n该论断来自 **《11-边界异常与QA检查清单》§3「跨 3 跳证据链」链 A（4 跳）**，原文：\n\n> `DG009 星轨遗迹·EX → DR009（掉落组）→ EQ005 烈焰之冠（itemType=equipment, weight=300）→ H003 雷光·彻装备（heroClass=dps 匹配）→ 主词条 critRate 提升 → 面板暴击率↑ → 按公式 01-1 §3.2 暴击期望↑ → H003 对 DG009 的通关时间缩短`\n\n### 按序中间节点 ID 与数据支撑\n\n| 步 | 中间节点 | 数据支撑（来源表/文档） |\n|----|----------|--------------------------|\n| ① | **DG009 星轨遗迹·EX** | Dungeon.csv：`dungeonId=DG009, type=main, staminaCost=30, recommendPower=17000, dropId=DR009, unlockLevel=80`（表可信度 0.938 trusted；《07-副本与关卡节奏》表 07-2） |\n| ② | **DR009 掉落组** | DropTable.csv：`dropId=DR009` 共 4 行掉落，其中 **`itemType=equipment, itemId=EQ005, weight=300, minQty=1, maxQty=1`**；另有 `WP003（weapon, weight=200, pity=8）`、`MAT10（material, weight=300）`、`MAT14（material, weight=200）`（weight 合计 1000，符合《08-掉落与经济闭环》§3.1 规则） |\n| ③ | **EQ005 烈焰之冠** | Equipment.csv：`equipId=EQ005, slot=head, mainStatType=critRate, mainStatValue=0.07, setId=S002, rarity=5, heroClass=dps`（《06-武器与装备系统》表 3.1） |\n| ④ | **H003 雷光·彻** | Hero.csv：`heroId=H003, class=dps, element=thunder, baseAtk=170, baseDef=60, baseHp=1400, weaponId=WP003, rarity=5`（《00-项目总览与术语表》：H003 雷光·彻 dps thunder）。**职业匹配成立**：EQ005.heroClass=dps 与 H003.class=dps 一致（《06》§3.1：S002 套限 dps，适用 H002/H003/H004） |\n| ⑤ | **主词条 critRate → 面板暴击率↑** | EQ005 主词条 `mainStatType=critRate, mainStatValue=0.07`；暴击率为衍生属性，基础 5%，装备主词条是来源之一（《02-属性体系与战力评估》§2.2；《01-战斗框架与伤害公式》§3.2「暴击率来源：…装备（EQ001/EQ005 critRate）」） |\n| ⑥ | **公式 01-1 §3.2 暴击期望↑** | 《01》§2 公式 01-1：`最终伤害 = 基础伤害 × (crit ? critMul : 1)`；§3.2：暴击判定以面板暴击率为准，`critMul = 1.5 + 暴击伤害加成`，暴击率上限 100%。暴击率↑ → 期望伤害（暴击期望）↑ |\n| ⑦ | **H003 打 DG009 通关时间缩短** | 《07》§3 三星条件①「限时内通关（时间 = 推荐战力基准 × 1.2）」；《01》「输出：DPS、通关时间」——DPS↑ → 通关时间↓（《07》§3「通关时间由 DPS 决定」） |\n\n### 结论\n\n**「刷 DG009」的收益闭环**：反复刷 **DG009**（staminaCost=30/次，掉落组 **DR009**）可获得 **EQ005 烈焰之冠**（weight=300，即约 30% 主掉落概率），该装备限定 `heroClass=dps`，恰好匹配 **H003**（class=dps）→ 装备后 `mainStatType=critRate`（mainStatValue=0.07）提升面板暴击率 → 按公式 01-1 §3.2 提高暴击期望 → H003 对 DG009 的 DPS 提升 → 通关时间缩短、通关效率提升。即「用 DG009 的掉落反哺打 DG009 本身」，形成自增强闭环。\n\n> ⚠️ 提示：以上 Wiki 文档（01/02/06/07/08/11）可信度均为 0.55（needs_review），但证据链所依赖的 4 张配表（Dungeon/DropTable/Equipment/Hero）均通过校验，可信度 0.938（trusted），关键字段值可直接引用。\n\n📚 参考来源\n- [Knowledge Hub] 11-边界异常与qa检查清单.md §3 链 A（cmp_pkg_run_20260808163506513_his_pl_wiki_concepts_11_qa_md_0f3db43ba0）\n- [Knowledge Hub] 07-副本与关卡节奏.md 表 07-2（DG009: staminaCost=30, recommendPower=17000, dropId=DR009, unlockLevel=80）\n- [Knowledge Hub] 08-掉落与经济闭环.md §3.1/§3.2（DropTable 权重 1000 规则、DR009→WP003 pity=8）\n- [Knowledge Hub] 06-武器与装备系统.md §3.1（EQ005: critRate=0.07, rarity=5, heroClass=dps, S002）\n- [Knowledge Hub] 01-战斗框架与伤害公式.md §2/§3.2（公式 01-1、暴击段）\n- [Knowledge Hub] 02-属性体系与战力评估.md §2.2（衍生属性：暴击率基础 5%）\n- [Knowledge Hub] 配置表：Dungeon.csv（DG009 行）、DropTable.csv（DR009 4 行）、Equipment.csv（EQ005 行）、Hero.csv（H003 行）— 可信度 0.938 trusted",
+    "executionId": "8f87d829-b5d5-47e3-8852-2891ff96dcbb",
+    "errorMessage": ""
+  },
+  {
+    "id": "EV-030",
+    "ok": true,
+    "status": "completed",
+    "output": "已从权威配表（Dungeon / DropTable / ShopItem，trust 0.938）与概念文档核对完毕，以下是 DUNGEON_TOKEN 完整链路。\n\n## DUNGEON_TOKEN（组队代币）产出 → 消耗完整链路\n\n**链路总览（按序）：**\n`DG006 影渊裂谷` → `DR006 掉落组` → `DUNGEON_TOKEN` → `SH006 / SH007 / SH008 商店兑换` → `MAT04 / MAT05 / MAT14（角色突破材料）`\n\n---\n\n### ① 产出端（副本 → 掉落组 → 代币）\n\n| 节点 ID | 字段值 | 来源表 |\n|---|---|---|\n| **DG006** 影渊裂谷 | type=coop、staminaCost=20、recommendPower=24000（队伍总战力口径）、dropId=DR006、unlockLevel=40 | Dungeon.csv |\n| **DR006** 掉落组 | dungeonId=DG006、itemType=currency、itemId=DUNGEON_TOKEN、weight=700、minQty=4、maxQty=6、pity 空 | DropTable.csv |\n\n- 单次期望 = (minQty 4 + maxQty 6)/2 = **5.0 ± 1 个/次**（《08-掉落与经济闭环》§3.3 表 08-1：DG006 → DUNGEON_TOKEN 5.0 ± 1）\n- 周节奏：DG006 每周 3 次（周常双倍，体力 60/周）→ **周产出 ≈ 15 个**（《07-副本与关卡节奏》§2.2）\n\n### ② 消耗端（商店出口，全为 DUNGEON_TOKEN 支付，解锁条件=通关 DG006）\n\n| 节点 ID | costCurrency | costAmount | itemType / itemId | weeklyLimit |\n|---|---|---|---|---|\n| **SH006** 燃焰之核 | DUNGEON_TOKEN | costAmount=30 | material / **MAT04** | weeklyLimit=5 |\n| **SH007** 凝霜之髓 | DUNGEON_TOKEN | costAmount=30 | material / **MAT05** | weeklyLimit=5 |\n| **SH008** 突破石 | DUNGEON_TOKEN | costAmount=20 | material / **MAT14** | weeklyLimit=10 |\n\n- 周限购拉满的代币支出：SH006 30×5 + SH007 30×5 + SH008 20×10 = **500 DUNGEON_TOKEN/周**（按 ShopItem.csv 表值计算）\n- 兑换产物 MAT04/MAT05/MAT14 进入角色突破养成（《05-角色与职业体系》§4），战力提升后挑战 DG007/DG009 更高掉落，形成闭环（《08》§5 防膨胀设计：DUNGEON_TOKEN 仅限商店兑换，无反向膨胀链路）\n\n### ③ 价值锚点\n- DUNGEON_TOKEN ≈ 1000 GOLD / 个（SH006–SH008 折算，《09-商店与兑换规则》§2.1）\n\n---\n\n⚠️ **文档间数值差异提示（如实说明，未做编造）**：\n- 《09》§3.3 写\"全限购拉满周支出 DUNGEON_TOKEN 390\"，与 ShopItem.csv 全拉满 500 不符；\n- 《08》§5 未决问题 R2 记录\"周产出约 15 < 周需求 20，缺口 5，倾向放宽 SH008 限购至 12\"——该数字与表内 weeklyLimit 计算的 500 也存在口径差异，已作为 R2 风险待运营确认。\n\n以配表（ShopItem.csv / DropTable.csv / Dungeon.csv，trust=0.938 trusted）为权威口径。\n\n📚 参考来源\n- [Knowledge Hub] 08-掉落与经济闭环 / wiki/concepts/08-掉落与经济闭环.md（§2.1、§3.3、§5）\n- [Knowledge Hub] 09-商店与兑换规则 / wiki/concepts/09-商店与兑换规则.md（§2.1、§2.2、§3.3）\n- [Knowledge Hub] 07-副本与关卡节奏 / wiki/concepts/07-副本与关卡节奏.md（§2.2、表 07-2）\n- [配置表] Dungeon.csv（DG006：type/staminaCost/recommendPower/dropId/unlockLevel）\n- [配置表] DropTable.csv（DR006：dungeonId/itemType/itemId/weight/minQty/maxQty）\n- [配置表] ShopItem.csv（SH006–SH008：costCurrency/costAmount/itemType/itemId/weeklyLimit/unlockCondition）",
+    "executionId": "df598170-eea6-4bb6-adc0-33fe033f815a",
+    "errorMessage": ""
+  }
+]

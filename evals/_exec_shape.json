@@ -1,0 +1,19 @@
+{
+  "id": "05db1fa6-56d6-4f9c-b081-6d16f882c6e1",
+  "userId": "k3BZWqyYkOQPFy1smM3pal1fUm7ATybZ",
+  "sessionId": "663b9106-c12a-4fb5-9ee6-96222f808534",
+  "idempotencyKey": "shape-1786179626",
+  "status": "failed",
+  "requestPayload": {
+    "mode": "query",
+    "role": "chief_designer",
+    "history": [],
+    "requirement": "仅用知识库回答：H001的class是什么？给出ID。"
+  },
+  "errorClass": "permanent",
+  "errorMessage": "RATE_LIMIT_TPM: tokens per minute limit exceeded",
+  "startedAt": "2026-08-08T09:00:27.011Z",
+  "completedAt": "2026-08-08T09:00:27.248Z",
+  "createdAt": "2026-08-08T09:00:26.378Z",
+  "updatedAt": "2026-08-08T09:00:27.249Z"
+}

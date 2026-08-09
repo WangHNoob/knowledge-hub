@@ -107,6 +107,12 @@ def run_one(client: Client, qid: str, question: str, pause_sec: float = 8.0) -> 
                 time.sleep(wait)
                 continue
             return {"id": qid, "ok": False, "status": f"http_{e.code}", "output": detail, "executionId": None}
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+            # 本地网络抖动（WinError 10061 等）不该杀死整轮评测：退避重试
+            wait = 10 * attempt
+            print(f"  connection error on create: {e}; retry in {wait}s (attempt {attempt})", flush=True)
+            time.sleep(wait)
+            continue
 
         execution_id = created.get("executionId")
         if not execution_id:
