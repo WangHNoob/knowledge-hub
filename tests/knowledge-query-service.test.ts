@@ -49,6 +49,24 @@ describe("KnowledgeQueryService", () => {
     }
   }, 15000);
 
+  it("serves the release directory index via kb_get_index", async () => {
+    const fixture = await setupPublishedKnowledgeFixture();
+    const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);
+    try {
+      const index = await service.runTool("kb_get_index", {}, { sessionId: "test", agentRole: "planner" });
+      expect(index.result).toMatchObject({ found: true, okfPath: "/index.md", releaseId: fixture.releaseId });
+      const content = String(index.result.content);
+      expect(content).toContain("okf_version: \"0.1\"");
+      expect(content).toContain("# StarTrail 知识库目录");
+      // 页面以可点击的 bundle 绝对路径出现，且带一句话描述
+      expect(content).toContain("- [Battle System](/systems/battle.md): Stamina controls skill usage.");
+      expect(content).toContain("## 查找指引（按问题找文档）");
+    } finally {
+      await fixture.cleanup();
+      rmSync(fixture.dataDir, { recursive: true, force: true });
+    }
+  }, 20000);
+
   it("queries wiki, graph, table data, quality, evidence, and writes audit records", async () => {
     const fixture = await setupPublishedKnowledgeFixture();
     const service = createKnowledgeQueryService(fixture.db, fixture.dataDir);

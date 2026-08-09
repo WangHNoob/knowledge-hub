@@ -11,6 +11,13 @@ import { buildOkfDenseIndex, DENSE_INDEX_URI } from "./hybridSearch";
 import { OKF_EXPORTER_VERSION, type ConformanceReport } from "./types";
 import { exportKnowledgeLintReport, type KnowledgeLintReport } from "./lintService";
 import {
+  extractCsvRefs,
+  extractIndexDescription,
+  extractIndexTitle,
+  renderDirectoryIndex,
+  type IndexPageMeta,
+} from "./indexTemplate";
+import {
   renderReleaseAuditLog,
   withOkfAuditSummary,
   type ReleaseAuditSummary
@@ -129,7 +136,17 @@ export class OkfExportService {
     const revisionUri = input.revision ? exportRevisionAsset(bundleDir, input.revision) : undefined;
     if (revisionUri) exportedPaths.push(revisionUri);
 
-    writeFileSync(join(bundleDir, "index.md"), renderIndex(input.release, exportedPaths), "utf8");
+    // 目录 index.md：按模块分组的导航清单（llms.txt 风格），meta/extract/* 等噪音不逐条列出
+    const indexPages = collectIndexPages(this.dataDir, input.components, packageById);
+    writeFileSync(
+      join(bundleDir, "index.md"),
+      renderDirectoryIndex({
+        releaseVersion: input.release.version,
+        pages: indexPages,
+        assetUris: exportedPaths.filter((path) => !path.endsWith(".md")),
+      }),
+      "utf8",
+    );
     writeFileSync(join(bundleDir, "log.md"), renderReleaseAuditLog(input.auditSummary), "utf8");
 
     const report = await scanWorkspace(bundleDir, { now: input.publishedAt });
@@ -584,15 +601,27 @@ function renderCitations(rows: EvidenceRow[]): string {
   return `${lines.join("\n")}\n`;
 }
 
-function renderIndex(release: ReleaseRecord, paths: string[]): string {
-  return [
-    "# OKF Bundle Index",
-    "",
-    `Release: ${release.version}`,
-    "",
-    ...paths.sort().map((okfPath) => `- [${okfPath}](/${okfPath})`),
-    "",
-  ].join("\n");
+/**
+ * 收集目录 index.md 所需的每页元数据：直接读构建工作区的源文件
+ * （patch 复用路径下渲染循环跳过源文件，这里独立读取保证两路径一致）。
+ */
+function collectIndexPages(dataDir: string, components: AssetComponent[], packageById: Map<string, AssetPackage>): IndexPageMeta[] {
+  const pages: IndexPageMeta[] = [];
+  for (const component of components) {
+    if (!EXPORTABLE_MARKDOWN_KINDS.has(component.kind)) continue;
+    const okfPath = okfPathForComponent(component);
+    if (!okfPath) continue;
+    const sourcePath = resolveComponentFile(dataDir, component, packageById.get(component.packageId));
+    const body = stripFrontmatter(readFileSync(sourcePath, "utf8")).trim();
+    const title = extractIndexTitle(body) || component.title?.replace(/\.md$/u, "") || okfPath.replace(/\.md$/u, "");
+    pages.push({
+      okfPath,
+      title,
+      description: extractIndexDescription(body) || title,
+      csvRefs: extractCsvRefs(body),
+    });
+  }
+  return pages;
 }
 
 function firstTextLine(markdown: string): string {

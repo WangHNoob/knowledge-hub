@@ -32,7 +32,7 @@ export const knowledgeMcpTools: Array<{
   {
     name: "kb_search",
     title: "Search Knowledge",
-    description: "Search current published OKF knowledge. Returns ranked items plus Agent-friendly cards with trust, evidence, dependencies, and next tools.",
+    description: "Search current published OKF knowledge. Returns ranked items plus Agent-friendly cards with trust, evidence, dependencies, and next tools. For navigation-first lookups, call kb_get_index first to read the directory TOC and locate the exact page/table.",
     inputSchema: z.object({ ...contextFields, query: queryField, q: queryField.optional(), limit: limitField, topK: limitField, top_k: limitField }).passthrough(),
     readOnly: true,
   },
@@ -57,7 +57,14 @@ export const knowledgeMcpTools: Array<{
     inputSchema: z.object({ ...contextFields, page: pageField, title: pageField.optional(), topic: pageField.optional(), componentId: componentIdField.optional(), section: z.string().min(1).describe("Markdown heading to extract.") }).passthrough(),
     readOnly: true,
   },
-  { name: "kb_list_pages", title: "List Pages", description: "List Wiki pages available in the current release.", inputSchema: noArgs, readOnly: true },
+  { name: "kb_list_pages", title: "List Pages", description: "List Wiki pages available in the current release. Use kb_get_index for the grouped directory with one-line descriptions and key tables.", inputSchema: noArgs, readOnly: true },
+  {
+    name: "kb_get_index",
+    title: "Get Knowledge Directory Index",
+    description: "Read the release directory index (index.md): complete TOC of all wiki pages grouped by module, each with a one-line scope description and its key CSV tables, plus a where-to-find guide. Call this first to locate the right page/table, then use kb_get_page / kb_query_table.",
+    inputSchema: z.object(contextFields).passthrough(),
+    readOnly: true,
+  },
   {
     name: "kb_get_page_tables",
     title: "Get Page Tables",

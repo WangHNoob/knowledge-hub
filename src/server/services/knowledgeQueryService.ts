@@ -18,6 +18,7 @@ import { createSourceBundleService } from "./sourceBundleService";
 import { createProjectService } from "./projectService";
 import { createKnowledgeService } from "./knowledgeService";
 import { createFlywheelService, type FlywheelService } from "./flywheelService";
+import { createTaskPolicyService } from "./taskPolicyService";
 import { isComponentVisibleToRole } from "./knowledgeAcl";
 import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { DENSE_INDEX_URI, fuseSearchWithRrf, searchDenseIndex, type OkfDenseIndex } from "./okf/hybridSearch";
@@ -473,6 +474,8 @@ export class KnowledgeQueryService {
         return this.kbGetSection(release, stringArg(payload, "componentId", "page", "title", "topic"), stringArg(payload, "section"));
       case "kb_list_pages":
         return this.kbListPages(release);
+      case "kb_get_index":
+        return this.kbGetIndex(release);
       case "kb_get_page_tables":
         return this.kbGetPageTables(release, stringArg(payload, "componentId", "page", "title", "topic"));
       case "kb_get_entity":
@@ -710,6 +713,20 @@ export class KnowledgeQueryService {
       },
       componentIds: pages.map((page) => page.componentId),
       artifactIds: pages.map((page) => page.artifactId),
+    };
+  }
+
+  /** 读取发布物目录 index.md（按模块分组、含一句话描述与关联配表），供 Agent 先查目录再定位。 */
+  private async kbGetIndex(release: ReleaseRecord): Promise<ToolResult> {
+    const full = this.okfBundleFile(release, "index.md");
+    if (!existsSync(full)) {
+      return { result: { found: false, reason: "release bundle has no index.md" }, componentIds: [], forceHit: true };
+    }
+    const content = readFileSync(full, "utf8");
+    return {
+      result: { found: true, okfPath: "/index.md", releaseId: release.releaseId, content },
+      componentIds: [],
+      forceHit: true,
     };
   }
 
@@ -1665,6 +1682,21 @@ export class KnowledgeQueryService {
    * 复用 kbRunHealthCheck 的全部逻辑与事件发射，仅在 actor 与调用场景上区别于 MCP 手动调用。
    */
   async runScheduledHealthCheck(projectId: string, actor = "health-sweep-scheduler"): Promise<{ projectId: string; status: string }> {
+    // 预设规则任务收敛（info 自动 dismiss + gap_fill 无源自动收敛）——不依赖人工。
+    const policy = await createTaskPolicyService(this.db).applyOpenTaskPolicies(projectId);
+    if (policy.dismissedTasks > 0 || policy.dismissedGapFill > 0) {
+      await this.diagnostics?.write({
+        traceId: "",
+        level: "info",
+        category: "flywheel",
+        message: "task policy auto-converged open items",
+        status: "completed",
+        actor,
+        entityType: "project",
+        entityId: projectId,
+        context: { projectId, dismissedTasks: policy.dismissedTasks, dismissedGapFill: policy.dismissedGapFill },
+      });
+    }
     const outcome = await this.kbRunHealthCheck(projectId, {}, { sessionId: actor });
     const status = typeof (outcome.result as { status?: unknown })?.status === "string"
       ? String((outcome.result as { status?: unknown }).status)
