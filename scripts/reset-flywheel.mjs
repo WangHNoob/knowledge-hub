@@ -34,6 +34,8 @@ const TARGETS = [
   "exception_dismissals",         // 例外软忽略记录
   "source_corrections",           // 反馈派生的源侧纠正建议队列
   "knowledge_events",
+  "knowledge_event_outbox",       // 事件出站队列（飞轮产物）
+  "gap_fill_candidates",          // 知识缺口候选（Agent 查询未命中派生，例外收件箱数据源）
   "agent_events",
   "mcp_audit",
   "attribution_audits",
@@ -51,6 +53,7 @@ const CASCADED = [
 
 const KEEP = [
   "users",
+  "projects",                       // 项目定义（default_project 等）
   "source_blobs", "source_bundles", "source_bundle_versions", "source_files",
   "table_aliases",
   "knowledge_rule_profiles",

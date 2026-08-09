@@ -21,24 +21,44 @@ import re
 import sys
 from collections import defaultdict
 
-ID_PATTERNS = {
-    "H": (1, 8), "SK": (1, 32), "BF": (1, 15), "WP": (1, 8),
-    "EQ": (1, 10), "DG": (1, 10), "DR": (1, 10), "SH": (1, 12),
+# v0.2 全量 ID 注册表（与 knowledge_gen/validate.mjs 的 ID_FAMILIES 保持一致；
+# 另含仅在定义表主键出现、validate 未列族的前缀：R/EXC/CH/GQ）
+ID_RANGES = {
+    "H": (1, 16), "SK": (1, 72), "BF": (1, 30), "WP": (1, 32), "EQ": (1, 40),
+    "DG": (1, 40), "DR": (1, 40), "SH": (1, 48), "S": (1, 8), "M": (1, 80),
+    "B": (1, 12), "EM": (1, 16), "IT": (1, 200), "QS": (1, 120), "AC": (1, 80),
+    "CN": (1, 96), "TN": (1, 32), "SN": (1, 40), "TI": (1, 50), "NC": (1, 20),
+    "GP": (1, 8), "TF": (1, 30), "AF": (1, 20), "TB": (1, 12), "EX": (1, 20),
+    "EV": (1, 12), "WB": (1, 8), "SM": (1, 12), "RG": (1, 8), "NP": (1, 20),
+    "FU": (1, 30), "AR": (1, 4), "RM": (1, 4), "GB": (1, 8), "PT": (1, 10),
+    "WC": (1, 12), "ED": (1, 12), "CD": (1, 6), "MS": (1, 60), "AI": (1, 20),
+    "RC": (1, 60), "ML": (1, 30), "CX": (1, 50), "WY": (1, 40), "LS": (1, 12),
+    "TH": (1, 12), "LT": (1, 8), "WH": (1, 8), "RB": (1, 12), "TC": (1, 30),
+    "PZ": (1, 12), "HQ": (1, 20), "WK": (1, 12), "DK": (1, 12), "TM": (1, 4),
+    "MG": (1, 8), "FP": (1, 10), "GEX": (1, 12), "GD": (1, 6), "WSK": (1, 12),
+    "WBS": (1, 8), "ADR": (1, 6), "DIA": (1, 24), "BM": (1, 24), "TR": (1, 20),
+    "GV": (1, 8), "GBL": (1, 12), "SC": (1, 8), "CAT": (1, 6), "PS": (1, 20),
+    "SB": (1, 20), "TRL": (1, 8), "EMO": (1, 12), "AFR": (1, 12), "CB": (1, 8),
+    "BS": (1, 10), "PM": (1, 6), "MILE": (1, 10), "DGR": (1, 5), "CC": (1, 12),
+    "SHL": (1, 12), "DT": (1, 8), "HF": (1, 20), "ER": (1, 12), "WT": (1, 8),
+    "R": (1, 8), "EXC": (1, 12), "CH": (1, 8), "GQ": (1, 12),
 }
+MAT_RANGE = (1, 41)
 
 
 def registered_ids():
     ids = set()
-    for prefix, (lo, hi) in ID_PATTERNS.items():
-        width = 3 if prefix in ("H", "SK", "BF", "WP", "EQ", "DG", "DR", "SH") else 2
+    for prefix, (lo, hi) in ID_RANGES.items():
+        width = 2 if prefix == "MAT" else 3
         ids |= {f"{prefix}{i:0{width}d}" for i in range(lo, hi + 1)}
-    ids |= {f"MAT{i:02d}" for i in range(1, 15)}
-    ids |= {"S001", "S002", "S003"}
+    ids |= {f"MAT{i:02d}" for i in range(*MAT_RANGE)}
     return ids
 
 
 REG_IDS = registered_ids()
-ID_RE = re.compile(r"\b(H\d{3}|SK\d{3}|BF\d{3}|WP\d{3}|EQ\d{3}|DG\d{3}|DR\d{3}|SH\d{3}|MAT\d{2}|S\d{3})\b")
+# 前缀按长度降序排列，避免短前缀误吞长前缀（如 EM 先于 M、SHL 先于 SH、WSK/WBS 先于 W）
+_ID_ALTS = "|".join(sorted(ID_RANGES.keys(), key=len, reverse=True))
+ID_RE = re.compile(r"\b(?:" + _ID_ALTS + r")\d{3}\b|\bMAT\d{2}\b")
 NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 FIELD_RE = re.compile(r"(\w+)\s*[=:：]\s*(-?\d+(?:\.\d+)?)|\b(\w+)\s+(-?\d+(?:\.\d+)?)")
 RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:-|~|–|—|至|到)\s*(\d+(?:\.\d+)?)")

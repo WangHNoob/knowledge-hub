@@ -1,0 +1,1066 @@
+{
+  "summary": {
+    "hitAtK": 1.0,
+    "avgFactCoverage": 0.5366333333333333,
+    "total": 30,
+    "hits": 30
+  },
+  "cases": [
+    {
+      "id": "EV-001",
+      "group": "basic_retrieval",
+      "difficulty": 1,
+      "question": "H002 焰星·玲的职业、元素、专属武器分别是什么？稀有度多少？",
+      "sourceFiles": [
+        "gamedata/Hero.csv",
+        "gamedata/Weapon.csv"
+      ],
+      "needles": [
+        "Hero",
+        "角色",
+        "职业",
+        "Hero.csv",
+        "Weapon",
+        "武器",
+        "Weapon.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.4,
+      "factHits": [
+        "WP002",
+        "5"
+      ],
+      "topTitles": [
+        "05-角色与职业体系.md",
+        "00-项目总览与术语表.md",
+        "08-掉落与经济闭环.md",
+        "ungrouped.md",
+        "02-属性体系与战力评估.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-002",
+      "group": "basic_retrieval",
+      "difficulty": 1,
+      "question": "BF003 冻结的类型、叠层规则、持续时间和最大层数？",
+      "sourceFiles": [
+        "gamedata/Buff.csv"
+      ],
+      "needles": [
+        "Buff",
+        "buff",
+        "状态",
+        "Buff.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.25,
+      "factHits": [
+        "1"
+      ],
+      "topTitles": [
+        "04-buff与状态机.md",
+        "03-技能系统设计.md",
+        "09-商店与兑换规则.md",
+        "10-配表规范与外键约定.md",
+        "02-属性体系与战力评估.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-003",
+      "group": "basic_retrieval",
+      "difficulty": 1,
+      "question": "DG007 虚境试炼的类型、体力消耗、推荐战力和解锁等级？",
+      "sourceFiles": [
+        "gamedata/Dungeon.csv"
+      ],
+      "needles": [
+        "Dungeon",
+        "副本",
+        "Dungeon.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.5,
+      "factHits": [
+        "20",
+        "60"
+      ],
+      "topTitles": [
+        "07-副本与关卡节奏.md",
+        "02-属性体系与战力评估.md",
+        "10-配表规范与外键约定.md",
+        "06-武器与装备系统.md",
+        "03-技能系统设计.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-004",
+      "group": "basic_retrieval",
+      "difficulty": 1,
+      "question": "SK014 暗影穿心的冷却、能量消耗、倍率和附加 Buff？",
+      "sourceFiles": [
+        "gamedata/Skill.csv",
+        "gamedata/Buff.csv"
+      ],
+      "needles": [
+        "Skill",
+        "技能",
+        "Skill.csv",
+        "Buff",
+        "buff",
+        "状态",
+        "Buff.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.4,
+      "factHits": [
+        "6",
+        "BF004"
+      ],
+      "topTitles": [
+        "04-buff与状态机.md",
+        "03-技能系统设计.md",
+        "00-项目总览与术语表.md",
+        "10-配表规范与外键约定.md",
+        "02-属性体系与战力评估.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-005",
+      "group": "basic_retrieval",
+      "difficulty": 1,
+      "question": "WP005 霜华法杖的稀有度、副属性类型与值、被动技能？",
+      "sourceFiles": [
+        "gamedata/Weapon.csv",
+        "gamedata/Skill.csv"
+      ],
+      "needles": [
+        "Weapon",
+        "武器",
+        "Weapon.csv",
+        "Skill",
+        "技能",
+        "Skill.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.25,
+      "factHits": [
+        "5"
+      ],
+      "topTitles": [
+        "00-项目总览与术语表.md",
+        "05-角色与职业体系.md",
+        "03-技能系统设计.md",
+        "01-战斗框架与伤害公式.md",
+        "10-配表规范与外键约定.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-006",
+      "group": "cross_table",
+      "difficulty": 2,
+      "question": "H001 星轨·凌的完整技能组（4 个技能 ID 及类型）？",
+      "sourceFiles": [
+        "gamedata/Hero.csv",
+        "gamedata/Skill.csv"
+      ],
+      "needles": [
+        "Hero",
+        "角色",
+        "职业",
+        "Hero.csv",
+        "Skill",
+        "技能",
+        "Skill.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 1.0,
+      "factHits": [
+        "SK001",
+        "SK002",
+        "SK003",
+        "SK004",
+        "passive"
+      ],
+      "topTitles": [
+        "00-项目总览与术语表.md",
+        "08-掉落与经济闭环.md",
+        "02-属性体系与战力评估.md",
+        "07-副本与关卡节奏.md",
+        "11-边界异常与qa检查清单.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-007",
+      "group": "cross_table",
+      "difficulty": 2,
+      "question": "SK023 雷霆赐福会给全队施加什么效果？",
+      "sourceFiles": [
+        "gamedata/Skill.csv",
+        "gamedata/Buff.csv"
+      ],
+      "needles": [
+        "Skill",
+        "技能",
+        "Skill.csv",
+        "Buff",
+        "buff",
+        "状态",
+        "Buff.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.75,
+      "factHits": [
+        "BF005",
+        "3",
+        "10"
+      ],
+      "topTitles": [
+        "01-战斗框架与伤害公式.md",
+        "05-角色与职业体系.md",
+        "04-buff与状态机.md",
+        "00-项目总览与术语表.md",
+        "10-配表规范与外键约定.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-008",
+      "group": "cross_table",
+      "difficulty": 2,
+      "question": "WP006 曜灵法典的被动技能是哪个？属于哪个角色？",
+      "sourceFiles": [
+        "gamedata/Weapon.csv",
+        "gamedata/Skill.csv",
+        "gamedata/Hero.csv"
+      ],
+      "needles": [
+        "Weapon",
+        "武器",
+        "Weapon.csv",
+        "Skill",
+        "技能",
+        "Skill.csv",
+        "Hero",
+        "角色",
+        "职业",
+        "Hero.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.333,
+      "factHits": [
+        "H006"
+      ],
+      "topTitles": [
+        "05-角色与职业体系.md",
+        "00-项目总览与术语表.md",
+        "03-技能系统设计.md",
+        "06-武器与装备系统.md",
+        "01-战斗框架与伤害公式.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-009",
+      "group": "cross_table",
+      "difficulty": 2,
+      "question": "DG006 影渊裂谷的掉落组产出什么？",
+      "sourceFiles": [
+        "gamedata/Dungeon.csv",
+        "gamedata/DropTable.csv"
+      ],
+      "needles": [
+        "Dungeon",
+        "副本",
+        "Dungeon.csv",
+        "DropTable",
+        "掉落",
+        "DropTable.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.5,
+      "factHits": [
+        "DR006",
+        "MAT03"
+      ],
+      "topTitles": [
+        "08-掉落与经济闭环.md",
+        "07-副本与关卡节奏.md",
+        "02-属性体系与战力评估.md",
+        "10-配表规范与外键约定.md",
+        "09-商店与兑换规则.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-010",
+      "group": "cross_table",
+      "difficulty": 2,
+      "question": "SH010 商品是什么？价格、限购与解锁条件？",
+      "sourceFiles": [
+        "gamedata/ShopItem.csv",
+        "gamedata/Weapon.csv"
+      ],
+      "needles": [
+        "ShopItem",
+        "商店",
+        "ShopItem.csv",
+        "Weapon",
+        "武器",
+        "Weapon.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.75,
+      "factHits": [
+        "WP002",
+        "1",
+        "DG009"
+      ],
+      "topTitles": [
+        "09-商店与兑换规则.md",
+        "08-掉落与经济闭环.md",
+        "ungrouped.md",
+        "05-角色与职业体系.md",
+        "03-技能系统设计.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-011",
+      "group": "cross_table",
+      "difficulty": 2,
+      "question": "EQ005 烈焰之冠属于哪套装备、限定哪些职业、主词条是什么？",
+      "sourceFiles": [
+        "gamedata/Equipment.csv",
+        "gamedata/Hero.csv"
+      ],
+      "needles": [
+        "Equipment",
+        "装备",
+        "Equipment.csv",
+        "Hero",
+        "角色",
+        "职业",
+        "Hero.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.75,
+      "factHits": [
+        "S002",
+        "dps",
+        "critRate"
+      ],
+      "topTitles": [
+        "06-武器与装备系统.md",
+        "08-掉落与经济闭环.md",
+        "ungrouped.md",
+        "09-商店与兑换规则.md",
+        "03-技能系统设计.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-012",
+      "group": "formula_calc",
+      "difficulty": 3,
+      "question": "按战力公式 02-1 计算：H002 在 L40、WP002 强化 L1、佩戴 S002 两件（EQ005+EQ006）时的战力？",
+      "sourceFiles": [
+        "gamedocs/02_属性体系与战力评估.md",
+        "gamedata/HeroLevel.csv",
+        "gamedata/Weapon.csv",
+        "gamedata/Equipment.csv"
+      ],
+      "needles": [
+        "属性体系",
+        "战力评估",
+        "02",
+        "02_属性体系与战力评估",
+        "02_属性体系与战力评估.md",
+        "HeroLevel",
+        "等级",
+        "HeroLevel.csv",
+        "Weapon",
+        "武器",
+        "Weapon.csv",
+        "Equipment",
+        "装备",
+        "Equipment.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.5,
+      "factHits": [
+        "4900"
+      ],
+      "topTitles": [
+        "06-武器与装备系统.md",
+        "02-属性体系与战力评估.md",
+        "12-版本变更记录-v0-1.md",
+        "05-角色与职业体系.md",
+        "08-掉落与经济闭环.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-013",
+      "group": "formula_calc",
+      "difficulty": 2,
+      "question": "火系攻击打冰系敌人和打雷系敌人的 elemMul 分别是多少？",
+      "sourceFiles": [
+        "gamedata/ElementChart.csv",
+        "gamedocs/01_战斗框架与伤害公式.md"
+      ],
+      "needles": [
+        "ElementChart",
+        "元素",
+        "克制",
+        "elemMul",
+        "战斗框架",
+        "ElementChart.csv",
+        "伤害公式",
+        "01",
+        "01_战斗框架与伤害公式",
+        "01_战斗框架与伤害公式.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.5,
+      "factHits": [
+        "1.25"
+      ],
+      "topTitles": [
+        "02-属性体系与战力评估.md",
+        "12-版本变更记录-v0-1.md",
+        "06-武器与装备系统.md",
+        "00-项目总览与术语表.md",
+        "01-战斗框架与伤害公式.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-014",
+      "group": "formula_calc",
+      "difficulty": 2,
+      "question": "SK011 万雷天降在 L10 的倍率是多少？",
+      "sourceFiles": [
+        "gamedata/Skill.csv",
+        "gamedata/SkillLevel.csv",
+        "gamedocs/03_技能系统设计.md"
+      ],
+      "needles": [
+        "Skill",
+        "技能",
+        "Skill.csv",
+        "SkillLevel",
+        "SkillLevel.csv",
+        "技能系统",
+        "03",
+        "03_技能系统设计",
+        "03_技能系统设计.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 1.0,
+      "factHits": [
+        "8.1"
+      ],
+      "topTitles": [
+        "00-项目总览与术语表.md",
+        "05-角色与职业体系.md",
+        "10-配表规范与外键约定.md",
+        "11-边界异常与qa检查清单.md",
+        "ungrouped.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-015",
+      "group": "formula_calc",
+      "difficulty": 2,
+      "question": "破韧状态（BF011）下目标受到伤害的修正是多少？持续多久？",
+      "sourceFiles": [
+        "gamedata/Buff.csv",
+        "gamedocs/01_战斗框架与伤害公式.md",
+        "gamedocs/04_Buff与状态机.md"
+      ],
+      "needles": [
+        "Buff",
+        "buff",
+        "状态",
+        "Buff.csv",
+        "战斗框架",
+        "伤害公式",
+        "01",
+        "克制",
+        "elemMul",
+        "01_战斗框架与伤害公式",
+        "01_战斗框架与伤害公式.md",
+        "状态机",
+        "04",
+        "04_Buff与状态机",
+        "04_Buff与状态机.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.0,
+      "factHits": [],
+      "topTitles": [
+        "01-战斗框架与伤害公式.md",
+        "04-buff与状态机.md",
+        "07-副本与关卡节奏.md",
+        "08-掉落与经济闭环.md",
+        "10-配表规范与外键约定.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-016",
+      "group": "formula_calc",
+      "difficulty": 3,
+      "question": "伤害公式 01-1 中减伤段的完整表达式？defConst 取值？减伤上限与保底伤害？",
+      "sourceFiles": [
+        "gamedocs/01_战斗框架与伤害公式.md"
+      ],
+      "needles": [
+        "战斗框架",
+        "伤害公式",
+        "01",
+        "克制",
+        "elemMul",
+        "01_战斗框架与伤害公式",
+        "01_战斗框架与伤害公式.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.5,
+      "factHits": [
+        "80",
+        "1"
+      ],
+      "topTitles": [
+        "12-版本变更记录-v0-1.md",
+        "03-技能系统设计.md",
+        "02-属性体系与战力评估.md",
+        "11-边界异常与qa检查清单.md",
+        "01-战斗框架与伤害公式.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-017",
+      "group": "formula_calc",
+      "difficulty": 3,
+      "question": "H002 L100 满配（武器 L50、4 阶段突破、S002 两件）的战力数量级是多少？对应可挑战哪个副本？",
+      "sourceFiles": [
+        "gamedocs/02_属性体系与战力评估.md",
+        "gamedata/Dungeon.csv"
+      ],
+      "needles": [
+        "属性体系",
+        "战力评估",
+        "02",
+        "02_属性体系与战力评估",
+        "02_属性体系与战力评估.md",
+        "Dungeon",
+        "副本",
+        "Dungeon.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.333,
+      "factHits": [
+        "DG009"
+      ],
+      "topTitles": [
+        "02-属性体系与战力评估.md",
+        "08-掉落与经济闭环.md",
+        "ungrouped.md",
+        "01-战斗框架与伤害公式.md",
+        "04-buff与状态机.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-018",
+      "group": "economy_loop",
+      "difficulty": 3,
+      "question": "H002 从突破阶段 1 到 4 总共消耗多少金币与材料？",
+      "sourceFiles": [
+        "gamedata/Breakthrough.csv",
+        "gamedocs/08_掉落与经济闭环.md"
+      ],
+      "needles": [
+        "Breakthrough",
+        "突破",
+        "Breakthrough.csv",
+        "掉落与经济",
+        "经济闭环",
+        "08",
+        "掉落",
+        "08_掉落与经济闭环",
+        "08_掉落与经济闭环.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.6,
+      "factHits": [
+        "49",
+        "MAT04",
+        "26"
+      ],
+      "topTitles": [
+        "05-角色与职业体系.md",
+        "06-武器与装备系统.md",
+        "10-配表规范与外键约定.md",
+        "08-掉落与经济闭环.md",
+        "00-项目总览与术语表.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-019",
+      "group": "economy_loop",
+      "difficulty": 3,
+      "question": "每日可支配体力多少？标准分配方案是什么？",
+      "sourceFiles": [
+        "gamedocs/07_副本与关卡节奏.md"
+      ],
+      "needles": [
+        "副本与关卡",
+        "关卡节奏",
+        "07",
+        "副本",
+        "07_副本与关卡节奏",
+        "07_副本与关卡节奏.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.2,
+      "factHits": [
+        "96"
+      ],
+      "topTitles": [
+        "10-配表规范与外键约定.md",
+        "00-项目总览与术语表.md",
+        "07-副本与关卡节奏.md",
+        "04-buff与状态机.md",
+        "08-掉落与经济闭环.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-020",
+      "group": "economy_loop",
+      "difficulty": 3,
+      "question": "武器从 L1 强化到 L50 的满强化金币成本与大致周期？",
+      "sourceFiles": [
+        "gamedocs/06_武器与装备系统.md",
+        "gamedocs/08_掉落与经济闭环.md"
+      ],
+      "needles": [
+        "武器与装备",
+        "装备系统",
+        "06",
+        "武器",
+        "装备",
+        "06_武器与装备系统",
+        "06_武器与装备系统.md",
+        "掉落与经济",
+        "经济闭环",
+        "08",
+        "掉落",
+        "08_掉落与经济闭环",
+        "08_掉落与经济闭环.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.667,
+      "factHits": [
+        "2",
+        "10"
+      ],
+      "topTitles": [
+        "02-属性体系与战力评估.md",
+        "08-掉落与经济闭环.md",
+        "10-配表规范与外键约定.md",
+        "00-项目总览与术语表.md",
+        "03-技能系统设计.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-021",
+      "group": "economy_loop",
+      "difficulty": 3,
+      "question": "商店周限购全部拉满后 GOLD 周支出与周产出的关系？（防通胀设计）",
+      "sourceFiles": [
+        "gamedocs/09_商店与兑换规则.md",
+        "gamedocs/08_掉落与经济闭环.md"
+      ],
+      "needles": [
+        "商店与兑换",
+        "兑换规则",
+        "09",
+        "商店",
+        "09_商店与兑换规则",
+        "09_商店与兑换规则.md",
+        "掉落与经济",
+        "经济闭环",
+        "08",
+        "掉落",
+        "08_掉落与经济闭环",
+        "08_掉落与经济闭环.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.333,
+      "factHits": [
+        "97"
+      ],
+      "topTitles": [
+        "09-商店与兑换规则.md",
+        "10-配表规范与外键约定.md",
+        "08-掉落与经济闭环.md",
+        "05-角色与职业体系.md",
+        "07-副本与关卡节奏.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-022",
+      "group": "consistency",
+      "difficulty": 2,
+      "question": "全库所有保底（pity）配置清单？",
+      "sourceFiles": [
+        "gamedata/DropTable.csv",
+        "gamedocs/08_掉落与经济闭环.md"
+      ],
+      "needles": [
+        "DropTable",
+        "掉落",
+        "DropTable.csv",
+        "掉落与经济",
+        "经济闭环",
+        "08",
+        "08_掉落与经济闭环",
+        "08_掉落与经济闭环.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.6,
+      "factHits": [
+        "DR004",
+        "DR007",
+        "8"
+      ],
+      "topTitles": [
+        "11-边界异常与qa检查清单.md",
+        "07-副本与关卡节奏.md",
+        "08-掉落与经济闭环.md",
+        "ungrouped.md",
+        "02-属性体系与战力评估.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-023",
+      "group": "consistency",
+      "difficulty": 2,
+      "question": "4★ 稀有度的角色有哪些？对应的 4★ 武器有哪些？",
+      "sourceFiles": [
+        "gamedata/Hero.csv",
+        "gamedata/Weapon.csv"
+      ],
+      "needles": [
+        "Hero",
+        "角色",
+        "职业",
+        "Hero.csv",
+        "Weapon",
+        "武器",
+        "Weapon.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.5,
+      "factHits": [
+        "H004",
+        "WP004"
+      ],
+      "topTitles": [
+        "00-项目总览与术语表.md",
+        "02-属性体系与战力评估.md",
+        "08-掉落与经济闭环.md",
+        "12-版本变更记录-v0-1.md",
+        "09-商店与兑换规则.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-024",
+      "group": "consistency",
+      "difficulty": 2,
+      "question": "雷元素克制什么？火元素被什么克制？",
+      "sourceFiles": [
+        "gamedata/ElementChart.csv"
+      ],
+      "needles": [
+        "ElementChart",
+        "元素",
+        "克制",
+        "elemMul",
+        "战斗框架",
+        "ElementChart.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.0,
+      "factHits": [],
+      "topTitles": [
+        "01-战斗框架与伤害公式.md",
+        "10-配表规范与外键约定.md",
+        "05-角色与职业体系.md",
+        "00-项目总览与术语表.md",
+        "03-技能系统设计.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-025",
+      "group": "consistency",
+      "difficulty": 2,
+      "question": "全库货币枚举、材料枚举、元素枚举各有多少个？分别列出。",
+      "sourceFiles": [
+        "gamedocs/08_掉落与经济闭环.md",
+        "gamedocs/00_项目总览与术语表.md"
+      ],
+      "needles": [
+        "掉落与经济",
+        "经济闭环",
+        "08",
+        "掉落",
+        "08_掉落与经济闭环",
+        "08_掉落与经济闭环.md",
+        "项目总览",
+        "术语表",
+        "00",
+        "00_项目总览与术语表",
+        "00_项目总览与术语表.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.5,
+      "factHits": [
+        "5",
+        "14",
+        "4"
+      ],
+      "topTitles": [
+        "08-掉落与经济闭环.md",
+        "11-边界异常与qa检查清单.md",
+        "03-技能系统设计.md",
+        "ungrouped.md",
+        "00-项目总览与术语表.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-026",
+      "group": "anti_hallucination",
+      "difficulty": 2,
+      "question": "H009 星尘·岚的基础属性是多少？",
+      "sourceFiles": [
+        "gamedocs/00_项目总览与术语表.md"
+      ],
+      "needles": [
+        "项目总览",
+        "术语表",
+        "00",
+        "00_项目总览与术语表",
+        "00_项目总览与术语表.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 1.0,
+      "factHits": [
+        "H001",
+        "H008"
+      ],
+      "topTitles": [
+        "00-项目总览与术语表.md",
+        "09-商店与兑换规则.md",
+        "ungrouped.md",
+        "07-副本与关卡节奏.md",
+        "05-角色与职业体系.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-027",
+      "group": "anti_hallucination",
+      "difficulty": 2,
+      "question": "SK033 星陨之坠的冷却和倍率？",
+      "sourceFiles": [
+        "gamedocs/00_项目总览与术语表.md"
+      ],
+      "needles": [
+        "项目总览",
+        "术语表",
+        "00",
+        "00_项目总览与术语表",
+        "00_项目总览与术语表.md"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 1.0,
+      "factHits": [
+        "SK001",
+        "SK032"
+      ],
+      "topTitles": [
+        "05-角色与职业体系.md",
+        "01-战斗框架与伤害公式.md",
+        "03-技能系统设计.md",
+        "ungrouped.md",
+        "00-项目总览与术语表.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-028",
+      "group": "anti_hallucination",
+      "difficulty": 2,
+      "question": "「燃烧」buff 的持续时间和层数上限？",
+      "sourceFiles": [
+        "gamedocs/00_项目总览与术语表.md",
+        "gamedata/Buff.csv"
+      ],
+      "needles": [
+        "项目总览",
+        "术语表",
+        "00",
+        "00_项目总览与术语表",
+        "00_项目总览与术语表.md",
+        "Buff",
+        "buff",
+        "状态",
+        "Buff.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.75,
+      "factHits": [
+        "BF001",
+        "6",
+        "5"
+      ],
+      "topTitles": [
+        "04-buff与状态机.md",
+        "00-项目总览与术语表.md",
+        "03-技能系统设计.md",
+        "12-版本变更记录-v0-1.md",
+        "01-战斗框架与伤害公式.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-029",
+      "group": "evidence_chain",
+      "difficulty": 4,
+      "question": "为什么说「刷 DG009 能提升 H003 打 DG009 的通关效率」？请给出完整证据链。",
+      "sourceFiles": [
+        "gamedocs/11_边界异常与QA检查清单.md",
+        "gamedata/DropTable.csv",
+        "gamedata/Equipment.csv"
+      ],
+      "needles": [
+        "边界异常",
+        "QA检查",
+        "qa检查",
+        "11",
+        "11_边界异常与QA检查清单",
+        "11_边界异常与QA检查清单.md",
+        "DropTable",
+        "掉落",
+        "DropTable.csv",
+        "Equipment",
+        "装备",
+        "Equipment.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.4,
+      "factHits": [
+        "DG009",
+        "DR009"
+      ],
+      "topTitles": [
+        "00-项目总览与术语表.md",
+        "09-商店与兑换规则.md",
+        "08-掉落与经济闭环.md",
+        "07-副本与关卡节奏.md",
+        "04-buff与状态机.md"
+      ],
+      "error": null
+    },
+    {
+      "id": "EV-030",
+      "group": "evidence_chain",
+      "difficulty": 4,
+      "question": "DUNGEON_TOKEN 从产出到消耗的完整链路？",
+      "sourceFiles": [
+        "gamedocs/11_边界异常与QA检查清单.md",
+        "gamedata/DropTable.csv",
+        "gamedata/ShopItem.csv"
+      ],
+      "needles": [
+        "边界异常",
+        "QA检查",
+        "qa检查",
+        "11",
+        "11_边界异常与QA检查清单",
+        "11_边界异常与QA检查清单.md",
+        "DropTable",
+        "掉落",
+        "DropTable.csv",
+        "ShopItem",
+        "商店",
+        "ShopItem.csv"
+      ],
+      "hit": true,
+      "empty": false,
+      "factCoverage": 0.833,
+      "factHits": [
+        "DG006",
+        "DR006",
+        "DUNGEON_TOKEN",
+        "SH008",
+        "H002"
+      ],
+      "topTitles": [
+        "08-掉落与经济闭环.md",
+        "09-商店与兑换规则.md",
+        "07-副本与关卡节奏.md",
+        "02-属性体系与战力评估.md",
+        "06-武器与装备系统.md"
+      ],
+      "error": null
+    }
+  ]
+}

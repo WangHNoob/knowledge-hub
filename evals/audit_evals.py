@@ -91,7 +91,9 @@ class Auditor:
                ("subStatValue", float(w["subStatValue"]), 0.12), ("passiveSkillId", w["passiveSkillId"], "SK020")
 
     def ev006(self):
-        sk = [r["skillId"] for r in load_rows(os.path.join(self.gd, "Skill.csv")) if r["heroId"] == "H001"]
+        # v0.2：通用被动池 SK065-SK072 的 heroId 仅为设计归属，不进入角色技能组（《00》§4.9、《11》E11）
+        rows = [r for r in load_rows(os.path.join(self.gd, "Skill.csv")) if r["heroId"] == "H001"]
+        sk = [r["skillId"] for r in rows if not ("SK065" <= r["skillId"] <= "SK072")]
         return [("skillIds", sorted(sk), ["SK001", "SK002", "SK003", "SK004"])]
 
     def ev007(self):
@@ -183,13 +185,24 @@ class Auditor:
                ("m2", (rows[0]["material2Id"], m2), ("MAT14", 26))
 
     def ev022(self):
+        # v0.2：pity 条目从 3 条扩至 17 条（仍仅限 weapon/equipment/GEM，取值 8/10/12/15/20）
         pity = [(r["dropId"], r["itemId"], int(r["pity"])) for r in self.drop if r["pity"]]
-        return [("pityRows", sorted(pity), sorted([("DR004", "WP002", 10), ("DR007", "WP002", 10), ("DR009", "WP003", 8)]))]
+        expected = sorted([
+            ("DR004", "WP002", 10), ("DR007", "WP002", 10), ("DR009", "WP003", 8),
+            ("DR011", "WP025", 20), ("DR012", "EQ031", 20), ("DR013", "WP026", 20),
+            ("DR014", "EQ032", 20), ("DR022", "EQ035", 15), ("DR022", "WP027", 15),
+            ("DR023", "EQ036", 12), ("DR023", "WP017", 12), ("DR027", "GEM", 20),
+            ("DR027", "WP018", 10), ("DR028", "EQ038", 10), ("DR028", "GEM", 20),
+            ("DR030", "EQ039", 8), ("DR030", "WP020", 8),
+        ])
+        return [("pityRows", sorted(pity), expected)]
 
     def ev023(self):
+        # v0.2：4★ 从 2 角色/2 武器扩至 5 角色/13 武器
         h4 = sorted(r["heroId"] for r in load_rows(os.path.join(self.gd, "Hero.csv")) if r["rarity"] == "4")
         w4 = sorted(r["weaponId"] for r in load_rows(os.path.join(self.gd, "Weapon.csv")) if r["rarity"] == "4")
-        return ("hero4", h4, ["H004", "H006"]), ("weapon4", w4, ["WP004", "WP006"])
+        return ("hero4", h4, ["H004", "H006", "H010", "H011", "H016"]), \
+               ("weapon4", w4, ["WP004", "WP006", "WP010", "WP011", "WP016", "WP025", "WP026", "WP027", "WP028", "WP029", "WP030", "WP031", "WP032"])
 
     def ev024(self):
         m = {f"{r['attackElement']}->{r['targetElement']}": float(r["multiplier"]) for r in self.elem}
@@ -205,6 +218,118 @@ class Auditor:
         return ("durationSec", float(b["durationSec"]), 6.0), ("maxStack", int(b["maxStack"]), 5), \
                ("value", b["value"], "0.25x施法者ATK/跳")
 
+    # ---------- v0.2 新增用例审计（EV-031~EV-078 数值题，数据驱动重算） ----------
+
+    def _row(self, table, key_col, key_val):
+        rows = load_rows(os.path.join(self.gd, f"{table}.csv"))
+        return next(r for r in rows if r[key_col] == key_val)
+
+    def ev032(self):
+        b = self._row("Buff", "buffId", "BF018")
+        return ("durationSec", float(b["durationSec"]), 6.0), ("maxStack", int(b["maxStack"]), 1)
+
+    def ev033(self):
+        d = self._row("Dungeon", "dungeonId", "DG015")
+        return ("staminaCost", int(d["staminaCost"]), 10), \
+               ("recommendPower", int(d["recommendPower"]), 1500), ("unlockLevel", int(d["unlockLevel"]), 15)
+
+    def ev034(self):
+        g = self._row("GachaPool", "poolId", "GP001")
+        return ("costAmount", int(g["costAmount"]), 1)
+
+    def ev035(self):
+        m = self._row("Monster", "monsterId", "M001")
+        return ("baseHp", int(m["baseHp"]), 3600)
+
+    def ev036(self):
+        q = self._row("Quest", "questId", "QS001")
+        return ("unlockLevel", int(q["unlockLevel"]), 1)
+
+    def ev037(self):
+        i = self._row("Item", "itemId", "IT051")
+        return ("rarity", int(i["rarity"]), 4), ("stackMax", int(i["stackMax"]), 999)
+
+    def ev038(self):
+        t = self._row("TeamBuff", "buffId", "TB002")
+        return ("heroCount", int(t["heroCount"]), 3), \
+               ("heroes", sorted(t["heroes"].split(";")), sorted(["H005", "H007", "H015"]))
+
+    def ev041(self):
+        b = self._row("Boss", "bossId", "B001")
+        return ("phaseCount", int(b["phaseCount"]), 2), ("dungeonId", b["dungeonId"], "DG012")
+
+    def ev042(self):
+        c = self._row("Constellation", "constId", "CN079")
+        return ("slot", int(c["slot"]), 1), ("heroId", c["heroId"], "H014")
+
+    def ev043(self):
+        e = self._row("Expedition", "expeditionId", "EX002")
+        return ("durationHour", int(e["durationHour"]), 4), ("regionId", e["regionId"], "RG002"), \
+               ("rewardItemId", e["rewardItemId"], "MAT29")
+
+    def ev046(self):
+        r = self._row("QuestReward", "questId", "QS039")
+        return ("gold", int(r["gold"]), 60000), ("itemId", r["itemId"], "IT074")
+
+    def ev047(self):
+        s = self._row("SkillLevel", "skillId", "SK055")
+        return ("skillRate", float(s["skillRate"]), 8.46)
+
+    def ev048(self):
+        h = self._row("Hero", "heroId", "H014")
+        power = round(int(h["baseAtk"]) * 3 + int(h["baseDef"]) * 4 + int(h["baseHp"]) * 0.4)
+        return ("power", power, 1324)
+
+    def ev049(self):
+        r = next(x for x in load_rows(os.path.join(self.gd, "GachaRate.csv")) if x["poolType"] == "hero" and x["rarity"] == "5")
+        return ("probability", float(r["probability"]), 0.006)
+
+    def ev050(self):
+        rows = [r for r in self.drop if r["dropId"] == "DR015"]
+        total = sum(int(r["weight"]) for r in rows)
+        return ("weightTotal", total, 1000), ("rowCount", len(rows), 4)
+
+    def ev051(self):
+        rows = load_rows(os.path.join(self.gd, "WeaponLevel.csv"))
+        l80 = next(r for r in rows if r["weaponId"] == "WP017" and r["level"] == "80")
+        return ("atk", int(l80["atk"]), 400), ("goldCost", int(l80["goldCost"]), 1500000)
+
+    def ev052(self):
+        e = self._row("EnhanceRate", "level", "15")
+        return ("successRate", float(e["successRate"]), 0.45), ("failRefundRate", float(e["failRefundRate"]), 0.30)
+
+    def ev053(self):
+        s = self._row("StaminaPricing", "buyCount", "3")
+        return ("costGem", int(s["costGem"]), 70), ("staminaGain", int(s["staminaGain"]), 120)
+
+    def ev054(self):
+        s = self._row("SkillLevel", "skillId", "SK059")
+        return ("skillRate", float(s["skillRate"]), 8.82)
+
+    def ev061(self):
+        b = next(r for r in self.bt if r["heroId"] == "H014" and r["stage"] == "1")
+        return ("costGold", int(b["costGold"]), 20000), \
+               ("material1Id", b["material1Id"], "MAT04"), ("material1Qty", int(b["material1Qty"]), 3), \
+               ("material2Id", b["material2Id"], "MAT14"), ("material2Qty", int(b["material2Qty"]), 2)
+
+    def ev062(self):
+        d = self._row("Dungeon", "dungeonId", "DG021")
+        return ("recommendPower", int(d["recommendPower"]), 30000), ("type", d["type"], "coop")
+
+    def ev065(self):
+        rows = [r for r in load_rows(os.path.join(self.gd, "Constellation.csv")) if r["heroId"] == "H014"]
+        return ("slotSet", sorted(int(r["slot"]) for r in rows), [1, 2, 3, 4, 5, 6]), ("count", len(rows), 6)
+
+    def ev067(self):
+        rows = load_rows(os.path.join(self.gd, "GachaPity.csv"))
+        by = {r["poolType"]: (int(r["pityCount"]), int(r["hardPityCount"])) for r in rows}
+        return ("hero", by.get("hero"), (90, 180)), ("weapon", by.get("weapon"), (80, 160)), \
+               ("newbie", by.get("newbie"), (20, 20))
+
+    def ev078(self):
+        g = self._row("GuildDonate", "donateId", "GD003")
+        return ("rewardGuildPoint", int(g["rewardGuildPoint"]), 25), ("costAmount", int(g["costAmount"]), 10000)
+
 
 AUDITS = {
     "EV-001": Auditor.ev001, "EV-002": Auditor.ev002, "EV-003": Auditor.ev003,
@@ -215,6 +340,15 @@ AUDITS = {
     "EV-016": Auditor.ev016, "EV-017": Auditor.ev017, "EV-018": Auditor.ev018,
     "EV-022": Auditor.ev022, "EV-023": Auditor.ev023, "EV-024": Auditor.ev024,
     "EV-025": Auditor.ev025, "EV-028": Auditor.ev028,
+    # v0.2 新增数值题审计
+    "EV-032": Auditor.ev032, "EV-033": Auditor.ev033, "EV-034": Auditor.ev034,
+    "EV-035": Auditor.ev035, "EV-036": Auditor.ev036, "EV-037": Auditor.ev037,
+    "EV-038": Auditor.ev038, "EV-041": Auditor.ev041, "EV-042": Auditor.ev042,
+    "EV-043": Auditor.ev043, "EV-046": Auditor.ev046, "EV-047": Auditor.ev047,
+    "EV-048": Auditor.ev048, "EV-049": Auditor.ev049, "EV-050": Auditor.ev050,
+    "EV-051": Auditor.ev051, "EV-052": Auditor.ev052, "EV-053": Auditor.ev053,
+    "EV-054": Auditor.ev054, "EV-061": Auditor.ev061, "EV-062": Auditor.ev062,
+    "EV-066": Auditor.ev065, "EV-067": Auditor.ev067, "EV-078": Auditor.ev078,
 }
 
 
@@ -238,6 +372,9 @@ def main():
     for qid, fn in sorted(AUDITS.items()):
         try:
             pairs = fn(auditor)
+            # 单 3-tuple 返回值（(name, got, expected)）规范化为列表
+            if isinstance(pairs, tuple) and len(pairs) == 3 and isinstance(pairs[0], str):
+                pairs = [pairs]
         except Exception as exc:  # noqa: BLE001
             results.append((qid, "FAIL", f"audit 异常: {exc}"))
             continue
