@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""StarTrail 黄金测评集打分脚本 v2（严格版）
+"""StarTrail 黄金测评集打分脚本 v3（严格数值 + 表格兼容）
 
 用法：
     python run_eval.py --answers answers.json [--report report.md] [--tolerance 0.05]
@@ -7,11 +7,13 @@
 answers.json 格式：
     { "EV-001": "class=dps，element=fire，weaponId=WP002 焚天大剑，rarity=5", ... }
 
-匹配规则（严格，与 golden_evals.json meta.scoring 一致）：
+匹配规则（数值严格，表达形式兼容，与 golden_evals.json meta.scoring 一致）：
     - keyFacts 普通 token  : 精确子串匹配（大小写敏感，如 "BF004"、"maxStack=3"）
     - keyFacts 纯数字      : 精确数字匹配 —— 回答的数字集合中必须存在该数（不做容差）
     - keyFacts "≈N" 前缀   : 数字容差匹配（默认 5%），仅用于文档中明确标注「约」的值
-    - numPairs [字段, 值]  : 回答须以 "字段=值" / "字段:值" / "字段 值" 形式给出，值精确匹配
+    - numPairs [字段, 值]  : 字段与数值须同时出现且**任一候选命中**期望值；
+      表达形式不限：内联（字段=值/字段:值/字段 值，允许 ** 装饰）或
+      Markdown 表格（表头列定位 / 两列「字段|值」行）。值仍精确匹配（≈ 前缀除外）
     - 未注册 ID 检测       : 出现注册表之外的 ID 计入幻觉记录；anti_hallucination 题直接 FAIL
       （题目自身 fakeId 除外——正确拒答会提及它）
 """
@@ -89,26 +91,83 @@ def fact_hit(key_fact, answer, numbers, tolerance):
     return key_fact in answer
 
 
+def _norm_cell(cell: str) -> str:
+    """表格单元格字段名归一化：去 ** 装饰与中文注释（如 `**rarity**（稀有度）` → `rarity`）。"""
+    s = cell.replace("**", "")
+    s = re.sub(r"[（(].*", "", s)
+    return s.strip()
+
+
+def _field_value_candidates(answer: str, field: str):
+    """提取字段名在回答中关联的全部数值候选（任一命中即认为该字段已答出）。
+
+    覆盖三种表达：
+    1. 内联 `字段=值` / `字段:值` / `字段 值`（允许 ** 装饰，如 `gold=**60000**`）
+    2. Markdown 表格「表头列定位」：表头含字段名，数据行同列取值
+    3. Markdown 表格「两列字段|值」：每行首列是字段名、次列是值
+    """
+    cands = []
+    # 1) 内联（含 ** 装饰；分隔符支持 = : ： ≈）
+    pat = re.compile(
+        r"\b" + re.escape(field) + r"\s*(?:[=:：≈]\s*|\s+)(?:\*\*)?(-?\d+(?:\.\d+)?)"
+    )
+    cands.extend(float(m.group(1)) for m in pat.finditer(answer))
+
+    # 2/3) Markdown 表格
+    rows = []
+    for line in answer.splitlines():
+        if "|" not in line:
+            continue
+        cells = [c.strip() for c in line.split("|")]
+        if cells and cells[0] == "":
+            cells = cells[1:]
+        if cells and cells[-1] == "":
+            cells = cells[:-1]
+        if not cells:
+            continue
+        # 跳过分隔行（|---|---| / |:--:|）
+        if all(re.fullmatch(r":?-{2,}:?", c.replace("*", "").strip()) for c in cells if c.strip()):
+            continue
+        rows.append(cells)
+    if rows:
+        header = rows[0]
+        # 单行表格（无表头分隔行，如 `| 稀有度 rarity | **5** |`）本身即字段|值对
+        data_rows = rows[1:] if len(rows) > 1 else rows
+        field_re = re.compile(r"\b" + re.escape(field) + r"\b")
+        for row in data_rows:
+            # 3) 两列字段|值：本行首列含字段名（允许中文标签前缀，如「稀有度 rarity」）
+            if len(row) >= 2 and field_re.search(row[0]):
+                m = re.search(r"-?\d+(?:\.\d+)?", row[1])
+                if m:
+                    cands.append(float(m.group(0)))
+            # 2) 表头列定位：表头第 i 列含字段名 → 本行第 i 列取值
+            for i, h in enumerate(header):
+                if field_re.search(h) and i < len(row):
+                    m = re.search(r"-?\d+(?:\.\d+)?", row[i])
+                    if m:
+                        cands.append(float(m.group(0)))
+    return cands
+
+
 def num_pairs_hit(num_pairs, answer, numbers, tolerance):
-    """校验「字段=值」对。字段必须出现且数值匹配（numPairs 为精确期望，≈ 前缀除外）。"""
+    """校验「字段=值」对：字段须出现且**任一候选值**命中期望（存在性匹配）。
+
+    表达形式放宽（内联 / 表格），数值仍精确匹配（numPairs 为精确期望，≈ 前缀除外）。
+    """
     if not num_pairs:
         return None, []
-    fields_present = {m.group(1) or m.group(3) for m in FIELD_RE.finditer(answer)}
     miss = []
     for field, value in num_pairs:
-        # 字段必须在回答中以「字段=值/字段:值/字段 值」形式出现
-        pat = re.compile(r"\b" + re.escape(field) + r"\s*[=:：]\s*(-?\d+(?:\.\d+)?)|\b" + re.escape(field) + r"\s+(-?\d+(?:\.\d+)?)")
-        m = pat.search(answer)
-        if not m:
+        cands = _field_value_candidates(answer, field)
+        if not cands:
             miss.append((field, value, "field missing"))
             continue
-        got = float(m.group(1) or m.group(2))
         if isinstance(value, str) and value.startswith("≈"):
-            ok = match_approx(float(value[1:]), [got], tolerance)
+            ok = match_approx(float(value[1:]), cands, tolerance)
         else:
-            ok = (got == float(value))
+            ok = any(abs(c - float(value)) < 1e-9 for c in cands)
         if not ok:
-            miss.append((field, value, f"value mismatch: got {got}"))
+            miss.append((field, value, f"value mismatch: got {cands[0]}"))
     return (len(miss) == 0, miss)
 
 
