@@ -8,10 +8,11 @@ export const DENSE_DIM = 64;
 
 export interface OkfDenseIndex {
   okfAssetType: "search_dense_index";
-  version: "v1";
+  /** v1 = hashing_trick，v2 = fastembed 真实 embedding（见 denseIndexV2.ts） */
+  version: string;
   generatedAt: string;
   dim: number;
-  method: "hashing_trick_v1";
+  method: string;
   vectors: Array<{
     componentId: string;
     artifactId: string;
