@@ -2,7 +2,7 @@ import type { DiagnosticLogger } from "./diagnosticService";
 import { emitKnowledgeEvent, onKnowledgeEvent } from "./eventService";
 import { AutoPublishEligibilityError, type ReleaseService } from "./releaseService";
 import type { GovernanceProfileService } from "./governanceProfileService";
-import type { DatabaseHandle } from "../types";
+import type { AutoPublishMode, DatabaseHandle } from "../types";
 
 export function registerReleaseAutomation(options: {
   db: DatabaseHandle;
@@ -11,7 +11,10 @@ export function registerReleaseAutomation(options: {
   /** 发布后检索 eval 回归时自动回滚到父发布（默认开启）。 */
   autoRollbackOnRegression?: boolean;
   diagnostics?: DiagnosticLogger;
+  /** 旧布尔开关（兼容）；优先使用 autoPublishMode。 */
   autoPublishRevisions?: boolean | ((projectId: string) => boolean | Promise<boolean>);
+  /** 自动发布策略档（flywheel 02-P3）：off 关闭；revisions 修订版自动发布；revisions_and_new 含新发布。 */
+  autoPublishMode?: AutoPublishMode | ((projectId: string) => AutoPublishMode | Promise<AutoPublishMode>);
 }): () => void {
   return onKnowledgeEvent("build.completed", (event) => {
     void (async () => {
@@ -60,7 +63,8 @@ export function registerReleaseAutomation(options: {
           context: { packageId, only },
         });
       }
-      if (result.release && await shouldAutoPublishRevisions(options.autoPublishRevisions, projectId)) {
+      if (result.release && await shouldAutoPublishByMode(options.autoPublishMode, projectId)
+        && await shouldAutoPublishRevisions(options.autoPublishRevisions, projectId)) {
         await tryAutoPublishRevision({
           db: options.db,
           releaseService: options.releaseService,
@@ -95,6 +99,14 @@ async function shouldAutoPublishRevisions(
   projectId: string,
 ): Promise<boolean> {
   return typeof policy === "function" ? Boolean(await policy(projectId)) : Boolean(policy);
+}
+
+export async function shouldAutoPublishByMode(
+  modePolicy: AutoPublishMode | ((projectId: string) => AutoPublishMode | Promise<AutoPublishMode>) | undefined,
+  projectId: string,
+): Promise<boolean> {
+  if (typeof modePolicy === "function") return (await modePolicy(projectId)) !== "off";
+  return (modePolicy ?? "revisions") !== "off";
 }
 
 async function publishCompletedBuild(options: {

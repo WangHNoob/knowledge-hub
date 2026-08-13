@@ -4,6 +4,7 @@ import { mapComponent } from "../db/mappers";
 import type { AssetComponent, DatabaseHandle, ReleaseRecord } from "../types";
 import { emitKnowledgeEvent } from "./eventService";
 import { createGapFillCandidateService } from "./gapFillCandidateService";
+import { resolveFeedbackClusterKey } from "./feedbackClusterService";
 
 const REBUILD_PROPOSAL_THRESHOLD = 2;
 const UNTARGETED_FEEDBACK_TYPES = new Set(["miss", "repeated_query", "knowledge_gap", "tool_error"]);
@@ -111,6 +112,12 @@ export class FeedbackService {
     );
     const repeatedCount = Number(countRows[0]?.count ?? 0) + 1;
     const effectiveFeedbackType: FeedbackType = feedbackType === "miss" && repeatedCount >= 3 ? "repeated_query" : feedbackType;
+    // 语义聚类键（flywheel 02-P3）：同 project+type 内 embedding 相似 ≥ 0.85 归并
+    const clusterKey = await resolveFeedbackClusterKey(this.db, {
+      projectId: release.projectId,
+      feedbackType: effectiveFeedbackType,
+      query,
+    });
     const severity = repeatedCount >= 3 ? "blocking" : "warning";
     const title = feedbackTitle(effectiveFeedbackType, severity, query);
     const suggestedAction = feedbackSuggestedAction(effectiveFeedbackType);
@@ -126,8 +133,8 @@ export class FeedbackService {
       const eventId = `evt_${Date.now()}_${nanoid(6)}`;
       await this.adapter.query(
         `INSERT INTO agent_events
-          (event_id, project_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          (event_id, project_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, cluster_key, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           eventId,
           release.projectId,
@@ -139,6 +146,7 @@ export class FeedbackService {
           gapType,
           suggestedAction,
           "",
+          clusterKey,
           new Date().toISOString(),
         ],
       );
@@ -204,8 +212,8 @@ export class FeedbackService {
     );
     await this.adapter.query(
       `INSERT INTO agent_events
-        (event_id, project_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        (event_id, project_id, release_id, query, hit_component_ids, quality_flags, status, feedback_type, suggested_action, task_id, cluster_key, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         `evt_${Date.now()}_${nanoid(6)}`,
         release.projectId,
@@ -217,6 +225,7 @@ export class FeedbackService {
         effectiveFeedbackType,
         suggestedAction,
         taskId,
+        clusterKey,
         new Date().toISOString()
       ]
     );

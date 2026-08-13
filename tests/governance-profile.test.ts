@@ -26,6 +26,7 @@ describe("governance profile service", () => {
       const base = await service.resolve("default_project");
       expect(base.source).toBe("default");
       expect(base.release.autoPublishRevisions).toBe(false);
+      expect(base.release.autoPublishMode).toBe("off");
       expect(base.lint.autoEligibleThreshold).toBeCloseTo(0.85);
       expect(base.feedback.highFrequencyThreshold).toBe(2);
 
@@ -40,11 +41,29 @@ describe("governance profile service", () => {
       });
       expect(updated.source).toBe("project");
       expect(updated.release.autoPublishRevisions).toBe(true);
+      expect(updated.release.autoPublishMode).toBe("revisions");
       expect(updated.feedback.highFrequencyThreshold).toBe(5);
       // 未触及的字段保持默认。
       expect(updated.release.blockOnDeletes).toBe(true);
       expect(updated.lint.autoEligibleThreshold).toBeCloseTo(0.85);
       expect(updated.updatedBy).toBe("admin");
+
+      // 三档模式（flywheel 02-P3）：off / revisions / revisions_and_new。
+      const off = await service.update({
+        projectId: "default_project",
+        patch: { release: { autoPublishMode: "off" } },
+        updatedBy: "admin",
+      });
+      expect(off.release.autoPublishMode).toBe("off");
+      expect(off.release.autoPublishRevisions).toBe(false);
+
+      const all = await service.update({
+        projectId: "default_project",
+        patch: { release: { autoPublishMode: "revisions_and_new" } },
+        updatedBy: "admin",
+      });
+      expect(all.release.autoPublishMode).toBe("revisions_and_new");
+      expect(all.release.autoPublishRevisions).toBe(true);
 
       // resolve 再读一次应持久化（不是内存态）。
       const reread = await service.resolve("default_project");
@@ -69,6 +88,7 @@ describe("governance profile service", () => {
       const reset = await service.reset("default_project");
       expect(reset.source).toBe("default");
       expect(reset.release.autoPublishRevisions).toBe(false);
+      expect(reset.release.autoPublishMode).toBe("off");
       expect(reset.feedback.highFrequencyThreshold).toBe(2);
     } finally {
       await fixture.cleanup();

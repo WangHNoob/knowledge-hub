@@ -45,6 +45,12 @@ export const config = {
   uploadMaxFields: positiveInt("KH_UPLOAD_MAX_FIELDS", 200),
   uploadMaxParts: positiveInt("KH_UPLOAD_MAX_PARTS", 20200),
   autoPublishRevisions: flag("KH_AUTO_PUBLISH_REVISIONS", true),
+  /** 自动发布策略档（flywheel 02-P3）：off | revisions（默认）| revisions_and_new；旧布尔 KH_AUTO_PUBLISH_REVISIONS=false 等价 off。 */
+  autoPublishMode: (() => {
+    const raw = (process.env.KH_AUTO_PUBLISH_MODE ?? "").trim().toLowerCase();
+    if (raw === "off" || raw === "revisions" || raw === "revisions_and_new") return raw;
+    return flag("KH_AUTO_PUBLISH_REVISIONS", true) ? "revisions" : "off";
+  })() as "off" | "revisions" | "revisions_and_new",
   autoBuildOnUpload: flag("KH_AUTO_BUILD_ON_UPLOAD", true),
   healthSweepIntervalHours: Number(optional("KH_HEALTH_SWEEP_INTERVAL_HOURS", "24")),
   generateBuildReviewTasks: flag("KH_GENERATE_BUILD_REVIEW_TASKS", false),

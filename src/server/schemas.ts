@@ -45,6 +45,7 @@ export const governanceProfileUpdateSchema = z.object({
   }).optional(),
   release: z.object({
     autoPublishRevisions: z.boolean().optional(),
+    autoPublishMode: z.enum(["off", "revisions", "revisions_and_new"]).optional(),
     blockOnDeletes: z.boolean().optional(),
     blockOnTrustDecline: z.boolean().optional(),
     blockOnPendingCorrections: z.boolean().optional()

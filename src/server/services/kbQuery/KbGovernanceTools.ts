@@ -244,6 +244,7 @@ export class KbGovernanceTools {
           policy: {
             source: governanceProfile.source,
             autoPublishRevisions: governanceProfile.release.autoPublishRevisions,
+            autoPublishMode: governanceProfile.release.autoPublishMode,
             lintAutoGovernanceEnabled: governanceProfile.lint.autoGovernanceEnabled,
             minAutoPublishScore: governanceProfile.trust.minAutoPublishScore,
           },
@@ -356,6 +357,7 @@ export class KbGovernanceTools {
         policy: {
           source: governanceProfile.source,
           autoPublishRevisions: governanceProfile.release.autoPublishRevisions,
+          autoPublishMode: governanceProfile.release.autoPublishMode,
           lintAutoGovernanceEnabled: governanceProfile.lint.autoGovernanceEnabled,
           minAutoPublishScore: governanceProfile.trust.minAutoPublishScore,
         },

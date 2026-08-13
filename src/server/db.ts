@@ -505,6 +505,8 @@ async function migrate(adapter: DatabaseAdapter, schema: string): Promise<void> 
     ALTER TABLE ${p}review_tasks ADD COLUMN IF NOT EXISTS llm_analysis JSONB;
     ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS auto_generated BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE ${p}annotation_examples ADD COLUMN IF NOT EXISTS llm_analysis JSONB;
+    ALTER TABLE ${p}agent_events ADD COLUMN IF NOT EXISTS cluster_key TEXT NOT NULL DEFAULT '';
+    CREATE INDEX IF NOT EXISTS idx_agent_events_cluster ON ${p}agent_events(project_id, feedback_type, cluster_key, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_review_tasks_auto_fixed ON ${p}review_tasks(auto_fixed, status) WHERE auto_fixed = TRUE;
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_override ON ${p}annotation_examples(apply_mode, page_type, rule_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_annotation_examples_active ON ${p}annotation_examples(active, apply_mode, created_at DESC);

@@ -103,6 +103,8 @@ okf_bundle/
 - **发布后自动回滚**：自动发布成功后对新内容再跑一次检索 eval，回归则自动回滚到父发布（`release.auto_rolled_back` 事件；`KH_AUTO_ROLLBACK_ON_REGRESSION`）。
 - **任务规则化收敛**：info 级任务与「重复反馈 ≥N 次且无源」的 gap_fill 候选自动 dismiss（`taskPolicyService` + 健康巡检）。
 - 信任下降 / 待审纠正 / 组件删除默认全部阻断自动发布（`KH_PUBLISH_RELAXED=false`）；结构性变更（如页面迁移目录）需人工手动发布确认。
+- **自动发布策略档（flywheel 02-P3）**：治理 Profile `release.autoPublishMode` = `off`（全关）| `revisions`（默认：反馈驱动的修订版自动发布，首次发布/结构性变更仍人工）| `revisions_and_new`；env 用 `KH_AUTO_PUBLISH_MODE`（旧布尔 `KH_AUTO_PUBLISH_REVISIONS=false` 等价 off）。
+- **语义反馈聚类（flywheel 02-P3）**：反馈簇聚合键从「query 精确相等」升级为「embedding 余弦 ≥ 0.85 归并」（同 project + 同 feedback_type，复用 dense v2 的 bge-small-zh 模型）；归并写 `diagnostic_logs` 审计，模型不可用自动回退精确匹配；同义改写查询会更快触达高频阈值（升级 blocking/重建候选）。
 
 ### 6. 轻量知识运营台（飞轮）
 

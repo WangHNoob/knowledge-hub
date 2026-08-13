@@ -368,6 +368,8 @@ export interface AgentEvent {
   feedbackType: "hit" | "miss" | "low_quality_hit" | "repeated_query" | "evidence_insufficient" | "relation_inference_failed" | "knowledge_gap" | "bad_hit" | "stale_knowledge" | "tool_error";
   suggestedAction: string;
   taskId: string;
+  /** 语义反馈聚类键（flywheel 02-P3）：同 feedback_type 内 embedding 相似度 ≥ 0.85 归并；空 = 未聚类。 */
+  clusterKey: string;
   createdAt: string;
   components: AgentEventComponent[];
 }
@@ -649,8 +651,13 @@ export interface GovernanceLintPolicy {
   autoEligibleThreshold: number;
 }
 
+/** 自动发布策略档（flywheel 02-P3）：off=全关；revisions=反馈驱动的修订版自动发布（首次发布/结构性变更仍人工）；revisions_and_new=修订 + 新发布都自动。 */
+export type AutoPublishMode = "off" | "revisions" | "revisions_and_new";
+
 export interface GovernanceReleasePolicy {
+  /** 兼容旧字段：mode !== "off" 的派生值（新代码读 autoPublishMode）。 */
   autoPublishRevisions: boolean;
+  autoPublishMode: AutoPublishMode;
   blockOnDeletes: boolean;
   blockOnTrustDecline: boolean;
   blockOnPendingCorrections: boolean;

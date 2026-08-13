@@ -1,4 +1,4 @@
-import type { DatabaseHandle, KnowledgeGovernanceProfile, KnowledgeGovernanceProfileInput } from "../types";
+import type { AutoPublishMode, DatabaseHandle, KnowledgeGovernanceProfile, KnowledgeGovernanceProfileInput } from "../types";
 
 /**
  * 环境变量提供的治理默认值。项目未设置覆盖时全部沿用这些默认。
@@ -11,6 +11,8 @@ export interface GovernanceDefaults {
   lintAutoGovernanceEnabled: boolean;
   lintAutoEligibleThreshold: number;
   autoPublishRevisions: boolean;
+  /** 自动发布策略档（flywheel 02-P3）：off | revisions | revisions_and_new。 */
+  autoPublishMode: AutoPublishMode;
   blockOnDeletes: boolean;
   blockOnTrustDecline: boolean;
   blockOnPendingCorrections: boolean;
@@ -31,6 +33,7 @@ export const DEFAULT_GOVERNANCE_DEFAULTS: GovernanceDefaults = {
   lintAutoGovernanceEnabled: true,
   lintAutoEligibleThreshold: 0.85,
   autoPublishRevisions: true,
+  autoPublishMode: "revisions",
   blockOnDeletes: true,
   blockOnTrustDecline: true,
   blockOnPendingCorrections: true,
@@ -45,7 +48,15 @@ export const DEFAULT_GOVERNANCE_DEFAULTS: GovernanceDefaults = {
 };
 
 export function createGovernanceProfileService(db: DatabaseHandle, defaults: Partial<GovernanceDefaults> = {}): GovernanceProfileService {
-  return new GovernanceProfileService(db, { ...DEFAULT_GOVERNANCE_DEFAULTS, ...defaults });
+  const merged = { ...DEFAULT_GOVERNANCE_DEFAULTS, ...defaults };
+  // 新旧字段一致性：只给布尔 → 派生档位；只给档位 → 派生布尔。
+  if (defaults.autoPublishMode === undefined && defaults.autoPublishRevisions !== undefined) {
+    merged.autoPublishMode = defaults.autoPublishRevisions ? "revisions" : "off";
+  }
+  if (defaults.autoPublishRevisions === undefined && defaults.autoPublishMode !== undefined) {
+    merged.autoPublishRevisions = defaults.autoPublishMode !== "off";
+  }
+  return new GovernanceProfileService(db, merged);
 }
 
 /**
@@ -73,7 +84,8 @@ export class GovernanceProfileService {
       },
       lint: { autoGovernanceEnabled: d.lintAutoGovernanceEnabled, autoEligibleThreshold: d.lintAutoEligibleThreshold },
       release: {
-        autoPublishRevisions: d.autoPublishRevisions,
+        autoPublishRevisions: d.autoPublishMode !== "off",
+        autoPublishMode: d.autoPublishMode,
         blockOnDeletes: d.blockOnDeletes,
         blockOnTrustDecline: d.blockOnTrustDecline,
         blockOnPendingCorrections: d.blockOnPendingCorrections,
@@ -175,7 +187,8 @@ function normalizeInput(raw: Record<string, unknown> | KnowledgeGovernanceProfil
   };
   if (Object.keys(lintPatch).length) out.lint = lintPatch;
   const releasePatch = {
-    ...boolField(release, "autoPublishRevisions"),
+    ...modeField(release, "autoPublishMode"),
+    ...legacyAutoPublishField(release),
     ...boolField(release, "blockOnDeletes"),
     ...boolField(release, "blockOnTrustDecline"),
     ...boolField(release, "blockOnPendingCorrections"),
@@ -215,6 +228,32 @@ function asObject(value: unknown): Record<string, unknown> {
 
 function boolField(source: Record<string, unknown>, key: string): Record<string, boolean> {
   return typeof source[key] === "boolean" ? { [key]: source[key] as boolean } : {};
+}
+
+const AUTO_PUBLISH_MODES = ["off", "revisions", "revisions_and_new"] as const;
+
+interface AutoPublishModePatch {
+  autoPublishMode?: AutoPublishMode;
+  autoPublishRevisions?: boolean;
+}
+
+function modeField(source: Record<string, unknown>, key: string): AutoPublishModePatch {
+  const value = source[key];
+  if (!AUTO_PUBLISH_MODES.includes(value as AutoPublishMode)) return {};
+  const mode = value as AutoPublishMode;
+  return { autoPublishMode: mode, autoPublishRevisions: mode !== "off" };
+}
+
+/** 旧字段兼容：仅提供 autoPublishRevisions 布尔时映射为三档模式。 */
+function legacyAutoPublishField(source: Record<string, unknown>): AutoPublishModePatch {
+  if (AUTO_PUBLISH_MODES.includes(source.autoPublishMode as AutoPublishMode)) return {};
+  if (typeof source.autoPublishRevisions === "boolean") {
+    return {
+      autoPublishMode: source.autoPublishRevisions ? "revisions" : "off",
+      autoPublishRevisions: source.autoPublishRevisions as boolean,
+    };
+  }
+  return {};
 }
 
 function stringField(source: Record<string, unknown>, key: string): Record<string, string> {

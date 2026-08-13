@@ -20,6 +20,7 @@ const db = await createDatabase({
 });
 const governanceProfileService = createGovernanceProfileService(db, {
   autoPublishRevisions: config.autoPublishRevisions,
+  autoPublishMode: config.autoPublishMode,
   lintAutoGovernanceEnabled: true,
   lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
 });

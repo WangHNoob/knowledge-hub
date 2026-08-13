@@ -229,12 +229,17 @@ export class FlywheelService {
     const events = (await this.knowledge.listAgentEvents(projectId)).filter(isNegativeFeedback);
     if (events.length === 0) return [];
 
-    // 聚合键：反馈类别 + 首个命中组件（未命中则按归一化查询）。
+    // 聚合键：优先语义聚类键（flywheel 02-P3，embedding 相似 ≥ 0.85 归并），
+    // 其次「反馈类别 + 首个命中组件」，未命中按归一化查询。
     const groups = new Map<string, AgentEvent[]>();
     for (const event of events) {
       const type = clusterType(event);
       const component = event.hitComponentIds[0] ?? "";
-      const key = component ? `${type}::${component}` : `${type}::q::${normalizeQuery(event.query)}`;
+      const key = event.clusterKey
+        ? `${type}::c::${event.clusterKey}`
+        : component
+          ? `${type}::${component}`
+          : `${type}::q::${normalizeQuery(event.query)}`;
       const list = groups.get(key) ?? [];
       list.push(event);
       groups.set(key, list);
