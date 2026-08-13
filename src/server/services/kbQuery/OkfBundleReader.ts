@@ -86,6 +86,10 @@ export class OkfBundleReader {
   }
 
   readOkfDenseIndex(release: ReleaseRecord): OkfDenseIndex | null {
-    return this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUri", "search/dense.json");
+    // v2（真实 embedding）优先；v1 为回退（flywheel 02-P2）
+    const v2 = this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUriV2", "search/dense.v2.json");
+    if (v2?.okfAssetType === "search_dense_index" && v2.method === "fastembed") return v2;
+    const v1 = this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUri", "search/dense.json");
+    return v1?.okfAssetType === "search_dense_index" ? v1 : null;
   }
 }

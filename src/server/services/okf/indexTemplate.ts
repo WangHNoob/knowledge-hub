@@ -121,7 +121,8 @@ const ASSET_DESCRIPTIONS: Record<string, string> = {
   "tables/schemas.json": "全部配置表 schema（表名 / 字段 / 行数）",
   "tables/aliases.json": "表名别名表",
   "search/index.json": "词法检索索引（工具内部使用）",
-  "search/dense.json": "稠密向量索引（工具内部使用）",
+  "search/dense.json": "稠密向量索引 v1（hashing trick，回退用）",
+  "search/dense.v2.json": "稠密向量索引 v2（fastembed 真实 embedding，fastembed 可用时生成）",
   "meta/revision.json": "本次发布相对父版本的修订差异",
 };
 

@@ -1,7 +1,8 @@
 import type { DatabaseHandle, ReleaseRecord } from "../../types";
 import { jsonObject } from "../../db/mappers";
 import { isComponentVisibleToRole } from "../knowledgeAcl";
-import { fuseSearchWithRrf, searchDenseIndex } from "../okf/hybridSearch";
+import { fuseSearchWithRrf } from "../okf/hybridSearch";
+import { DenseModelUnavailableError, searchDenseIndexV2Aware } from "../okf/denseIndexV2";
 import { searchOkfIndex, type OkfSearchResultItem } from "../okf/searchIndex";
 import type { KbGraphTools } from "./KbGraphTools";
 import type { OkfBundleReader } from "./OkfBundleReader";
@@ -79,9 +80,23 @@ export class KbSearchTools {
     if (!dense || dense.vectors.length === 0) {
       candidates = lexical.slice(0, Math.max(limit * 2, 20));
     } else {
-      const denseRanks = searchDenseIndex(dense, query, Math.max(limit * 2, 20));
+      let denseRanks: Array<{ componentId: string; score: number; rank: number }> = [];
+      try {
+        // v2 索引走 fastembed 同模型推理（进程内 LRU），v1 走 hashing trick
+        denseRanks = await searchDenseIndexV2Aware(dense, query, Math.max(limit * 2, 20));
+      } catch (err) {
+        if (err instanceof DenseModelUnavailableError) {
+          // v2 索引存在但模型不可用：退化为纯词法，绝不静默错配（flywheel 02-P2）
+          console.warn(`[kb_search] dense v2 模型不可用，本次查询退化纯词法：${err.message}`);
+          denseRanks = [];
+        } else {
+          throw err;
+        }
+      }
       const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
-      candidates = fuseSearchWithRrf(lexical, denseRanks, pageById, Math.max(limit * 2, 20));
+      candidates = denseRanks.length > 0
+        ? fuseSearchWithRrf(lexical, denseRanks, pageById, Math.max(limit * 2, 20))
+        : lexical.slice(0, Math.max(limit * 2, 20));
     }
     const visible = await this.filterSearchItemsByDbVisibility(candidates, agentRole);
     return this.page!.alignSearchItemsWithPageTables(release, visible.slice(0, limit));

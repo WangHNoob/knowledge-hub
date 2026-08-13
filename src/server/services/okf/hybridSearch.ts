@@ -142,7 +142,13 @@ function cosine(a: number[], b: number[]): number {
   return dot;
 }
 
-function l2Normalize(vec: number[]): number[] {
+/** 余弦相似度（向量已 L2 归一化时为点积）。dense v2 查询侧复用。 */
+export function cosineSimilarity(a: number[], b: number[]): number {
+  return cosine(a, b);
+}
+
+/** L2 归一化。dense v2 查询侧复用（fastembed 输出的 query 向量）。 */
+export function l2Normalize(vec: number[]): number[] {
   const norm = Math.sqrt(vec.reduce((sum, value) => sum + value * value, 0));
   if (norm <= 0) return vec;
   return vec.map((value) => value / norm);

@@ -8,6 +8,7 @@ import { renderReportMarkdown } from "./reportRender";
 import { scanWorkspace } from "./conformanceService";
 import { buildOkfSearchIndex } from "./searchIndex";
 import { buildOkfDenseIndex, DENSE_INDEX_URI } from "./hybridSearch";
+import { buildOkfDenseIndexV2, DENSE_INDEX_URI_V2, resolveDenseMethod } from "./denseIndexV2";
 import { OKF_EXPORTER_VERSION, type ConformanceReport } from "./types";
 import { exportKnowledgeLintReport, type KnowledgeLintReport } from "./lintService";
 import {
@@ -34,6 +35,8 @@ export interface OkfExportManifest {
   tableAliasesUri?: string;
   searchIndexUri?: string;
   denseIndexUri?: string;
+  /** 真实 embedding 稠密索引（fastembed 可用时写入；v1 denseIndexUri 恒在作回退）。 */
+  denseIndexUriV2?: string;
   revisionUri?: string;
   logUri: string;
   lintUri: string;
@@ -126,13 +129,16 @@ export class OkfExportService {
       if (metaUri) exportedPaths.push(metaUri);
     }
 
-    const searchExport = exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
+    const searchExport = await exportSearchIndexAsset(bundleDir, input.publishedAt, searchPages);
     if (!searchExport.searchIndexUri) removeBundleFile(bundleDir, "search/index.json");
     if (!searchExport.denseIndexUri) removeBundleFile(bundleDir, DENSE_INDEX_URI);
+    if (!searchExport.denseIndexUriV2) removeBundleFile(bundleDir, DENSE_INDEX_URI_V2);
     if (searchExport.searchIndexUri) exportedPaths.push(searchExport.searchIndexUri);
     if (searchExport.denseIndexUri) exportedPaths.push(searchExport.denseIndexUri);
+    if (searchExport.denseIndexUriV2) exportedPaths.push(searchExport.denseIndexUriV2);
     const searchIndexUri = searchExport.searchIndexUri;
     const denseIndexUri = searchExport.denseIndexUri;
+    const denseIndexUriV2 = searchExport.denseIndexUriV2;
     const revisionUri = input.revision ? exportRevisionAsset(bundleDir, input.revision) : undefined;
     if (revisionUri) exportedPaths.push(revisionUri);
 
@@ -180,6 +186,7 @@ export class OkfExportService {
         tableAliasesUri,
         searchIndexUri,
         denseIndexUri,
+        denseIndexUriV2,
         revisionUri,
         logUri: posix.join("releases", input.release.releaseId, "okf_bundle", "log.md"),
         lintUri: lint.jsonUri,
@@ -395,18 +402,35 @@ function exportTableAliasesAsset(dataDir: string, bundleDir: string, components:
   return uri;
 }
 
-function exportSearchIndexAsset(
+async function exportSearchIndexAsset(
   bundleDir: string,
   generatedAt: string,
   pages: Array<{ okfPath: string; markdown: string }>,
-): { searchIndexUri?: string; denseIndexUri?: string } {
+): Promise<{ searchIndexUri?: string; denseIndexUri?: string; denseIndexUriV2?: string }> {
   if (pages.length === 0) return {};
   const searchIndex = buildOkfSearchIndex({ generatedAt, pages, bundleDir });
   const searchIndexUri = "search/index.json";
   writeJsonAsset(bundleDir, searchIndexUri, searchIndex);
+  // v1（hashing trick）恒写：dense.v2.json 缺失时的查询回退 + 评测对比基线
   const denseIndexUri = DENSE_INDEX_URI;
   writeJsonAsset(bundleDir, denseIndexUri, buildOkfDenseIndex(searchIndex));
-  return { searchIndexUri, denseIndexUri };
+  // v2（真实 embedding）：OKF_DENSE_METHOD=fastembed 时尝试，模型不可用自动
+  // 回退 v1 并告警，绝不静默产出劣质索引；显式 hashing_trick 则跳过尝试
+  let denseIndexUriV2: string | undefined;
+  if (resolveDenseMethod() === "fastembed") {
+    try {
+      const denseV2 = await buildOkfDenseIndexV2(searchIndex);
+      denseIndexUriV2 = DENSE_INDEX_URI_V2;
+      writeJsonAsset(bundleDir, denseIndexUriV2, denseV2);
+      console.log(`[okf/export] dense v2 写入 ${denseIndexUriV2}（method=${denseV2.method} dim=${denseV2.dim} vectors=${denseV2.vectors.length}）`);
+    } catch (err) {
+      console.warn(
+        `[okf/export] dense v2 构建失败，回退 v1（${denseIndexUri}）：`
+          + (err instanceof Error ? err.message : String(err)),
+      );
+    }
+  }
+  return { searchIndexUri, denseIndexUri, denseIndexUriV2 };
 }
 
 function exportRevisionAsset(bundleDir: string, revision: Record<string, unknown>): string {
