@@ -105,6 +105,9 @@ okf_bundle/
 - 信任下降 / 待审纠正 / 组件删除默认全部阻断自动发布（`KH_PUBLISH_RELAXED=false`）；结构性变更（如页面迁移目录）需人工手动发布确认。
 - **自动发布策略档（flywheel 02-P3）**：治理 Profile `release.autoPublishMode` = `off`（全关）| `revisions`（默认：反馈驱动的修订版自动发布，首次发布/结构性变更仍人工）| `revisions_and_new`；env 用 `KH_AUTO_PUBLISH_MODE`（旧布尔 `KH_AUTO_PUBLISH_REVISIONS=false` 等价 off）。
 - **语义反馈聚类（flywheel 02-P3）**：反馈簇聚合键从「query 精确相等」升级为「embedding 余弦 ≥ 0.85 归并」（同 project + 同 feedback_type，复用 dense v2 的 bge-small-zh 模型）；归并写 `diagnostic_logs` 审计，模型不可用自动回退精确匹配；同义改写查询会更快触达高频阈值（升级 blocking/重建候选）。
+- **文档级修复 document_rewrite（flywheel 02-P4）**：LLM 整页改写须过三道闸才自动落稿——结构（标题层级/表格行管道数一致）、事实（正文数值必须在证据/源文封闭集合内）、引用（`[evidence:ID]` 必须落在已知 evidenceId 集合，防幻觉引用）；独立置信门槛 `KH_AUTO_REMEDIATION_DOC_REWRITE_CONFIDENCE=0.9`；任一项不过 → 整页改写稿以建议形式进 Review 页人工采纳/编辑。
+- **动态 trust 消费维度（flywheel 02-P4）**：trust 第五维 `consumption`（归因引用率 + kb_search 命中后继续点击率 + 负反馈纠偏），发布期重算并落 `component.trust_changed` 事件（±0.05 才发，可审计）；无消费数据时维持原四维口径不变。
+- **生产检索失败样本回流（flywheel 02-P4）**：`npm run eval:probe:collect` 扫描 mcp_audit 中 kb_search miss/低质量命中 → `evals/retrieval-probe-candidates.json`（auditId 溯源）→ 人工确认后并入 `retrieval-gold.json`（禁止静默自动入库）。
 
 ### 6. 轻量知识运营台（飞轮）
 

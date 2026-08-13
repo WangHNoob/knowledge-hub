@@ -57,6 +57,8 @@ export const config = {
   autoRemediationEnabled: flag("KH_AUTO_REMEDIATION_ENABLED", false),
   autoAliasRemediationEnabled: flag("KH_AUTO_ALIAS_REMEDIATION_ENABLED", false),
   autoRemediationConfidenceThreshold: Number(optional("KH_AUTO_REMEDIATION_CONFIDENCE_THRESHOLD", "0.85")),
+  /** document_rewrite 单独门槛（flywheel 02-P4）：整页重写风险更高，默认 0.9。 */
+  autoRemediationDocRewriteConfidence: Number(optional("KH_AUTO_REMEDIATION_DOC_REWRITE_CONFIDENCE", "0.9")),
   autoRemediationLlmProvider: optional("KH_AUTO_REMEDIATION_LLM_PROVIDER", ""),
   autoRemediationLlmBaseUrl: optional("KH_AUTO_REMEDIATION_LLM_BASE_URL", ""),
   autoRemediationLlmModel: optional("KH_AUTO_REMEDIATION_LLM_MODEL", ""),

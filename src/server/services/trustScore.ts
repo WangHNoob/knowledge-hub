@@ -12,6 +12,35 @@ export interface ComputeTrustScoreInput {
   reviewTasks?: Pick<ReviewTask, "severity" | "status" | "title" | "description">[];
   now: string | Date;
   lastTrustedAuditAt?: string | null;
+  /** 消费维度得分（0-1，flywheel 02-P4）：提供时启用第五维 v3-consumption。 */
+  consumption?: number | null;
+}
+
+/** 消费维度原始统计（引用率 / 检索点击率 / 负反馈纠偏）。 */
+export interface ConsumptionStats {
+  /** Agent 输出归因中引用该组件的次数。 */
+  attributionCount: number;
+  /** kb_search 命中该组件的次数（检索曝光）。 */
+  searchCount: number;
+  /** kb_search 命中后继续点击 kb_get_page/kb_get_entity 的次数（隐式认可）。 */
+  clickCount: number;
+  /** 该组件的 Agent 负反馈次数（miss/bad_hit/low_quality_hit 等）。 */
+  negativeFeedbackCount: number;
+}
+
+/**
+ * 消费维度评分：基线 0.5；有归因引用 +0.5；检索后有继续点击 +0.5×min(1,2×点击率)；
+ * 每次负反馈 -0.15（至多扣 3 次）。无任何消费记录 → 0.5（中性，不惩罚冷门知识）。
+ */
+export function consumptionScore(stats: ConsumptionStats): number {
+  let score = 0.5;
+  if (stats.attributionCount > 0) score += 0.5;
+  if (stats.searchCount > 0 && stats.clickCount > 0) {
+    const clickRate = stats.clickCount / stats.searchCount;
+    score += 0.5 * Math.min(1, 2 * clickRate);
+  }
+  score -= 0.15 * Math.min(3, stats.negativeFeedbackCount);
+  return clamp01(score);
 }
 
 const TRUST_VERSION = "v2-lite" as const;
@@ -102,11 +131,20 @@ export function computeTrustScore(input: ComputeTrustScoreInput): TrustScore {
   const consistency = consistencyScore(input.component, openTasks);
   const review = reviewState(openTasks);
 
+  const hasConsumption = typeof input.consumption === "number" && Number.isFinite(input.consumption);
+  const consumption = hasConsumption ? clamp01(input.consumption as number) : 0;
+
+  // v3-consumption：第五维消费权重 0.20；无消费数据时维持原四维权重（行为不变）。
+  const weights = hasConsumption
+    ? { evidence: 0.30, completeness: 0.20, auditFreshness: 0.15, consistency: 0.15, consumption: 0.20 }
+    : { evidence: WEIGHTS.evidence, completeness: WEIGHTS.completeness, auditFreshness: WEIGHTS.auditFreshness, consistency: WEIGHTS.consistency, consumption: 0 };
+
   const rawScore = round(
-    evidence * WEIGHTS.evidence +
-    completeness * WEIGHTS.completeness +
-    auditFreshness * WEIGHTS.auditFreshness +
-    consistency * WEIGHTS.consistency
+    evidence * weights.evidence +
+    completeness * weights.completeness +
+    auditFreshness * weights.auditFreshness +
+    consistency * weights.consistency +
+    consumption * weights.consumption
   );
   const caps = [
     ...review.caps,
@@ -118,17 +156,14 @@ export function computeTrustScore(input: ComputeTrustScoreInput): TrustScore {
   const cappedScore = caps.reduce((score, cap) => Math.min(score, cap.maxScore), rawScore);
   const score = round(cappedScore);
   return {
-    version: TRUST_VERSION,
+    version: hasConsumption ? "v3-consumption" : "v2-lite",
     score,
     status: statusForScore(score, caps),
-    breakdown: {
-      evidence: round(evidence),
-      completeness: round(completeness),
-      auditFreshness: round(auditFreshness),
-      consistency: round(consistency),
-    },
+    breakdown: hasConsumption
+      ? { evidence: round(evidence), completeness: round(completeness), auditFreshness: round(auditFreshness), consistency: round(consistency), consumption: round(consumption) }
+      : { evidence: round(evidence), completeness: round(completeness), auditFreshness: round(auditFreshness), consistency: round(consistency) },
     caps,
-    reasons: reasonsFor({ evidence, completeness, auditFreshness, consistency, reviewReason: review.reason, evidenceRequired, lastTrustedAuditAt }),
+    reasons: reasonsFor({ evidence, completeness, auditFreshness, consistency, consumption, consumptionActive: hasConsumption, reviewReason: review.reason, evidenceRequired, lastTrustedAuditAt }),
     lastTrustedAuditAt,
     auditHalfLifeDays: halfLifeDays,
     evidenceRequired,
@@ -141,8 +176,9 @@ export function trustFromQuality(quality: Record<string, unknown>): TrustScore |
   const score = numberValue(trust.score);
   const breakdown = objectValue(trust.breakdown);
   if (score === null) return null;
+  const consumption = numberValue(breakdown.consumption);
   return {
-    version: "v2-lite",
+    version: trust.version === "v3-consumption" ? "v3-consumption" : "v2-lite",
     score,
     status: statusValue(trust.status),
     breakdown: {
@@ -150,6 +186,7 @@ export function trustFromQuality(quality: Record<string, unknown>): TrustScore |
       completeness: numberValue(breakdown.completeness) ?? 0,
       auditFreshness: numberValue(breakdown.auditFreshness) ?? 0,
       consistency: numberValue(breakdown.consistency) ?? 0,
+      ...(consumption !== null ? { consumption } : {}),
     },
     caps: Array.isArray(trust.caps) ? trust.caps.flatMap((value) => {
       const cap = objectValue(value);
@@ -250,6 +287,8 @@ function reasonsFor(input: {
   completeness: number;
   auditFreshness: number;
   consistency: number;
+  consumption: number;
+  consumptionActive: boolean;
   reviewReason: string;
   evidenceRequired: boolean;
   lastTrustedAuditAt: string | null;
@@ -261,6 +300,7 @@ function reasonsFor(input: {
     `一致性 ${percent(input.consistency)}`,
     input.reviewReason,
   ];
+  if (input.consumptionActive) reasons.push(`消费认可度 ${percent(input.consumption)}`);
   return reasons;
 }
 

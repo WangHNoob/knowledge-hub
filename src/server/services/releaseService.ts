@@ -5,14 +5,14 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, LintRemediationSummary, ReleaseRecord, ReviewTask } from "../types";
-import { mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
+import { jsonArray, mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createGovernanceProfileService, type GovernanceProfileService } from "./governanceProfileService";
 import { createLegislationService } from "./legislationService";
 import { createLintRemediationService } from "./lintRemediationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
 import { buildReleaseAuditSummary, type ReleaseAuditSummary } from "./releaseAudit";
-import { computeTrustScore, scoreFromQuality } from "./trustScore";
+import { computeTrustScore, consumptionScore, scoreFromQuality, type ConsumptionStats } from "./trustScore";
 import { emitKnowledgeEvent } from "./eventService";
 
 const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
@@ -258,7 +258,7 @@ export class ReleaseService {
       const activeRuleProfile = await createLegislationService(this.db).getActiveProfile();
       const publishedAt = new Date().toISOString();
       await this.ensurePublishEvidence(packages, components, publishedAt);
-      const trustedComponents = await this.componentsWithTrustScores(components, publishedAt);
+      const trustedComponents = await this.componentsWithTrustScores(components, publishedAt, release.projectId);
       const qualityGate = summarizePackages(packages, trustedComponents, activeRuleProfile.hash);
       const parentRelease = release.parentReleaseId ? await this.getRelease(release.parentReleaseId) : null;
       const revisionDiff = buildReleaseDiff(parentRelease, packages, trustedComponents);
@@ -849,23 +849,120 @@ export class ReleaseService {
     }
   }
 
-  private async componentsWithTrustScores(components: AssetComponent[], publishedAt: string): Promise<AssetComponent[]> {
+  private async componentsWithTrustScores(components: AssetComponent[], publishedAt: string, projectId: string): Promise<AssetComponent[]> {
     const componentIds = components.map((component) => component.componentId);
-    const [evidenceByComponent, reviewTasksByComponent] = await Promise.all([
+    const [evidenceByComponent, reviewTasksByComponent, consumptionByComponent] = await Promise.all([
       this.evidenceRowsByComponent(componentIds),
       this.openReviewTasksByComponent(componentIds),
+      this.consumptionStatsByComponent(projectId, componentIds),
     ]);
-    return components.map((component) => {
+    const changed: Array<{ componentId: string; before: number; after: number }> = [];
+    const out = components.map((component) => {
       const quality: Record<string, unknown> = { ...component.quality };
-      quality.trust = computeTrustScore({
+      const stats = consumptionByComponent.get(component.componentId);
+      const trust = computeTrustScore({
         component: { ...component, quality },
         evidenceRows: evidenceByComponent.get(component.componentId) ?? [],
         reviewTasks: reviewTasksByComponent.get(component.componentId) ?? [],
         now: publishedAt,
         lastTrustedAuditAt: publishedAt,
+        ...(stats ? { consumption: consumptionScore(stats) } : {}),
       });
+      const before = scoreFromQuality(component.quality);
+      if (typeof before === "number" && Number.isFinite(before) && Math.abs(before - trust.score) >= 0.05) {
+        changed.push({ componentId: component.componentId, before, after: trust.score });
+      }
+      quality.trust = trust;
       return { ...component, quality };
     });
+    // trust 变化审计（flywheel 02-P4）：发布期重算含消费维度，±0.05 以上落 knowledge_events
+    for (const item of changed) {
+      await emitKnowledgeEvent(this.db, {
+        eventType: "component.trust_changed",
+        entityType: "component",
+        entityId: item.componentId,
+        payload: {
+          projectId,
+          componentId: item.componentId,
+          before: item.before,
+          after: item.after,
+          delta: Math.round((item.after - item.before) * 1000) / 1000,
+          dimension: "consumption_inclusive",
+          publishedAt,
+        },
+      });
+    }
+    return out;
+  }
+
+  /** 消费维度统计（flywheel 02-P4）：归因引用 / 检索曝光 / 命中后点击 / 负反馈。 */
+  private async consumptionStatsByComponent(projectId: string, componentIds: string[]): Promise<Map<string, ConsumptionStats>> {
+    const out = new Map<string, ConsumptionStats>();
+    if (componentIds.length === 0) return out;
+    const params = [projectId];
+
+    const [auditRows, feedbackRows, attributionRows] = await Promise.all([
+      this.adapter.query(
+        `SELECT component_id, tool_name, count
+         FROM (
+           SELECT hit.component_id, a.tool_name, COUNT(*)::int AS count
+           FROM mcp_audit a
+           CROSS JOIN LATERAL jsonb_array_elements_text(a.hit_component_ids) AS hit(component_id)
+           WHERE a.project_id = $1
+             AND a.created_at > NOW() - INTERVAL '30 days'
+             AND a.tool_name IN ('kb_search','kb_get_page','kb_get_entity')
+           GROUP BY hit.component_id, a.tool_name
+         ) t`,
+        params,
+      ),
+      this.adapter.query(
+        `SELECT hit.component_id, COUNT(*)::int AS count
+         FROM agent_events a
+         CROSS JOIN LATERAL jsonb_array_elements_text(a.hit_component_ids) AS hit(component_id)
+         WHERE a.project_id = $1
+           AND a.feedback_type <> 'hit'
+           AND a.created_at > NOW() - INTERVAL '30 days'
+         GROUP BY hit.component_id`,
+        params,
+      ),
+      this.adapter.query(
+        `SELECT segments_json FROM attribution_audits
+         WHERE created_at > NOW() - INTERVAL '30 days'`,
+        [],
+      ),
+    ]);
+
+    for (const row of auditRows.rows) {
+      const componentId = String(row.component_id);
+      const stats = out.get(componentId) ?? { attributionCount: 0, searchCount: 0, clickCount: 0, negativeFeedbackCount: 0 };
+      const tool = String(row.tool_name ?? "");
+      const count = Number(row.count ?? 0);
+      if (tool === "kb_search") stats.searchCount += count;
+      else if (tool === "kb_get_page" || tool === "kb_get_entity") stats.clickCount += count;
+      out.set(componentId, stats);
+    }
+    for (const row of feedbackRows.rows) {
+      const componentId = String(row.component_id);
+      const stats = out.get(componentId) ?? { attributionCount: 0, searchCount: 0, clickCount: 0, negativeFeedbackCount: 0 };
+      stats.negativeFeedbackCount += Number(row.count ?? 0);
+      out.set(componentId, stats);
+    }
+    const wanted = new Set(componentIds);
+    for (const row of attributionRows.rows) {
+      const segments = jsonArray(row.segments_json) as Array<{ trace?: { componentIds?: unknown } }>;
+      for (const segment of segments) {
+        const ids = Array.isArray(segment?.trace?.componentIds)
+          ? (segment.trace.componentIds as unknown[]).map(String)
+          : [];
+        for (const id of ids) {
+          if (!wanted.has(id)) continue;
+          const stats = out.get(id) ?? { attributionCount: 0, searchCount: 0, clickCount: 0, negativeFeedbackCount: 0 };
+          stats.attributionCount += 1;
+          out.set(id, stats);
+        }
+      }
+    }
+    return out;
   }
 
   private async evidenceRowsByComponent(componentIds: string[]): Promise<Map<string, Array<{ sourceVersionId: string; quote: string; confidence: number }>>> {

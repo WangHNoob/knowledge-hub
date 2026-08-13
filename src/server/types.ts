@@ -13,7 +13,7 @@ export interface LlmAnalysis {
   diagnosis: string;
   confidence: number;
   rationale: string;
-  fixType: "annotation_override" | "needs_human" | "no_fix";
+  fixType: "annotation_override" | "document_rewrite" | "needs_human" | "no_fix";
   modelProvider: string;
   modelName: string;
   generatedAt: string;
@@ -167,6 +167,8 @@ export interface TrustScoreBreakdown {
   completeness: number;
   auditFreshness: number;
   consistency: number;
+  /** 消费维度（flywheel 02-P4）：引用率/点击率/反馈纠偏；无消费数据时缺省。 */
+  consumption?: number;
 }
 
 export interface TrustScoreCap {
@@ -176,7 +178,7 @@ export interface TrustScoreCap {
 }
 
 export interface TrustScore {
-  version: "v2-lite";
+  version: "v2-lite" | "v3-consumption";
   score: number;
   status: "trusted" | "usable_with_risk" | "needs_review" | "blocked";
   breakdown: TrustScoreBreakdown;

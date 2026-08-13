@@ -19,7 +19,8 @@
     "mcp:stdio": "tsx src/server/mcpStdio.ts",
     "okf:scan": "tsx src/server/services/okf/cli.ts",
     "eval:retrieval": "tsx scripts/eval-retrieval.ts",
-    "eval:retrieval:compare": "tsx scripts/eval-retrieval.ts --compare-v1-v2"
+    "eval:retrieval:compare": "tsx scripts/eval-retrieval.ts --compare-v1-v2",
+    "eval:probe:collect": "tsx scripts/collect-retrieval-probe.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",

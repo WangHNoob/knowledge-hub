@@ -10,6 +10,7 @@ import {
   type ParsedRemediation,
   type RemediationPromptContext
 } from "./autoRemediationPrompts";
+import { validateDocumentRewrite } from "./documentRewriteValidation";
 import type { DiagnosticLogger } from "./diagnosticService";
 import type { KnowledgeService } from "./knowledgeService";
 import type { DatabaseHandle, LlmAnalysis } from "../types";
@@ -175,11 +176,24 @@ async function handleFeedbackEvent(
       generatedAt: new Date().toISOString()
     };
 
-    const validation = validateCorrectValue(component.kind, parsed.correctValue);
-    const shouldAutoFix =
-      parsed.fixType === "annotation_override" &&
-      parsed.confidence >= config.autoRemediationConfidenceThreshold &&
-      validation.valid;
+    // 校验分流（flywheel 02-P4）：
+    // - annotation_override：沿用原「correctValue 形状」校验 + 通用置信门槛；
+    // - document_rewrite：三道闸（结构/事实/引用封闭集合）+ 独立更高门槛（默认 0.9）。
+    let shouldAutoFix = false;
+    let validationReason = "";
+    if (parsed.fixType === "annotation_override") {
+      const validation = validateCorrectValue(component.kind, parsed.correctValue);
+      shouldAutoFix = parsed.confidence >= config.autoRemediationConfidenceThreshold && validation.valid;
+      validationReason = validation.reason;
+    } else if (parsed.fixType === "document_rewrite" && isWikiKind(component.kind)) {
+      const markdown = rewriteMarkdown(parsed.correctValue);
+      const validation = validateDocumentRewrite(markdown, {
+        evidence: evidence.map((row) => ({ evidenceId: row.evidenceId, quote: row.quote })),
+        sourceText: componentBodyPreview(component),
+      });
+      shouldAutoFix = parsed.confidence >= config.autoRemediationDocRewriteConfidence && validation.valid;
+      validationReason = validation.reason;
+    }
 
     if (shouldAutoFix) {
       await deps.knowledgeService.annotateReviewTask({
@@ -213,6 +227,26 @@ async function handleFeedbackEvent(
       return;
     }
 
+    // 人工兜底：document_rewrite 直接把整页改写稿 + 未过闸原因进候选
+    // （Review 页可采纳/编辑完整 diff），annotation_override 走原建议路径。
+    if (parsed.fixType === "document_rewrite" && isWikiKind(component.kind)) {
+      await deps.knowledgeService.addLlmSuggestions(taskId, [{
+        label: `LLM 整页改写未自动执行：${validationReason}`,
+        value: parsed.correctValue,
+        rationale: parsed.rationale
+      }, ...parsed.suggestions.map((s) => ({ label: s.label, value: s.value, rationale: s.rationale }))]);
+      await span.complete({
+        action: "human_needed",
+        confidence: parsed.confidence,
+        fixType: parsed.fixType,
+        suggestionCount: 1 + parsed.suggestions.length,
+        validationReason,
+        diagnosis: parsed.diagnosis.slice(0, 200)
+      });
+      return;
+    }
+
+    const validation = validateCorrectValue(component.kind, parsed.correctValue);
     const suggestions = validation.valid || Object.keys(parsed.correctValue).length === 0
       ? parsed.suggestions
       : [
@@ -236,7 +270,7 @@ async function handleFeedbackEvent(
       confidence: parsed.confidence,
       fixType: parsed.fixType,
       suggestionCount: suggestions.length,
-      validationReason: validation.reason,
+      validationReason: validationReason || validation.reason,
       diagnosis: parsed.diagnosis.slice(0, 200)
     });
   } catch (error) {
@@ -265,6 +299,17 @@ function validateCorrectValue(componentKind: string, value: Record<string, unkno
     return { valid: false, reason: "图谱修复缺少 nodes/edges" };
   }
   return { valid: true, reason: "" };
+}
+
+function isWikiKind(kind: string): boolean {
+  return kind === "wiki_page" || kind === "table_wiki_page" || kind === "topic_index";
+}
+
+/** document_rewrite 的落稿文本：markdown 优先，replaceBody 兜底。 */
+function rewriteMarkdown(value: Record<string, unknown>): string {
+  if (typeof value.markdown === "string" && value.markdown.trim().length > 0) return value.markdown;
+  if (typeof value.replaceBody === "string" && value.replaceBody.trim().length > 0) return value.replaceBody;
+  return "";
 }
 
 /**
