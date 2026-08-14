@@ -787,8 +787,17 @@ describe("KnowledgeQueryService", () => {
       expect(lowQualityEvent?.components[0].trust?.score).toBeLessThan(0.7);
 
       const { rows: tasks } = await fixture.db.adapter.query("SELECT * FROM review_tasks ORDER BY created_at");
-      expect(tasks.some((task) => task.severity === "blocking" && String(task.title).includes("错误本候选"))).toBe(true);
+      // untargeted miss 不建 review_tasks（component_id 非空约束）→ gap_fill_candidates
+      // 受控补源卡；low_quality_hit（有目标组件）→ warning review task。
       expect(tasks.some((task) => task.severity === "warning" && String(task.title).includes("低可信命中"))).toBe(true);
+      const { rows: gaps } = await fixture.db.adapter.query(
+        "SELECT query_key, event_count, status, feedback_type FROM gap_fill_candidates ORDER BY created_at",
+      );
+      const missGap = gaps.find((g) => String(g.query_key).includes("nonexistent resurrection economy"));
+      expect(missGap).toBeDefined();
+      expect(Number(missGap?.event_count ?? 0)).toBeGreaterThanOrEqual(3);
+      // 预设规则：同 query 无源反馈达阈值自动收敛（dismiss，可在异常收件箱恢复）
+      expect(String(missGap?.status ?? "")).toBe("dismissed");
 
       const { rows: knowledgeEvents } = await fixture.db.adapter.query(
         "SELECT project_id, payload_json FROM knowledge_events WHERE event_type = 'agent.feedback.received' ORDER BY created_at"
@@ -847,8 +856,12 @@ describe("KnowledgeQueryService", () => {
       expect(events.map((event) => event.feedback_type)).toEqual(expect.arrayContaining(["bad_hit", "knowledge_gap"]));
       const { rows: tasks } = await fixture.db.adapter.query("SELECT title, description, suggested_action FROM review_tasks ORDER BY created_at");
       expect(tasks.some((task) => String(task.title).includes("错命中"))).toBe(true);
-      expect(tasks.some((task) => String(task.title).includes("知识缺口"))).toBe(true);
       expect(tasks.some((task) => String(task.description).includes("stamina recovery rules"))).toBe(true);
+      // kb_report_gap 无目标组件 → 不建 review_tasks，落 gap_fill_candidates 受控补源卡
+      const { rows: gaps } = await fixture.db.adapter.query(
+        "SELECT query_key, feedback_type, status, event_count FROM gap_fill_candidates ORDER BY created_at",
+      );
+      expect(gaps.some((g) => String(g.feedback_type) === "knowledge_gap" && String(g.query_key).includes("missing resurrection economy"))).toBe(true);
       const { rows: rebuildTasks } = await fixture.db.adapter.query(
         "SELECT * FROM review_tasks WHERE rule_id = 'agent_feedback.rebuild_candidate'"
       );

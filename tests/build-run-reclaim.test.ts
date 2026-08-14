@@ -16,12 +16,15 @@ describe("KbBuilderPipelineService.failInterruptedRuns", () => {
     try {
       await db.adapter.query(
         `INSERT INTO source_bundle_versions (version_id, bundle_id, label, created_by)
-         VALUES ('srcv_reclaim','default','reclaim fixture','admin')`,
+         VALUES ('srcv_reclaim','default','reclaim fixture','admin'),
+                ('srcv_reclaim_2','default','reclaim fixture 2','admin')`,
       );
       await db.adapter.query(
         `INSERT INTO knowledge_build_runs (run_id, source_version_id, adapter, quality_profile_id, status)
          VALUES ('run_running_1','srcv_reclaim','native','default','running'),
-                ('run_running_2','srcv_reclaim','native','default','running'),
+                -- 第二条 running 用不同 source_version_id：飞轮部分唯一索引
+                -- (project_id, source_version_id) WHERE status='running' 不允许同版本双 running
+                ('run_running_2','srcv_reclaim_2','native','default','running'),
                 ('run_done','srcv_reclaim','native','default','completed'),
                 ('run_failed','srcv_reclaim','native','default','failed')`,
       );
