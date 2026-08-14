@@ -84,7 +84,12 @@ okf_bundle/
 - **混合检索**：词项索引 + dense 向量（v1 hashing trick / v2 真实 embedding），RRF 融合后供 `kb_search`（结果带 `retrieval.mode`）。
 - **dense v2（flywheel 02-P2）**：`OKF_DENSE_METHOD=fastembed`（默认）时构建期用 `@xenova/transformers`（bge-small-zh-v1.5 量化，CPU）生成 `search/dense.v2.json`；模型不可用自动回退 v1 并告警。查询侧与索引同模型推理（进程内 LRU 缓存），v2 索引存在但模型不可用时退化纯词法，绝不静默错配。模型下载走 HuggingFace（国内可用 `OKF_HF_ENDPOINT=https://hf-mirror.com`）。
 - **检索质量对比门禁**：`npm run eval:retrieval:compare`（`--compare-v1-v2`，`--bundle <dir>` 免 DB）对 `evals/retrieval-gold.json` 分别算 v1/v2 的 hit@k；**v2 < v1 即 exit 1 拦截**，v2 不可用则放行并告警。
-- **dense v2 实测结论（2026-08-14，78 题黄金集）**：bge-small-zh 裸向量 + RRF 命中率 **85.9%（67/78）< v1 hashing-trick 100%（78/78）**——门禁正确拦截了 v2 上线。按方案 02 §2.1 决策门，需先做 **Phase B 精排**（cross-encoder 或 LLM 精排）再放行 v2；当前本仓库部署 `OKF_DENSE_METHOD=hashing_trick` 维持 v1。`npm run okf:dense:v2 -- <bundle_dir>` 可离线为任意 bundle 生成 v2 复测。
+- **Phase B 精排（方案 02 §2.1，`OKF_RERANK`）**：`OKF_RERANK=cross_encoder` 时检索管线在 RRF top-20 后接 bge-reranker-base（量化，@xenova/transformers）重排到 top-k；模型不可用自动降级原序（与 dense v2 同策略）。评测侧 `npm run eval:retrieval:compare -- --rerank cross_encoder` 可复测。
+- **dense v2 / 精排实测结论（2026-08-14，78 题黄金集，`--bundle` 免 DB 复现）**：
+  - v2 裸向量 + RRF：**85.9%（67/78）< v1 hashing-trick 100%（78/78）**，门禁拦截 v2 上线；
+  - v2 + 纯 cross-encoder 重排：**74.4%**，且 v1 也被拉到 **78.2%**——纯重排与 gold 的标题子串期望不匹配；
+  - RRF×精排混合权重扫描：最优 α=0.75（v1 保持 100%、v2 **88.5%**）仍 < v1，救不回其余 miss。
+  - **结论**：Phase B 精排（bge-reranker-base）在本知识集上无法使 v2 ≥ v1，**`OKF_DENSE_METHOD=hashing_trick` 维持固定**（精排默认 `OKF_RERANK=off`，实现与测试已就位，留待更优精排模型/LLM 精排或 gold 扩展后复测）。`npm run okf:dense:v2 -- <bundle_dir>` 可离线为任意 bundle 生成 v2 复测。
 - **检索时 ACL**：按组件 `quality.visibility`（public / internal / restricted）与 Agent 角色过滤，而非事后裁剪。
 - 离线评测：`npm run eval:retrieval`（黄金集 hit@k，见 `evals/`）。
 

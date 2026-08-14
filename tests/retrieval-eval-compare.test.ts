@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { compareGate, hitAtK, runCompareOnBundle } from "../scripts/eval-retrieval";
 import { buildOkfDenseIndex } from "../src/server/services/okf/hybridSearch";
+import { RerankModelUnavailableError, type Reranker } from "../src/server/services/okf/rerank";
 import type { OkfSearchIndex, OkfSearchPage } from "../src/server/services/okf/searchIndex";
 import { tokenizeSearchText } from "../src/server/services/okf/searchIndex";
 
@@ -144,5 +145,57 @@ describe("eval-retrieval v1/v2 compare (flywheel 02-P2)", () => {
     const gate = compareGate(summary);
     expect(gate.ok).toBe(true);
     expect(gate.reasons.join(" ")).toContain("不可用");
+  });
+
+  it("Phase B rerank rescues a v2 regression (RRF top-N → cross-encoder → top-k)", async () => {
+    // 复用上例的回归夹具：v2 dense 把干扰页 p1 排第一 → 无精排时 v2 不命中。
+    const summary = await runCompareOnBundle(withBundle([
+      { componentId: "p1", embedding: [0, 1, 0] },
+      { componentId: "p2", embedding: [1, 0, 0] },
+    ]), gold, 1, {
+      embedder: { async embed() { return [[0, 1, 0]]; } },
+      rerankMethod: "cross_encoder",
+      reranker: {
+        async score(query, pairs) {
+          // 假 cross-encoder：正确页 p2 的 score 高于干扰页 p1
+          return pairs.map((pair) => (pair.componentId === "p2" ? 0.9 : 0.1));
+        },
+      } satisfies Reranker,
+    });
+    expect(summary.v1HitAtK).toBe(1);
+    expect(summary.v2HitAtK).toBe(1);
+    const gate = compareGate(summary);
+    expect(gate.ok).toBe(true);
+  });
+
+  it("rerank off by default (no model download in tests)", async () => {
+    const summary = await runCompareOnBundle(withBundle([
+      { componentId: "p1", embedding: [0, 1, 0] },
+      { componentId: "p2", embedding: [1, 0, 0] },
+    ]), gold, 1, {
+      embedder: { async embed() { return [[0, 1, 0]]; } },
+    });
+    // 未显式开启精排 → 维持原回归结论（v2 拦截）
+    expect(summary.v2HitAtK).toBe(0);
+    expect(compareGate(summary).ok).toBe(false);
+  });
+
+  it("rerank degraded (model unavailable) still measures top-k, not the full pool", async () => {
+    // 回归夹具：v2 无精排时 top-1 是干扰页 p1（v2 不命中）。
+    // 若精排降级后错误地把 top-2 全量当结果，v2 会被虚高判为命中——必须防住。
+    const summary = await runCompareOnBundle(withBundle([
+      { componentId: "p1", embedding: [0, 1, 0] },
+      { componentId: "p2", embedding: [1, 0, 0] },
+    ]), gold, 1, {
+      embedder: { async embed() { return [[0, 1, 0]]; } },
+      rerankMethod: "cross_encoder",
+      reranker: {
+        async score() {
+          throw new RerankModelUnavailableError(new Error("no model"));
+        },
+      } satisfies Reranker,
+    });
+    expect(summary.v2HitAtK).toBe(0);
+    expect(compareGate(summary).ok).toBe(false);
   });
 });

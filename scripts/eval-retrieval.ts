@@ -7,21 +7,24 @@
  *   [--min-hit 0.85] [--min-citation 0]
  *
  * v1/v2 对比模式（flywheel 02-P2：真实 embedding 是否回退检索质量）：
- *   npx tsx scripts/eval-retrieval.ts --compare-v1-v2 [--bundle <okf_bundle_dir>]
+ *   npx tsx scripts/eval-retrieval.ts --compare-v1-v2 [--bundle <okf_bundle_dir>] [--rerank cross_encoder|off]
  *   --bundle 给出 OKF bundle 目录可免 DB（直接读 search/index.json + dense.json + dense.v2.json）；
  *   缺省时从 DB 解析当前 release 的 bundle。命中率 v2 < v1 时 exit 1（回归拦截）；
  *   fastembed 模型不可用则 v2 标记 skipped 并以 exit 0 通过（另发告警）。
+ *   --rerank cross_encoder 开启 Phase B 精排（RRF top-20 → bge-reranker-base → top-k），
+ *   默认取环境变量 OKF_RERANK（缺省 off）。
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type { FastembedEmbedder } from "../src/server/services/okf/denseIndexV2";
-import { DenseModelUnavailableError, searchDenseIndexV2Aware } from "../src/server/services/okf/denseIndexV2";
+import { DenseModelUnavailableError, pageEmbeddingText, searchDenseIndexV2Aware } from "../src/server/services/okf/denseIndexV2";
 import { fuseSearchWithRrf, searchDenseIndex } from "../src/server/services/okf/hybridSearch";
 import type { OkfDenseIndex } from "../src/server/services/okf/hybridSearch";
 import type { OkfSearchIndex } from "../src/server/services/okf/searchIndex";
 import { searchOkfIndex } from "../src/server/services/okf/searchIndex";
+import { resolveRerankMethod, rerankSearchResults, type RerankMethod, type Reranker } from "../src/server/services/okf/rerank";
 
 // ─── 纯对比逻辑（可单测） ───────────────────────────────────────────────
 
@@ -56,12 +59,18 @@ export function hitAtK(titles: string[], expected: string[]): boolean {
   return expected.some((needle) => titles.some((title) => title.includes(needle)));
 }
 
+export interface EvaluateMethodOptions {
+  embedder?: FastembedEmbedder;
+  reranker?: Reranker;
+  rerankMethod?: RerankMethod;
+}
+
 export function evaluateMethod(
   index: OkfSearchIndex,
   dense: OkfDenseIndex | null,
   query: string,
   k: number,
-  embedder?: FastembedEmbedder,
+  opts: EvaluateMethodOptions = {},
 ): Promise<{ titles: string[]; denseUsed: boolean }> {
   const lexical = searchOkfIndex(index, query, Math.max(k * 2, 20));
   if (!dense || dense.vectors.length === 0) {
@@ -70,11 +79,19 @@ export function evaluateMethod(
       denseUsed: false,
     });
   }
-  return searchDenseIndexV2Aware(dense, query, Math.max(k * 2, 20), embedder)
-    .then((denseRanks) => {
+  return searchDenseIndexV2Aware(dense, query, Math.max(k * 2, 20), opts.embedder)
+    .then(async (denseRanks) => {
       const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
-      const fused = fuseSearchWithRrf(lexical, denseRanks, pageById, k);
-      return { titles: fused.map((item) => item.title), denseUsed: true };
+      const fused = fuseSearchWithRrf(lexical, denseRanks, pageById, Math.max(k * 2, 20));
+      // Phase B 精排（可选，--rerank cross_encoder）：RRF top-20 → 重排 → top-k。
+      // 注意：降级（模型不可用）时 rerankSearchResults 返回原 top-20 全量，
+      // 这里必须 slice(0, k)，否则命中判定会错误地按 top-20 计算。
+      if (opts.rerankMethod === "cross_encoder") {
+        const texts = new Map(index.pages.map((page) => [page.componentId, pageEmbeddingText(page)] as const));
+        const reranked = await rerankSearchResults(query, fused, k, { texts, reranker: opts.reranker });
+        return { titles: reranked.items.slice(0, k).map((item) => item.title), denseUsed: true };
+      }
+      return { titles: fused.slice(0, k).map((item) => item.title), denseUsed: true };
     });
 }
 
@@ -83,7 +100,7 @@ export async function runCompareOnBundle(
   bundleDir: string,
   gold: { cases?: RetrievalGoldCase[] },
   k: number,
-  opts: { embedder?: FastembedEmbedder } = {},
+  opts: { embedder?: FastembedEmbedder; reranker?: Reranker; rerankMethod?: RerankMethod } = {},
 ): Promise<CompareSummary> {
   const cases = Array.isArray(gold.cases) ? gold.cases : [];
   const indexPath = join(bundleDir, "search", "index.json");
@@ -105,11 +122,12 @@ export async function runCompareOnBundle(
 
   for (const testCase of cases) {
     const expected = testCase.expectTitleSubstrings ?? [];
-    const v1 = await evaluateMethod(index, denseV1, testCase.query, k, opts.embedder);
+    const methodOpts = { embedder: opts.embedder, reranker: opts.reranker, rerankMethod: opts.rerankMethod };
+    const v1 = await evaluateMethod(index, denseV1, testCase.query, k, methodOpts);
     let v2: { titles: string[] } | null = null;
     if (v2Available) {
       try {
-        v2 = await evaluateMethod(index, denseV2, testCase.query, k, opts.embedder);
+        v2 = await evaluateMethod(index, denseV2, testCase.query, k, methodOpts);
       } catch (err) {
         if (err instanceof DenseModelUnavailableError) {
           v2Available = false;
@@ -195,7 +213,9 @@ async function main(): Promise<void> {
       bundleDir = new OkfBundleReader(resolve(process.cwd(), config.dataDir)).okfBundleDir(release);
       await db.close();
     }
-    const summary = await runCompareOnBundle(bundleDir, gold, k);
+    const summary = await runCompareOnBundle(bundleDir, gold, k, {
+      rerankMethod: argValue("--rerank", resolveRerankMethod()) === "cross_encoder" ? "cross_encoder" : "off",
+    });
     const gate = compareGate(summary);
     console.log(JSON.stringify({ bundleDir, k, ...summary, gate }, null, 2));
     if (!gate.ok) process.exit(1);

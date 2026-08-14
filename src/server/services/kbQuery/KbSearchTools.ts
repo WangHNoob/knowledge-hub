@@ -2,7 +2,8 @@ import type { DatabaseHandle, ReleaseRecord } from "../../types";
 import { jsonObject } from "../../db/mappers";
 import { isComponentVisibleToRole } from "../knowledgeAcl";
 import { fuseSearchWithRrf } from "../okf/hybridSearch";
-import { DenseModelUnavailableError, searchDenseIndexV2Aware } from "../okf/denseIndexV2";
+import { DenseModelUnavailableError, pageEmbeddingText, searchDenseIndexV2Aware } from "../okf/denseIndexV2";
+import { resolveRerankMethod, rerankSearchResults } from "../okf/rerank";
 import { searchOkfIndex, type OkfSearchResultItem } from "../okf/searchIndex";
 import type { KbGraphTools } from "./KbGraphTools";
 import type { OkfBundleReader } from "./OkfBundleReader";
@@ -99,7 +100,14 @@ export class KbSearchTools {
         : lexical.slice(0, Math.max(limit * 2, 20));
     }
     const visible = await this.filterSearchItemsByDbVisibility(candidates, agentRole);
-    return this.page!.alignSearchItemsWithPageTables(release, visible.slice(0, limit));
+    // Phase B 精排（可选，OKF_RERANK=cross_encoder）：RRF top-20 → cross-encoder → top-limit。
+    // 默认 off 零开销；模型不可用时 rerankSearchResults 内部降级为原序，不阻断检索。
+    let ranked = visible;
+    if (resolveRerankMethod() === "cross_encoder" && visible.length > limit) {
+      const texts = new Map(index.pages.map((page) => [page.componentId, pageEmbeddingText(page)] as const));
+      ranked = (await rerankSearchResults(query, visible.slice(0, Math.max(limit * 2, 20)), limit, { texts })).items;
+    }
+    return this.page!.alignSearchItemsWithPageTables(release, ranked.slice(0, limit));
   }
 
   private async filterSearchItemsByDbVisibility(items: OkfSearchResultItem[], agentRole?: string): Promise<OkfSearchResultItem[]> {
