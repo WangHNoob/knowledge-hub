@@ -1,0 +1,181 @@
+{
+  "meta": {
+    "name": "StarTrail 检索同义改写集 (Retrieval Paraphrase Set)",
+    "version": "1.1.0",
+    "generatedAt": "2026-08-14T00:00:00.000Z",
+    "source": "evals/golden_evals.json（同义改写）",
+    "k": 5,
+    "kbReleaseId": "rel_20260809142245_mSJBqC",
+    "note": "语义检索诊断集：每题用口语/同义表达描述信息需求，query 与全部期望页零词法重叠（经 scripts/check-paraphrase-set.ts 用真实 searchOkfIndex 路径校验，v1 词法检索必然 miss）。部分题含 2 个期望页（主答案 + 合理替代页，如 PV-004=45/24、PV-009=28/29、PV-017=09/08、PV-020=09/27）。不作为发布回归门禁，仅作决策诊断。实测（2026-08-14，--bundle 免 DB）：v1 0%、v2 25%、v1+精排 16.7%、v2+精排 37.5%——v2 语义价值确凿，且精排对语义查询有增益（对词法直中查询有害，见 README）。"
+  },
+  "cases": [
+    {
+      "id": "PV-001",
+      "group": "paraphrase",
+      "query": "打一下跳出来的那个数，是怎么一级一级乘上去的？",
+      "expectTitleSubstrings": ["01-战斗框架与伤害公式"],
+      "note": "paraphrase of EV 系列伤害题：避免 战斗/伤害/暴击/克制 等词"
+    },
+    {
+      "id": "PV-002",
+      "group": "paraphrase",
+      "query": "血厚防高、打人不疼的那种，队伍里一般拿来干什么？",
+      "expectTitleSubstrings": ["05-角色与职业体系"],
+      "note": "paraphrase of EV-001 职业定位：避免 坦克/职业/输出 等词"
+    },
+    {
+      "id": "PV-003",
+      "group": "paraphrase",
+      "query": "手里的家伙从一级养到顶，大概要烧掉多少家底？",
+      "expectTitleSubstrings": ["44-成长曲线与数值规划"],
+      "note": "武器强化成本：避免 武器/强化/金币 等词"
+    },
+    {
+      "id": "PV-004",
+      "group": "paraphrase",
+      "query": "十连想捞本期的台柱，平均要抽多少次才肯出一个金色？",
+      "expectTitleSubstrings": ["45-随机数与保底机制总览", "24-抽卡与卡池设计"],
+      "note": "卡池保底：避免 卡池/概率/保底/限定 等词"
+    },
+    {
+      "id": "PV-005",
+      "group": "paraphrase",
+      "query": "一帮人合伙的组织，升到头要攒多少？",
+      "expectTitleSubstrings": ["30-公会系统设计"],
+      "note": "公会等级：避免 公会/等级/经验 等词"
+    },
+    {
+      "id": "PV-006",
+      "group": "paraphrase",
+      "query": "把人派出去挂机一阵子，回来能换到哪些稀罕货？",
+      "expectTitleSubstrings": ["32-远征与派遣系统"],
+      "note": "远征产出：避免 远征/派遣/材料 等词"
+    },
+    {
+      "id": "PV-007",
+      "group": "paraphrase",
+      "query": "用光的点数要干等多久才能攒回来？",
+      "expectTitleSubstrings": ["34-体力与资源循环总览"],
+      "note": "体力规则：避免 体力/上限/恢复 等词"
+    },
+    {
+      "id": "PV-008",
+      "group": "paraphrase",
+      "query": "上去白嫖，最值钱的那份要到第几天才给？",
+      "expectTitleSubstrings": ["26-签到与登录奖励"],
+      "note": "签到奖励节点：避免 签到/登录/奖励 等词"
+    },
+    {
+      "id": "PV-009",
+      "group": "paraphrase",
+      "query": "一个月一轮的比武，分数会清零重来吗？",
+      "expectTitleSubstrings": ["28-竞技场与赛季设计", "29-排位赛与匹配规则"],
+      "note": "竞技场/排位赛季：避免 竞技场/赛季/段位/排名 等词"
+    },
+    {
+      "id": "PV-010",
+      "group": "paraphrase",
+      "query": "副属性不合心意，有什么办法把附加效果重新摇一遍？",
+      "expectTitleSubstrings": ["33-合成锻造与洗练回收"],
+      "note": "洗练：避免 装备/词条/洗练/随机 等词"
+    },
+    {
+      "id": "PV-011",
+      "group": "paraphrase",
+      "query": "一层一层往上打的那个高塔，每层要多少练度才够格？",
+      "expectTitleSubstrings": ["20-副本词缀与虚境试炼"],
+      "note": "爬塔：避免 塔/层/战力/副本 等词"
+    },
+    {
+      "id": "PV-012",
+      "group": "paraphrase",
+      "query": "处好关系能打开那些打招呼的小动画和挂件吗？对强度有没有帮助？",
+      "expectTitleSubstrings": ["15-好感度与角色档案"],
+      "note": "好感度：避免 好感/语音/角色档案 等词"
+    },
+    {
+      "id": "PV-013",
+      "group": "paraphrase",
+      "query": "同一个东西刷到天荒地老都不掉，官方会不会兜底？",
+      "expectTitleSubstrings": ["45-随机数与保底机制总览"],
+      "note": "掉落保底：避免 掉落/保底/随机 等词"
+    },
+    {
+      "id": "PV-014",
+      "group": "paraphrase",
+      "query": "刚开局哪些东西是锁着的？要到几级才放出来？",
+      "expectTitleSubstrings": ["36-新手引导与功能解锁"],
+      "note": "功能解锁：避免 新手/引导/解锁/等级 等词"
+    },
+    {
+      "id": "PV-015",
+      "group": "paraphrase",
+      "query": "在外面随便逛一圈，能顺手白捡哪些好东西？",
+      "expectTitleSubstrings": ["21-世界地图与探索收集"],
+      "note": "世界探索：避免 地图/探索/收集 等词"
+    },
+    {
+      "id": "PV-016",
+      "group": "paraphrase",
+      "query": "特定几个人一起上场会有隐藏的东西吗？怎么才能弄出来？",
+      "expectTitleSubstrings": ["46-队伍羁绊与阵容体系"],
+      "note": "羁绊加成：避免 队伍/羁绊/阵容 等词"
+    },
+    {
+      "id": "PV-017",
+      "group": "paraphrase",
+      "query": "攒的那种硬货和平时花的钱，怎么个换法？",
+      "expectTitleSubstrings": ["09-商店与兑换规则", "08-掉落与经济闭环"],
+      "note": "货币兑换：避免 金币/钻石/汇率/货币/兑换 等词"
+    },
+    {
+      "id": "PV-018",
+      "group": "paraphrase",
+      "query": "那个综合数字是怎么把各项数值攒出来的？",
+      "expectTitleSubstrings": ["02-属性体系与战力评估"],
+      "note": "战力评估：避免 属性/战力/评分 等词"
+    },
+    {
+      "id": "PV-019",
+      "group": "paraphrase",
+      "query": "除了打怪，日常里还有什么活能拿到养人用的经验道具？",
+      "expectTitleSubstrings": ["22-任务系统总纲"],
+      "note": "任务产出：避免 任务/奖励/经验书 等词"
+    },
+    {
+      "id": "PV-020",
+      "group": "paraphrase",
+      "query": "那些实惠货到点会重新摆出来吗？多久一次？",
+      "expectTitleSubstrings": ["09-商店与兑换规则", "27-礼包与限时商店"],
+      "note": "商店刷新：避免 商店/限购/刷新/上架 等词"
+    },
+    {
+      "id": "PV-021",
+      "group": "paraphrase",
+      "query": "打高难本时，几个人怎么搭才不容易团灭？",
+      "expectTitleSubstrings": ["40-组队与匹配设计"],
+      "note": "组队：避免 组队/匹配/阵容 等词"
+    },
+    {
+      "id": "PV-022",
+      "group": "paraphrase",
+      "query": "这版和上一版相比，哪些数字被悄悄动过？",
+      "expectTitleSubstrings": ["12-版本变更记录-v0-1"],
+      "note": "版本变更：避免 版本/变更/数值 等词"
+    },
+    {
+      "id": "PV-023",
+      "group": "paraphrase",
+      "query": "错过的东西会送到哪？会不会被悄悄清掉？",
+      "expectTitleSubstrings": ["38-邮件系统设计"],
+      "note": "邮件：避免 邮件/补偿/过期 等词"
+    },
+    {
+      "id": "PV-024",
+      "group": "paraphrase",
+      "query": "一天猛刷同一个本，给的东西会被偷偷砍吗？",
+      "expectTitleSubstrings": ["35-反刷与收益上限"],
+      "note": "反刷限制：避免 反刷/收益/上限/每日 等词"
+    }
+  ]
+}

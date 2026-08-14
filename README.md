@@ -90,6 +90,7 @@ okf_bundle/
   - v2 + 纯 cross-encoder 重排：**74.4%**，且 v1 也被拉到 **78.2%**——纯重排与 gold 的标题子串期望不匹配；
   - RRF×精排混合权重扫描：最优 α=0.75（v1 保持 100%、v2 **88.5%**）仍 < v1，救不回其余 miss。
   - **结论**：Phase B 精排（bge-reranker-base）在本知识集上无法使 v2 ≥ v1，**`OKF_DENSE_METHOD=hashing_trick` 维持固定**（精排默认 `OKF_RERANK=off`，实现与测试已就位，留待更优精排模型/LLM 精排或 gold 扩展后复测）。`npm run okf:dense:v2 -- <bundle_dir>` 可离线为任意 bundle 生成 v2 复测。
+- **同义改写诊断集（2026-08-14，`evals/retrieval-paraphrase.json`）**：24 题纯语义查询（口语/同义表达，与期望页**零词法重叠**，经 `npm run eval:paraphrase:check` 用真实检索路径校验）——专门区分"词法检索 vs 语义检索"：v1 0%（词法必然 miss）vs v2 **25%**；加精排后 v1 16.7% vs v2 **37.5%**。**结论**：v2（bge-small-zh）确有语义价值，但绝对水平有限；精排对"词法不可直中"的硬查询有增益、对词法直中查询有害——指向**条件式精排**（仅低置信/词法弱命中查询启用，对齐方案 02 §2.1 "LLM 精排仅对低置信查询启用"的设计意图）。复测：`npm run eval:retrieval:paraphrase -- --bundle <dir>`（加 `-- --rerank cross_encoder` 看精排增益）。
 - **检索时 ACL**：按组件 `quality.visibility`（public / internal / restricted）与 Agent 角色过滤，而非事后裁剪。
 - 离线评测：`npm run eval:retrieval`（黄金集 hit@k，见 `evals/`）。
 

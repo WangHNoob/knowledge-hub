@@ -22,6 +22,8 @@
     "eval:retrieval:compare": "tsx scripts/eval-retrieval.ts --compare-v1-v2",
     "eval:probe:collect": "tsx scripts/collect-retrieval-probe.ts",
     "eval:gold:binding": "tsx scripts/check-retrieval-gold-binding.ts",
+    "eval:retrieval:paraphrase": "tsx scripts/eval-retrieval.ts --compare-v1-v2 --gold evals/retrieval-paraphrase.json",
+    "eval:paraphrase:check": "tsx scripts/check-paraphrase-set.ts",
     "okf:dense:v2": "tsx scripts/build-dense-v2.mts"
   },
   "dependencies": {
