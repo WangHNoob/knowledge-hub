@@ -7,12 +7,13 @@
  *   [--min-hit 0.85] [--min-citation 0]
  *
  * v1/v2 对比模式（flywheel 02-P2：真实 embedding 是否回退检索质量）：
- *   npx tsx scripts/eval-retrieval.ts --compare-v1-v2 [--bundle <okf_bundle_dir>] [--rerank cross_encoder|off]
+ *   npx tsx scripts/eval-retrieval.ts --compare-v1-v2 [--bundle <okf_bundle_dir>] [--rerank cross_encoder|off] [--hybrid]
  *   --bundle 给出 OKF bundle 目录可免 DB（直接读 search/index.json + dense.json + dense.v2.json）；
  *   缺省时从 DB 解析当前 release 的 bundle。命中率 v2 < v1 时 exit 1（回归拦截）；
  *   fastembed 模型不可用则 v2 标记 skipped 并以 exit 0 通过（另发告警）。
  *   --rerank cross_encoder 开启 Phase B 精排（RRF top-20 → bge-reranker-base → top-k），
  *   默认取环境变量 OKF_RERANK（缺省 off）。
+ *   --hybrid 额外评测条件式混合检索（词法强→v1 管线，词法弱→v2 语义兜底+可选精排）。
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -25,6 +26,7 @@ import type { OkfDenseIndex } from "../src/server/services/okf/hybridSearch";
 import type { OkfSearchIndex } from "../src/server/services/okf/searchIndex";
 import { searchOkfIndex } from "../src/server/services/okf/searchIndex";
 import { resolveRerankMethod, rerankSearchResults, type RerankMethod, type Reranker } from "../src/server/services/okf/rerank";
+import { retrieveConditionalHybrid, type ConditionalMode } from "../src/server/services/okf/conditionalRetrieval";
 
 // ─── 纯对比逻辑（可单测） ───────────────────────────────────────────────
 
@@ -41,6 +43,9 @@ export interface CompareCaseResult {
   query: string;
   v1Hit: boolean;
   v2Hit: boolean;
+  /** --hybrid 时启用：条件式混合检索（词法强→v1，词法弱→v2+可选精排） */
+  hybridHit?: boolean;
+  hybridMode?: ConditionalMode;
   v1TopTitles: string[];
   v2TopTitles: string[];
 }
@@ -51,6 +56,8 @@ export interface CompareSummary {
   v2HitAtK: number;
   /** false = fastembed 模型不可用，v2 未参与对比 */
   v2Available: boolean;
+  /** --hybrid 时启用：条件式管线命中率（词法强走 v1、词法弱走 v2+精排） */
+  hybridHitAtK?: number;
   cases: CompareCaseResult[];
 }
 
@@ -95,12 +102,43 @@ export function evaluateMethod(
     });
 }
 
+/**
+ * 条件式混合检索评测：词法强命中 → v1 管线（lexical + hashing-trick RRF）；
+ * 词法弱命中 → v2 语义兜底（lexical + bge RRF，rerankMethod=cross_encoder 时再接精排）。
+ * v2 模型不可用时抛 DenseModelUnavailableError，调用方标记 hybrid 不可用。
+ */
+export async function evaluateHybrid(
+  index: OkfSearchIndex,
+  denseV1: OkfDenseIndex | null,
+  denseV2: OkfDenseIndex | null,
+  query: string,
+  k: number,
+  opts: EvaluateMethodOptions = {},
+): Promise<{ titles: string[]; mode: ConditionalMode; reranked: boolean }> {
+  const lexical = searchOkfIndex(index, query, Math.max(k * 2, 20));
+  const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
+  const texts = new Map(index.pages.map((page) => [page.componentId, pageEmbeddingText(page)] as const));
+  const res = await retrieveConditionalHybrid({
+    query,
+    lexical,
+    denseV1,
+    denseV2,
+    pageById,
+    limit: k,
+    rerank: opts.rerankMethod ?? "off",
+    embedder: opts.embedder,
+    reranker: opts.reranker,
+    texts,
+  });
+  return { titles: res.items.map((item) => item.title), mode: res.mode, reranked: res.reranked };
+}
+
 /** 对 bundle 目录跑 v1（hashing trick）与 v2（fastembed）双管线对比。 */
 export async function runCompareOnBundle(
   bundleDir: string,
   gold: { cases?: RetrievalGoldCase[] },
   k: number,
-  opts: { embedder?: FastembedEmbedder; reranker?: Reranker; rerankMethod?: RerankMethod } = {},
+  opts: { embedder?: FastembedEmbedder; reranker?: Reranker; rerankMethod?: RerankMethod; hybrid?: boolean } = {},
 ): Promise<CompareSummary> {
   const cases = Array.isArray(gold.cases) ? gold.cases : [];
   const indexPath = join(bundleDir, "search", "index.json");
@@ -116,9 +154,11 @@ export async function runCompareOnBundle(
     : null;
 
   let v2Available = Boolean(denseV2 && denseV2.vectors.length > 0);
+  let hybridAvailable = Boolean(opts.hybrid && denseV2 && denseV2.vectors.length > 0);
   const rows: CompareCaseResult[] = [];
   let v1Hit = 0;
   let v2Hit = 0;
+  let hybridHit = 0;
 
   for (const testCase of cases) {
     const expected = testCase.expectTitleSubstrings ?? [];
@@ -131,6 +171,19 @@ export async function runCompareOnBundle(
       } catch (err) {
         if (err instanceof DenseModelUnavailableError) {
           v2Available = false;
+          hybridAvailable = false;
+        } else {
+          throw err;
+        }
+      }
+    }
+    let hybrid: { titles: string[]; mode: ConditionalMode } | null = null;
+    if (hybridAvailable) {
+      try {
+        hybrid = await evaluateHybrid(index, denseV1, denseV2, testCase.query, k, methodOpts);
+      } catch (err) {
+        if (err instanceof DenseModelUnavailableError) {
+          hybridAvailable = false;
         } else {
           throw err;
         }
@@ -138,13 +191,19 @@ export async function runCompareOnBundle(
     }
     const v1CaseHit = hitAtK(v1.titles, expected);
     const v2CaseHit = v2 ? hitAtK(v2.titles, expected) : false;
+    const hybridCaseHit = hybrid ? hitAtK(hybrid.titles, expected) : false;
     if (v1CaseHit) v1Hit += 1;
     if (v2CaseHit) v2Hit += 1;
+    if (hybridCaseHit) hybridHit += 1;
     rows.push({
       id: testCase.id,
       query: testCase.query,
       v1Hit: v1CaseHit,
       v2Hit: v2CaseHit,
+      ...(opts.hybrid ? {
+        hybridHit: hybridCaseHit,
+        hybridMode: hybrid?.mode,
+      } : {}),
       v1TopTitles: v1.titles.slice(0, 3),
       v2TopTitles: (v2?.titles ?? []).slice(0, 3),
     });
@@ -156,6 +215,7 @@ export async function runCompareOnBundle(
     v1HitAtK: total === 0 ? 1 : v1Hit / total,
     v2HitAtK: !v2Available || total === 0 ? 1 : v2Hit / total,
     v2Available,
+    ...(opts.hybrid ? { hybridHitAtK: !hybridAvailable || total === 0 ? 1 : hybridHit / total } : {}),
     cases: rows,
   };
 }
@@ -215,6 +275,7 @@ async function main(): Promise<void> {
     }
     const summary = await runCompareOnBundle(bundleDir, gold, k, {
       rerankMethod: argValue("--rerank", resolveRerankMethod()) === "cross_encoder" ? "cross_encoder" : "off",
+      hybrid: process.argv.includes("--hybrid"),
     });
     const gate = compareGate(summary);
     console.log(JSON.stringify({ bundleDir, k, ...summary, gate }, null, 2));

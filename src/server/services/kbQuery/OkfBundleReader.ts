@@ -92,4 +92,17 @@ export class OkfBundleReader {
     const v1 = this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUri", "search/dense.json");
     return v1?.okfAssetType === "search_dense_index" ? v1 : null;
   }
+
+  /**
+   * 同时读取 v1（hashing-trick）与 v2（fastembed）两套 dense 索引，供条件式混合检索
+   * （conditionalRetrieval）：词法强命中用 v1 保持不回退，词法弱命中用 v2 语义兜底。
+   */
+  readOkfDenseIndexes(release: ReleaseRecord): { v1: OkfDenseIndex | null; v2: OkfDenseIndex | null } {
+    const v1 = this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUri", "search/dense.json");
+    const v2 = this.readOkfJsonAsset<OkfDenseIndex>(release, "denseIndexUriV2", "search/dense.v2.json");
+    return {
+      v1: v1?.okfAssetType === "search_dense_index" ? v1 : null,
+      v2: v2?.okfAssetType === "search_dense_index" && v2.method === "fastembed" ? v2 : null,
+    };
+  }
 }

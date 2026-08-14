@@ -4,6 +4,7 @@ import { isComponentVisibleToRole } from "../knowledgeAcl";
 import { fuseSearchWithRrf } from "../okf/hybridSearch";
 import { DenseModelUnavailableError, pageEmbeddingText, searchDenseIndexV2Aware } from "../okf/denseIndexV2";
 import { resolveRerankMethod, rerankSearchResults } from "../okf/rerank";
+import { resolveSemanticFallback, retrieveConditionalHybrid } from "../okf/conditionalRetrieval";
 import { searchOkfIndex, type OkfSearchResultItem } from "../okf/searchIndex";
 import type { KbGraphTools } from "./KbGraphTools";
 import type { OkfBundleReader } from "./OkfBundleReader";
@@ -76,35 +77,67 @@ export class KbSearchTools {
     const index = this.ctx.okfReader.readOkfSearchIndex(release);
     if (!index) return [];
     const lexical = searchOkfIndex(index, query, Math.max(limit * 2, 20));
-    const dense = this.ctx.okfReader.readOkfDenseIndex(release);
+    const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
+    const texts = new Map(index.pages.map((page) => [page.componentId, pageEmbeddingText(page)] as const));
     let candidates: OkfSearchResultItem[];
-    if (!dense || dense.vectors.length === 0) {
-      candidates = lexical.slice(0, Math.max(limit * 2, 20));
-    } else {
-      let denseRanks: Array<{ componentId: string; score: number; rank: number }> = [];
+
+    // 条件式混合检索（OKF_SEMANTIC_FALLBACK=on 且 bundle 带 v2 时启用）：
+    // 词法强命中 → v1 管线（lexical + hashing-trick RRF，行为与现状一致，gold 不回退）；
+    // 词法弱命中 → v2 语义兜底（bge-small-zh RRF，OKF_RERANK=cross_encoder 时再接精排）。
+    const { v1: denseV1, v2: denseV2 } = this.ctx.okfReader.readOkfDenseIndexes(release);
+    if (resolveSemanticFallback() === "on" && denseV2 && denseV2.vectors.length > 0) {
       try {
-        // v2 索引走 fastembed 同模型推理（进程内 LRU），v1 走 hashing trick
-        denseRanks = await searchDenseIndexV2Aware(dense, query, Math.max(limit * 2, 20));
+        const hybrid = await retrieveConditionalHybrid({
+          query,
+          lexical,
+          denseV1,
+          denseV2,
+          pageById,
+          limit,
+          rerank: resolveRerankMethod(),
+          texts,
+        });
+        candidates = hybrid.items;
       } catch (err) {
         if (err instanceof DenseModelUnavailableError) {
-          // v2 索引存在但模型不可用：退化为纯词法，绝不静默错配（flywheel 02-P2）
-          console.warn(`[kb_search] dense v2 模型不可用，本次查询退化纯词法：${err.message}`);
-          denseRanks = [];
+          // v2 索引存在但模型不可用：降级为词法强路径（现状行为），绝不静默错配
+          console.warn(`[kb_search] dense v2 模型不可用，本次查询退化 v1 管线：${err.message}`);
+          candidates = lexical.slice(0, Math.max(limit * 2, 20));
         } else {
           throw err;
         }
       }
-      const pageById = new Map(index.pages.map((page) => [page.componentId, page] as const));
-      candidates = denseRanks.length > 0
-        ? fuseSearchWithRrf(lexical, denseRanks, pageById, Math.max(limit * 2, 20))
-        : lexical.slice(0, Math.max(limit * 2, 20));
+    } else {
+      // 现状管线：lexical + dense(v1/v2 感知) RRF
+      const dense = denseV2 ?? denseV1;
+      if (!dense || dense.vectors.length === 0) {
+        candidates = lexical.slice(0, Math.max(limit * 2, 20));
+      } else {
+        let denseRanks: Array<{ componentId: string; score: number; rank: number }> = [];
+        try {
+          // v2 索引走 fastembed 同模型推理（进程内 LRU），v1 走 hashing trick
+          denseRanks = await searchDenseIndexV2Aware(dense, query, Math.max(limit * 2, 20));
+        } catch (err) {
+          if (err instanceof DenseModelUnavailableError) {
+            // v2 索引存在但模型不可用：退化为纯词法，绝不静默错配（flywheel 02-P2）
+            console.warn(`[kb_search] dense v2 模型不可用，本次查询退化纯词法：${err.message}`);
+            denseRanks = [];
+          } else {
+            throw err;
+          }
+        }
+        candidates = denseRanks.length > 0
+          ? fuseSearchWithRrf(lexical, denseRanks, pageById, Math.max(limit * 2, 20))
+          : lexical.slice(0, Math.max(limit * 2, 20));
+      }
     }
+
     const visible = await this.filterSearchItemsByDbVisibility(candidates, agentRole);
     // Phase B 精排（可选，OKF_RERANK=cross_encoder）：RRF top-20 → cross-encoder → top-limit。
     // 默认 off 零开销；模型不可用时 rerankSearchResults 内部降级为原序，不阻断检索。
+    // 注意：语义兜底路径已在 retrieveConditionalHybrid 内做过精排，这里不重复。
     let ranked = visible;
     if (resolveRerankMethod() === "cross_encoder" && visible.length > limit) {
-      const texts = new Map(index.pages.map((page) => [page.componentId, pageEmbeddingText(page)] as const));
       ranked = (await rerankSearchResults(query, visible.slice(0, Math.max(limit * 2, 20)), limit, { texts })).items;
     }
     return this.page!.alignSearchItemsWithPageTables(release, ranked.slice(0, limit));
