@@ -69,6 +69,8 @@ export interface AutoPublishCheck {
     total: number;
     minHitAtK: number;
     minCitationCoverage: number;
+    /** golden↔release 绑定（EV-027 护栏）。 */
+    binding?: { boundReleaseId: string; currentReleaseId: string; ok: boolean };
   } | null;
   /** 发布级质量回归明细（quality_gate 对比父发布）。 */
   qualityRegressions: string[];
@@ -82,6 +84,8 @@ export type RetrievalEvalGateFn = (input: {
   citationCoverage: number;
   trustPassRate: number;
   total: number;
+  /** golden↔release 绑定（EV-027 护栏）；golden 未绑定则缺省。 */
+  binding?: { boundReleaseId: string; currentReleaseId: string; ok: boolean };
 } | null>;
 
 export interface AutoPublishReasonDetail {
@@ -710,6 +714,10 @@ export class ReleaseService {
         ) {
           reasons.push("retrieval_eval_regression");
         }
+        // golden↔release 绑定不一致（golden 过时，EV-027 机制性护栏）→ 拦截自动发布
+        if (summary.binding && !summary.binding.ok) {
+          reasons.push("retrieval_gold_binding_mismatch");
+        }
       }
     }
 
@@ -1192,6 +1200,19 @@ function buildAutoPublishReasonDetails(input: {
             `hitAtK=${formatScore(input.retrievalEval?.hitAtK ?? null)}`,
             `citation=${formatScore(input.retrievalEval?.citationCoverage ?? null)}`,
             `trustPass=${formatScore(input.retrievalEval?.trustPassRate ?? null)}`,
+          ],
+        };
+      case "retrieval_gold_binding_mismatch":
+        return {
+          code: reason,
+          label: "黄金集与当前发布绑定不一致（golden 过时）",
+          severity: "blocking",
+          description: `golden 集绑定的 kbReleaseId=${input.retrievalEval?.binding?.boundReleaseId ?? "?"}，当前发布通道为 ${input.retrievalEval?.binding?.currentReleaseId ?? "?"}。黄金期望未随数据更新（EV-027 类），禁止以过时黄金集放行自动发布。`,
+          action: "运行 scripts/check-retrieval-gold-binding.ts 核对期望值一致性；确认数据变更后以 --bind 更新 golden 的 kbReleaseId 并重跑 audit_evals.py。",
+          count: 1,
+          sampleIds: [
+            `bound=${input.retrievalEval?.binding?.boundReleaseId ?? ""}`,
+            `current=${input.retrievalEval?.binding?.currentReleaseId ?? ""}`,
           ],
         };
       case "quality_regressed":

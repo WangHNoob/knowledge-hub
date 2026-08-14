@@ -109,6 +109,7 @@ okf_bundle/
 - **文档级修复 document_rewrite（flywheel 02-P4）**：LLM 整页改写须过三道闸才自动落稿——结构（标题层级/表格行管道数一致）、事实（正文数值必须在证据/源文封闭集合内）、引用（`[evidence:ID]` 必须落在已知 evidenceId 集合，防幻觉引用）；独立置信门槛 `KH_AUTO_REMEDIATION_DOC_REWRITE_CONFIDENCE=0.9`；任一项不过 → 整页改写稿以建议形式进 Review 页人工采纳/编辑。
 - **动态 trust 消费维度（flywheel 02-P4）**：trust 第五维 `consumption`（归因引用率 + kb_search 命中后继续点击率 + 负反馈纠偏），发布期重算并落 `component.trust_changed` 事件（±0.05 才发，可审计）；无消费数据时维持原四维口径不变。
 - **生产检索失败样本回流（flywheel 02-P4）**：`npm run eval:probe:collect` 扫描 mcp_audit 中 kb_search miss/低质量命中 → `evals/retrieval-probe-candidates.json`（auditId 溯源）→ 人工确认后并入 `retrieval-gold.json`（禁止静默自动入库）。
+- **golden↔release 版本绑定（EV-027 机制性护栏）**：`retrieval-gold.json` 的 `meta.kbReleaseId` 绑定期望所依据的发布；`npm run eval:gold:binding -- --strict`（`--bundle <dir>` 免 DB）校验每个 `expectTitleSubstrings` 在当前 bundle 页面标题中是否仍可命中（当前 78 题 234 期望全部命中，已绑定 `rel_20260809142245_mSJBqC`）；`--bind <releaseId>` 在数据变更后显式更新绑定。检索评测与自动发布门禁在绑定不一致时拦截（reason `retrieval_gold_binding_mismatch`），从机制上消灭"golden 过时把答对的模型判 FAIL"。
 
 ### 6. 轻量知识运营台（飞轮）
 

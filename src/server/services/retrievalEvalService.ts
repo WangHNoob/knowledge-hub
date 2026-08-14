@@ -24,6 +24,13 @@ export interface RetrievalEvalCaseResult {
   topTitles: string[];
 }
 
+/** golden↔release 绑定（flywheel：EV-027 机制性护栏）。 */
+export interface RetrievalEvalBinding {
+  boundReleaseId: string;
+  currentReleaseId: string;
+  ok: boolean;
+}
+
 export interface RetrievalEvalSummary {
   projectId: string;
   k: number;
@@ -33,6 +40,8 @@ export interface RetrievalEvalSummary {
   trustPassRate: number;
   goldPath: string;
   cases: RetrievalEvalCaseResult[];
+  /** golden 集绑定的 kbReleaseId 与当前发布的一致性（未绑定则缺省）。 */
+  binding?: RetrievalEvalBinding;
 }
 
 export function createRetrievalEvalService(
@@ -73,9 +82,31 @@ export class RetrievalEvalService {
         cases: [],
       };
     }
-    const gold = JSON.parse(readFileSync(goldPath, "utf8")) as { cases?: RetrievalGoldCase[] };
+    const gold = JSON.parse(readFileSync(goldPath, "utf8")) as { cases?: RetrievalGoldCase[]; meta?: Record<string, unknown> };
     const cases = Array.isArray(gold.cases) ? gold.cases : [];
     const query = createKnowledgeQueryService(this.db, this.dataDir, this.diagnostics, this.governanceProfileService);
+
+    // golden↔release 绑定（EV-027 机制性护栏）：golden 声明的 kbReleaseId 与
+    // 当前发布通道不一致 → binding.ok=false，发布门禁据此拦截自动发布。
+    const boundReleaseId = typeof gold.meta?.kbReleaseId === "string" && gold.meta.kbReleaseId.trim()
+      ? gold.meta.kbReleaseId.trim()
+      : "";
+    let binding: RetrievalEvalBinding | undefined;
+    if (boundReleaseId) {
+      const { rows: currentRows } = await this.db.adapter.query(
+        `SELECT r.release_id
+           FROM release_channels c
+           JOIN releases r ON r.release_id = c.current_release_id
+          WHERE c.project_id = $1`,
+        [projectId],
+      );
+      const currentReleaseId = currentRows[0] ? String(currentRows[0].release_id) : "";
+      binding = {
+        boundReleaseId,
+        currentReleaseId,
+        ok: currentReleaseId !== "" && boundReleaseId === currentReleaseId,
+      };
+    }
 
     let hit = 0;
     let citationOk = 0;
@@ -132,6 +163,7 @@ export class RetrievalEvalService {
       trustPassRate: cases.length === 0 ? 1 : trustOk / total,
       goldPath,
       cases: rows,
+      ...(binding ? { binding } : {}),
     };
 
     if (input.emitEvent !== false) {

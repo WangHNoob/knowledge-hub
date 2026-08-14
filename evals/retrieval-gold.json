@@ -3,7 +3,8 @@
     "generatedAt": "2026-08-09T14:26:39.248Z",
     "source": "evals/golden_evals.json",
     "k": 5,
-    "note": "title 取自发布 rel_20260809142245_mSJBqC（LLM 抽取）"
+    "note": "title 取自发布 rel_20260809142245_mSJBqC（LLM 抽取）",
+    "kbReleaseId": "rel_20260809142245_mSJBqC"
   },
   "cases": [
     {
