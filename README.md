@@ -84,6 +84,7 @@ okf_bundle/
 - **混合检索**：词项索引 + dense 向量（v1 hashing trick / v2 真实 embedding），RRF 融合后供 `kb_search`（结果带 `retrieval.mode`）。
 - **dense v2（flywheel 02-P2）**：`OKF_DENSE_METHOD=fastembed`（默认）时构建期用 `@xenova/transformers`（bge-small-zh-v1.5 量化，CPU）生成 `search/dense.v2.json`；模型不可用自动回退 v1 并告警。查询侧与索引同模型推理（进程内 LRU 缓存），v2 索引存在但模型不可用时退化纯词法，绝不静默错配。模型下载走 HuggingFace（国内可用 `OKF_HF_ENDPOINT=https://hf-mirror.com`）。
 - **检索质量对比门禁**：`npm run eval:retrieval:compare`（`--compare-v1-v2`，`--bundle <dir>` 免 DB）对 `evals/retrieval-gold.json` 分别算 v1/v2 的 hit@k；**v2 < v1 即 exit 1 拦截**，v2 不可用则放行并告警。
+- **dense v2 实测结论（2026-08-14，78 题黄金集）**：bge-small-zh 裸向量 + RRF 命中率 **85.9%（67/78）< v1 hashing-trick 100%（78/78）**——门禁正确拦截了 v2 上线。按方案 02 §2.1 决策门，需先做 **Phase B 精排**（cross-encoder 或 LLM 精排）再放行 v2；当前本仓库部署 `OKF_DENSE_METHOD=hashing_trick` 维持 v1。`npm run okf:dense:v2 -- <bundle_dir>` 可离线为任意 bundle 生成 v2 复测。
 - **检索时 ACL**：按组件 `quality.visibility`（public / internal / restricted）与 Agent 角色过滤，而非事后裁剪。
 - 离线评测：`npm run eval:retrieval`（黄金集 hit@k，见 `evals/`）。
 
