@@ -1,5 +1,6 @@
 # Knowledge Hub
 
+
 > 把团队资料治理成 **Agent 可消费、可追溯、可迭代** 的知识库。  
 > 不是又一个纯向量 RAG，而是「资料 → 资产化 → 证据/可信度 → 发布冻结 → MCP 消费 → 反馈回流 → 修订发布」的治理型知识运营系统。
 
@@ -17,6 +18,12 @@ Knowledge Hub 是 TypeScript 全栈应用（Fastify + React），面向游戏 / 
 ```
 
 配套 Agent：[design-agent-ts](https://github.com/WangHNoob/design-agent-ts)（默认走 MCP；MCP 健康时建议禁用本地 wiki 双源）。
+
+## 界面预览
+
+![知识库运营台](docs/知识库.png)
+
+> 知识运营台界面：资料导入 → 构建流水线 → OKF 发布冻结 → Agent 经 MCP 消费 → 反馈回流，一键飞轮。
 
 ---
 
