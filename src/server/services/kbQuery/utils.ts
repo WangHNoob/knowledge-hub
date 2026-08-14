@@ -391,6 +391,7 @@ export function healthWarningReasons(input: {
   staleAuditCount: number;
   activeCorrections: number;
   lintSummary: { pending: number; failed: number; needsHuman: number };
+  lowConsumptionCount?: number;
 }): string[] {
   const reasons: string[] = [];
   if (input.pendingReviewTasks > 0) reasons.push("pending_review_tasks");
@@ -399,6 +400,8 @@ export function healthWarningReasons(input: {
   if (input.staleAuditCount > 0) reasons.push("stale_audit_components");
   if (input.activeCorrections > 0) reasons.push("active_corrections_waiting_rebuild");
   if (input.lintSummary.pending > 0) reasons.push("lint_pending");
+  // R5：低消费组件（近 30 天零检索/零点击/零引用且发布超 30 天）→ 疑似过期候选
+  if ((input.lowConsumptionCount ?? 0) > 0) reasons.push("low_consumption_components");
   return reasons;
 }
 
@@ -417,6 +420,7 @@ export function healthRecommendations(
     activeCorrections: HealthCorrectionSummary[];
     lowTrust: HealthComponentSummary[];
     staleAudit: HealthComponentSummary[];
+    lowConsumption?: HealthComponentSummary[];
   } = { pendingCorrections: [], activeCorrections: [], lowTrust: [], staleAudit: [] },
 ): Array<{ action: string; tool: string; reason: string; payload?: Record<string, unknown> }> {
   const reasons = new Set([...blockingReasons, ...warningReasons]);
@@ -458,6 +462,18 @@ export function healthRecommendations(
       reason: "低可信、审计过期或负反馈应由 Agent 提交修正并触发增量检查。",
       payload: { projectId, ...(weak ? { componentId: weak.componentId } : {}) },
     });
+  }
+  // R5：低消费组件 → kb_report_stale（stale_knowledge 反馈链），人工确认后可修订或移除
+  if (reasons.has("low_consumption_components")) {
+    const candidate = (samples.lowConsumption ?? [])[0];
+    if (candidate) {
+      out.push({
+        action: "report_stale_candidate",
+        tool: "kb_report_stale",
+        reason: `组件 ${candidate.title} 近 30 天零消费且发布超 30 天，疑似过期；上报 stale_knowledge 反馈由知识运营确认。`,
+        payload: { projectId, componentId: candidate.componentId, query: candidate.title, reason: "zero consumption in 30d window" },
+      });
+    }
   }
   if (out.length === 0) out.push({ action: "publish_if_ready", tool: "kb_publish_if_ready", reason: "未发现阻断项，可请求系统按门禁判断是否发布修订。", payload: { projectId } });
   return out;

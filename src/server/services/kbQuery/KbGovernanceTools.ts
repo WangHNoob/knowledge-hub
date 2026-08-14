@@ -14,6 +14,7 @@ import { createReleaseService, AutoPublishEligibilityError } from "../releaseSer
 import { createKbBuilderPipelineService } from "../kbBuilderService";
 import { createLintRemediationService } from "../lintRemediationService";
 import { createAttributionAuditService } from "../attributionAuditService";
+import { getConsumptionStatsByComponent, isZeroConsumption } from "../consumptionMetricsService";
 import type { GovernanceProfileService } from "../governanceProfileService";
 import type { FlywheelService } from "../flywheelService";
 import type {
@@ -256,11 +257,22 @@ export class KbGovernanceTools {
 
     const componentIds = manifestComponentIds(release);
     const trust = await this.trustSummaryForComponents(release, componentIds);
-    const lowTrust = trust.components
-      .filter((component) => typeof component.trust?.score === "number" && component.trust.score < trustThreshold)
-      .map((component) => healthComponent(component));
-    const staleAudit = trust.components
-      .filter((component) => auditIsStale(component.trust?.lastTrustedAuditAt ?? null, maxAuditAgeDays))
+    const [lowTrust, staleAudit, consumptionByComponent] = await Promise.all([
+      Promise.resolve(trust.components
+        .filter((component) => typeof component.trust?.score === "number" && component.trust.score < trustThreshold)
+        .map((component) => healthComponent(component))),
+      Promise.resolve(trust.components
+        .filter((component) => auditIsStale(component.trust?.lastTrustedAuditAt ?? null, maxAuditAgeDays))
+        .map((component) => healthComponent(component))),
+      // R5（flywheel 02 收尾）：低消费检测——近 30 天零消费的组件 → stale 候选
+      getConsumptionStatsByComponent(this.db, projectId, componentIds),
+    ]);
+    // 排除刚发布（< 30 天）的组件，避免把新知识误标为过期
+    const publishedAt = new Date(release.publishedAt ?? release.createdAt).getTime();
+    const minAgeMs = 30 * 86_400_000;
+    const lowConsumption = trust.components
+      .filter((component) => isZeroConsumption(consumptionByComponent.get(component.componentId)))
+      .filter((component) => publishedAt && Date.now() - publishedAt > minAgeMs)
       .map((component) => healthComponent(component));
     const pendingCorrectionSamples = corrections.filter((item) => item.state === "pending_review").map(healthCorrection);
     const activeCorrectionSamples = corrections.filter((item) => item.state === "active").map(healthCorrection);
@@ -279,6 +291,7 @@ export class KbGovernanceTools {
       staleAuditCount: staleAudit.length,
       activeCorrections,
       lintSummary,
+      lowConsumptionCount: lowConsumption.length,
     });
     const reasons = [...blockingReasons, ...warningReasons];
     const status = blockingReasons.length > 0 ? "needs_attention" : warningReasons.length > 0 ? "warning" : "passed";
@@ -288,6 +301,7 @@ export class KbGovernanceTools {
       activeCorrections: activeCorrectionSamples,
       lowTrust,
       staleAudit,
+      lowConsumption,
     });
     const result = {
       projectId,
@@ -324,6 +338,12 @@ export class KbGovernanceTools {
           status: staleAudit.length > 0 ? "warning" : "passed",
           staleCount: staleAudit.length,
           staleSample: staleAudit.slice(0, 10),
+        },
+        consumption: {
+          status: lowConsumption.length > 0 ? "warning" : "passed",
+          zeroConsumptionCount: lowConsumption.length,
+          zeroConsumptionSample: lowConsumption.slice(0, 10),
+          windowDays: 30,
         },
         governance: {
           status: blockingReasons.length > 0 ? "failed" : warningReasons.length > 0 ? "warning" : "passed",

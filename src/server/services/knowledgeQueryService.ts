@@ -19,6 +19,7 @@ import { createProjectService } from "./projectService";
 import { createKnowledgeService } from "./knowledgeService";
 import { createFlywheelService, type FlywheelService } from "./flywheelService";
 import { createTaskPolicyService } from "./taskPolicyService";
+import { flagLowConsumptionStale } from "./consumptionMetricsService";
 import { isComponentVisibleToRole } from "./knowledgeAcl";
 import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
 import { fuseSearchWithRrf, searchDenseIndex } from "./okf/hybridSearch";
@@ -724,6 +725,21 @@ export class KnowledgeQueryService {
         entityType: "project",
         entityId: projectId,
         context: { projectId, dismissedTasks: policy.dismissedTasks, dismissedGapFill: policy.dismissedGapFill },
+      });
+    }
+    // R5（flywheel 02 收尾）：低消费组件 → stale_knowledge 信号（去重，不重复建任务）
+    const stale = await flagLowConsumptionStale(this.db, projectId, { actor });
+    if (stale.flagged > 0) {
+      await this.diagnostics?.write({
+        traceId: "",
+        level: "info",
+        category: "flywheel",
+        message: `flagged ${stale.flagged} low-consumption stale candidate(s)`,
+        status: "completed",
+        actor,
+        entityType: "project",
+        entityId: projectId,
+        context: { projectId, flagged: stale.flagged, sample: stale.sample },
       });
     }
     const outcome = await this.govTools.kbRunHealthCheck(projectId, {}, { sessionId: actor });

@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, LintRemediationSummary, ReleaseRecord, ReviewTask } from "../types";
-import { jsonArray, mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
+import { mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
 import { createGovernanceProfileService, type GovernanceProfileService } from "./governanceProfileService";
 import { createLegislationService } from "./legislationService";
@@ -13,6 +13,7 @@ import { createLintRemediationService } from "./lintRemediationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
 import { buildReleaseAuditSummary, type ReleaseAuditSummary } from "./releaseAudit";
 import { computeTrustScore, consumptionScore, scoreFromQuality, type ConsumptionStats } from "./trustScore";
+import { getConsumptionStatsByComponent } from "./consumptionMetricsService";
 import { emitKnowledgeEvent } from "./eventService";
 
 const RELEASE_AUTO_EVIDENCE_KINDS = new Set(["wiki_page"]);
@@ -903,74 +904,9 @@ export class ReleaseService {
     return out;
   }
 
-  /** 消费维度统计（flywheel 02-P4）：归因引用 / 检索曝光 / 命中后点击 / 负反馈。 */
-  private async consumptionStatsByComponent(projectId: string, componentIds: string[]): Promise<Map<string, ConsumptionStats>> {
-    const out = new Map<string, ConsumptionStats>();
-    if (componentIds.length === 0) return out;
-    const params = [projectId];
-
-    const [auditRows, feedbackRows, attributionRows] = await Promise.all([
-      this.adapter.query(
-        `SELECT component_id, tool_name, count
-         FROM (
-           SELECT hit.component_id, a.tool_name, COUNT(*)::int AS count
-           FROM mcp_audit a
-           CROSS JOIN LATERAL jsonb_array_elements_text(a.hit_component_ids) AS hit(component_id)
-           WHERE a.project_id = $1
-             AND a.created_at > NOW() - INTERVAL '30 days'
-             AND a.tool_name IN ('kb_search','kb_get_page','kb_get_entity')
-           GROUP BY hit.component_id, a.tool_name
-         ) t`,
-        params,
-      ),
-      this.adapter.query(
-        `SELECT hit.component_id, COUNT(*)::int AS count
-         FROM agent_events a
-         CROSS JOIN LATERAL jsonb_array_elements_text(a.hit_component_ids) AS hit(component_id)
-         WHERE a.project_id = $1
-           AND a.feedback_type <> 'hit'
-           AND a.created_at > NOW() - INTERVAL '30 days'
-         GROUP BY hit.component_id`,
-        params,
-      ),
-      this.adapter.query(
-        `SELECT segments_json FROM attribution_audits
-         WHERE created_at > NOW() - INTERVAL '30 days'`,
-        [],
-      ),
-    ]);
-
-    for (const row of auditRows.rows) {
-      const componentId = String(row.component_id);
-      const stats = out.get(componentId) ?? { attributionCount: 0, searchCount: 0, clickCount: 0, negativeFeedbackCount: 0 };
-      const tool = String(row.tool_name ?? "");
-      const count = Number(row.count ?? 0);
-      if (tool === "kb_search") stats.searchCount += count;
-      else if (tool === "kb_get_page" || tool === "kb_get_entity") stats.clickCount += count;
-      out.set(componentId, stats);
-    }
-    for (const row of feedbackRows.rows) {
-      const componentId = String(row.component_id);
-      const stats = out.get(componentId) ?? { attributionCount: 0, searchCount: 0, clickCount: 0, negativeFeedbackCount: 0 };
-      stats.negativeFeedbackCount += Number(row.count ?? 0);
-      out.set(componentId, stats);
-    }
-    const wanted = new Set(componentIds);
-    for (const row of attributionRows.rows) {
-      const segments = jsonArray(row.segments_json) as Array<{ trace?: { componentIds?: unknown } }>;
-      for (const segment of segments) {
-        const ids = Array.isArray(segment?.trace?.componentIds)
-          ? (segment.trace.componentIds as unknown[]).map(String)
-          : [];
-        for (const id of ids) {
-          if (!wanted.has(id)) continue;
-          const stats = out.get(id) ?? { attributionCount: 0, searchCount: 0, clickCount: 0, negativeFeedbackCount: 0 };
-          stats.attributionCount += 1;
-          out.set(id, stats);
-        }
-      }
-    }
-    return out;
+  /** 消费维度统计（flywheel 02-P4/02 收尾 R5）：共享实现见 consumptionMetricsService。 */
+  private consumptionStatsByComponent(projectId: string, componentIds: string[]): Promise<Map<string, ConsumptionStats>> {
+    return getConsumptionStatsByComponent(this.db, projectId, componentIds);
   }
 
   private async evidenceRowsByComponent(componentIds: string[]): Promise<Map<string, Array<{ sourceVersionId: string; quote: string; confidence: number }>>> {

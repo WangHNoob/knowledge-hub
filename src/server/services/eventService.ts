@@ -41,6 +41,7 @@ export type KnowledgeEventType =
   | "knowledge_lint.remediation_completed"
   | "knowledge_lint.remediation_failed"
   | "knowledge_lint.alias_remediated"
+  | "knowledge_lint.stale_candidate"
   | "eval.retrieval_completed";
 
 export interface KnowledgeEvent {
