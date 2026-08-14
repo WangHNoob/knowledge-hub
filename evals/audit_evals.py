@@ -213,6 +213,14 @@ class Auditor:
         return ("elements", elements, ["fire", "ice", "phys", "thunder"]), \
                ("elementCount", len(elements), 4), ("materialCount", 14, 14)
 
+    def ev027(self):
+        # v0.2 扩展段正向题：SK033 已注册（霆御斩，H009），不再是幻觉题
+        s = self.skill["SK033"]
+        return ("name", s["name"], "霆御斩"), ("heroId", s["heroId"], "H009"), \
+               ("skillType", s["skillType"], "normal"), ("element", s["element"], "thunder"), \
+               ("cdSec", int(s["cdSec"]), 0), ("energyCost", int(s["energyCost"]), 0), \
+               ("skillRate", float(s["skillRate"]), 0.88)
+
     def ev028(self):
         b = self.buff["BF001"]
         return ("durationSec", float(b["durationSec"]), 6.0), ("maxStack", int(b["maxStack"]), 5), \
@@ -339,7 +347,7 @@ AUDITS = {
     "EV-013": Auditor.ev013, "EV-014": Auditor.ev014, "EV-015": Auditor.ev015,
     "EV-016": Auditor.ev016, "EV-017": Auditor.ev017, "EV-018": Auditor.ev018,
     "EV-022": Auditor.ev022, "EV-023": Auditor.ev023, "EV-024": Auditor.ev024,
-    "EV-025": Auditor.ev025, "EV-028": Auditor.ev028,
+    "EV-025": Auditor.ev025, "EV-027": Auditor.ev027, "EV-028": Auditor.ev028,
     # v0.2 新增数值题审计
     "EV-032": Auditor.ev032, "EV-033": Auditor.ev033, "EV-034": Auditor.ev034,
     "EV-035": Auditor.ev035, "EV-036": Auditor.ev036, "EV-037": Auditor.ev037,

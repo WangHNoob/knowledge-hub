@@ -99,7 +99,8 @@
       "DIA001-DIA024",
       "NC001-NC020",
       "TN001-TN032"
-    ]
+    ],
+    "kbReleaseId": "rel_20260809142245_mSJBqC"
   },
   "cases": [
     {
@@ -634,19 +635,34 @@
     },
     {
       "id": "EV-027",
-      "group": "anti_hallucination",
-      "difficulty": 2,
-      "fakeId": "SK033",
-      "question": "SK033 星陨之坠的冷却和倍率？",
-      "expectedAnswer": "拒绝回答：SK033 不在注册表（SK001-SK032），不存在该技能",
+      "group": "basic_retrieval",
+      "difficulty": 1,
+      "question": "SK033 霆御斩的冷却和倍率？",
+      "expectedAnswer": "cdSec=0，energyCost=0，skillRate=0.88；skillType=normal、element=thunder，归属 H009（苍霆·御）",
       "keyFacts": [
-        "SK001",
-        "SK032"
+        "霆御斩",
+        "H009",
+        "thunder",
+        "normal"
+      ],
+      "numPairs": [
+        [
+          "cdSec",
+          0
+        ],
+        [
+          "energyCost",
+          0
+        ],
+        [
+          "skillRate",
+          0.88
+        ]
       ],
       "sourceFiles": [
-        "gamedocs/00_项目总览与术语表.md"
+        "gamedata/Skill.csv"
       ],
-      "notes": "幻觉题：未注册技能 ID 必须拒绝。"
+      "notes": "v0.2 扩展段正向题：SK033 已注册（霆御斩，H009 苍霆·御，thunder/normal）；三个数值精确匹配。"
     },
     {
       "id": "EV-028",
