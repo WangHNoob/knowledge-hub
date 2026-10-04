@@ -141,6 +141,20 @@ export function App() {
               <span>{ui.brandSubtitle}</span>
             </div>
           </div>
+          <div
+            style={{
+              margin: "8px 12px 0",
+              padding: "7px 10px",
+              borderRadius: 8,
+              fontSize: 11.5,
+              lineHeight: 1.5,
+              color: "#8a6d1f",
+              background: "rgba(212,160,58,0.12)",
+              border: "1px solid rgba(212,160,58,0.35)"
+            }}
+          >
+            本站知识源为 <b>AI 生成的演示数据</b>（204 张数值表 + 49 篇文档），并非真实游戏资料。
+          </div>
           <ProjectSwitcher />
           <nav>
             {navItems.map((item) => {
