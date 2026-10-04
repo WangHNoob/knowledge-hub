@@ -3,8 +3,8 @@ import { useState } from "react";
 import { login } from "../api";
 
 export function LoginScreen({ onLogin }: { onLogin: (token: string) => void }) {
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("adminpw");
+  const [username, setUsername] = useState("visitor");
+  const [password, setPassword] = useState("visitor2026");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 

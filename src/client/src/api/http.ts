@@ -1,5 +1,13 @@
 const TOKEN_KEY = "kh_token";
 
+/** 构建时由 VITE_APP_BASE 注入（nginx /kb/ 前缀部署）；开发环境为 "/"。 */
+const APP_BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+/** 把根相对 API 路径补上部署前缀，如 "/api/x" → "/kb/api/x"。 */
+export function apiUrl(path: string): string {
+  return APP_BASE ? `${APP_BASE}${path}` : path;
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -30,12 +38,12 @@ export function currentRole(): "admin" | "developer" | "viewer" | null {
 }
 
 export async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: authHeaders() });
+  const response = await fetch(apiUrl(url), { headers: authHeaders() });
   return parseResponse(response);
 }
 
 export async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     method: "POST",
     headers: { ...authHeaders(), "content-type": "application/json" },
     body: JSON.stringify(body)
@@ -44,7 +52,7 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 export async function putJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     method: "PUT",
     headers: { ...authHeaders(), "content-type": "application/json" },
     body: JSON.stringify(body)
@@ -53,7 +61,7 @@ export async function putJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 export async function patchJson<T>(url: string, body: unknown): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     method: "PATCH",
     headers: { ...authHeaders(), "content-type": "application/json" },
     body: JSON.stringify(body)
@@ -62,12 +70,12 @@ export async function patchJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 export async function postEmpty<T>(url: string): Promise<T> {
-  const response = await fetch(url, { method: "POST", headers: authHeaders() });
+  const response = await fetch(apiUrl(url), { method: "POST", headers: authHeaders() });
   return parseResponse(response);
 }
 
 export async function deleteJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { method: "DELETE", headers: authHeaders() });
+  const response = await fetch(apiUrl(url), { method: "DELETE", headers: authHeaders() });
   return parseResponse(response);
 }
 

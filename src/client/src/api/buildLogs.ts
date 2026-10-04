@@ -1,4 +1,4 @@
-import { authHeaders } from "./http";
+import { apiUrl, authHeaders } from "./http";
 
 export interface BuildLogRecord {
   logId: string;
@@ -20,7 +20,7 @@ export function streamBuildLogs(
   const controller = new AbortController();
   void (async () => {
     try {
-      const response = await fetch(`/api/build-runs/${encodeURIComponent(runId)}/stream`, {
+      const response = await fetch(apiUrl(`/api/build-runs/${encodeURIComponent(runId)}/stream`), {
         headers: authHeaders(),
         signal: controller.signal,
       });
