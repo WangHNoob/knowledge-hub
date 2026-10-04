@@ -402,8 +402,12 @@ export function registerKnowledgeMcpTools(
             traceId: defaults.traceId,
           });
           return {
+            // 机器通道：完整信封（UI 知识面板/评测解析 trust.components 等）
             structuredContent: envelope as unknown as Record<string, unknown>,
-            content: [{ type: "text" as const, text: JSON.stringify(envelope, null, 2) }],
+            // 模型文本通道：瘦身视图。工具结果不做有损截断，但同一结果在
+            // items 与 cards 里的重复渲染、以及仅诊断用的缩进空白不带给模型
+            // ——实测 kb_search 文本从 45KB 降到 ~20KB。
+            content: [{ type: "text" as const, text: JSON.stringify(modelTextEnvelope(envelope)) }],
           };
         } catch (error) {
           return {
@@ -414,4 +418,39 @@ export function registerKnowledgeMcpTools(
       },
     );
   }
+}
+
+/**
+ * 模型文本通道瘦身视图（不改变 structuredContent）：
+ * - 去掉 pretty-print 缩进（实测占 kb_search 文本的 ~38%）；
+ * - result.items 压成指针字段（snippet/trust/artifactId 与 cards 重复，
+ *   模型需要看的是 cards；componentId/title/okfPath 等定位字段保留）；
+ * - 顶层 trust.components（逐组件明细，3KB+）只保留汇总，明细走机器通道。
+ */
+function modelTextEnvelope(envelope: object): Record<string, unknown> {
+  const source = envelope as Record<string, unknown>;
+  const result = source.result as Record<string, unknown> | undefined;
+  const slim: Record<string, unknown> = { ...source };
+  if (result && Array.isArray(result.items)) {
+    const items = result.items as Array<Record<string, unknown>>;
+    slim.result = {
+      ...result,
+      items: items.map((item) => ({
+        componentId: item.componentId,
+        title: item.title,
+        okfPath: item.okfPath,
+        kind: item.kind,
+        type: item.type,
+        score: item.score,
+        why: item.why,
+        matchedFields: item.matchedFields,
+        tableDependencies: item.tableDependencies,
+      })),
+    };
+  }
+  if (source.trust && typeof source.trust === "object") {
+    const { components: _components, ...trustSummary } = source.trust as Record<string, unknown>;
+    slim.trust = trustSummary;
+  }
+  return slim;
 }
