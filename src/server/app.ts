@@ -13,22 +13,18 @@ import { createTableAliasService } from "./services/tableAliasService";
 import { configureKnowledgeEventBus } from "./services/eventService";
 import { registerEventOutboxWorker } from "./services/eventOutboxWorker";
 import { createSourceBundleService } from "./services/sourceBundleService";
-import { createStorageMaintenanceService } from "./services/storageMaintenanceService";
 import { createProjectService } from "./services/projectService";
 import { registerAgentRoutes } from "./routes/agent";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerOpsRoutes } from "./routes/ops";
 import { registerBuilderRoutes } from "./routes/builder";
 import { registerDashboardRoutes } from "./routes/dashboard";
-import { registerDiagnosticsRoutes } from "./routes/diagnostics";
 import { registerMcpRoutes } from "./routes/mcp";
 import { registerPackageRoutes } from "./routes/packages";
 import { registerQualityRoutes } from "./routes/quality";
 import { registerReleaseRoutes } from "./routes/releases";
 import { registerSearchRoutes } from "./routes/search";
 import { registerSourceRoutes } from "./routes/sources";
-import { registerStorageRoutes } from "./routes/storage";
-import { registerTableAliasRoutes } from "./routes/tableAliases";
 import { registerProjectRoutes } from "./routes/projects";
 import type { RouteContext } from "./routes/context";
 import type { DatabaseHandle, UserRecord } from "./types";
@@ -78,10 +74,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     releaseService,
     queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
     projectService,
-    storageService: createStorageMaintenanceService(options.db, dataDir, diagnostics, {
-      webImportRetentionHours: config.webImportRetentionHours,
-      logRetentionDays: config.logRetentionDays
-    })
   };
   const backgroundAutomationsEnabled = options.enableBackgroundAutomations !== false;
   const enableOutboxWorker = options.enableEventOutboxWorker === true
@@ -122,10 +114,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerReleaseRoutes(app, ctx);
   registerMcpRoutes(app, ctx);
   registerAgentRoutes(app, ctx);
-  registerDiagnosticsRoutes(app, ctx);
-  registerStorageRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
-  registerTableAliasRoutes(app, ctx);
 
   app.addHook("onClose", async () => {
     unsubscribeEventOutbox();

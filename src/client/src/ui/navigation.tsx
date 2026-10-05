@@ -5,8 +5,7 @@ export type View =
   | "dashboard"
   | "sources"
   | "buildrelease"
-  | "assets"
-  | "system";
+  | "assets";
 
 export interface NavParams {
   packageId?: string;

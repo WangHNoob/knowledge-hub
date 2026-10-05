@@ -7,7 +7,6 @@ import type { SourceBundleService } from "../services/sourceBundleService";
 import type { KbBuilderPipelineService } from "../services/kbBuilderService";
 import type { ReleaseService } from "../services/releaseService";
 import type { KnowledgeQueryService } from "../services/knowledgeQueryService";
-import type { StorageMaintenanceService } from "../services/storageMaintenanceService";
 import type { ProjectService } from "../services/projectService";
 
 export interface RouteContext {
@@ -19,7 +18,6 @@ export interface RouteContext {
   kbBuilderService: KbBuilderPipelineService;
   releaseService: ReleaseService;
   queryService: KnowledgeQueryService;
-  storageService: StorageMaintenanceService;
   projectService: ProjectService;
 }
 

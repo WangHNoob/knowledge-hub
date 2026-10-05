@@ -29,9 +29,7 @@ export {
 } from "./builder";
 export { deletePackage, getComponentContent, getComponentOwner, getPackage, listEvidence, listPackages, updatePackage } from "./packages";
 export type { PackageFilter } from "./packages";
-export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
 export { searchAll } from "./search";
-export { listTableAliases, saveTableAliases, importTableAliases, pruneTableAliases } from "./tableAliases";
 export { getQualityProfile, getTrustPolicy, updateQualityProfile } from "./quality";
 export {
   createRelease,
@@ -43,5 +41,4 @@ export {
   updateRelease
 } from "./releases";
 export { createOutputAudit, getFlywheelConvergenceSummary, getMcpConnectInfo, listAgentEvents, listFlywheelEvents, listMcpAudit, listOutputAudits, simulateMcpQuery } from "./agent";
-export { getDiagnosticSummary, getDiagnosticTrace, listDiagnosticLogs } from "./diagnostics";
 export { importLegacy, scanLegacy } from "./legacy";

@@ -25,20 +25,17 @@ const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ def
 const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
 const loadBuildRelease = () => import("../pages/BuildRelease").then((module) => ({ default: module.BuildRelease }));
 const loadAssets = () => import("../pages/Assets").then((module) => ({ default: module.Assets }));
-const loadSystem = () => import("../pages/System").then((module) => ({ default: module.System }));
 
 const Dashboard = lazy(loadDashboard);
 const Sources = lazy(loadSources);
 const BuildRelease = lazy(loadBuildRelease);
 const Assets = lazy(loadAssets);
-const System = lazy(loadSystem);
 
 const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   dashboard: loadDashboard,
   sources: loadSources,
   buildrelease: loadBuildRelease,
-  assets: loadAssets,
-  system: loadSystem
+  assets: loadAssets
 };
 
 const NAV_FULL: Array<{ id: View; label: string; icon: typeof Activity }> = [
@@ -46,7 +43,6 @@ const NAV_FULL: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "sources", label: "资料库", icon: Database },
   { id: "buildrelease", label: "构建发布", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
-  { id: "system", label: "系统", icon: HardDrive },
 ];
 
 const NAV_SIMPLE: Array<{ id: View; label: string; icon: typeof Activity }> = [
@@ -186,7 +182,6 @@ export function App() {
             {view === "sources" && <Sources />}
             {view === "buildrelease" && <BuildRelease />}
             {view === "assets" && <Assets />}
-            {view === "system" && <System />}
           </Suspense>
         </main>
         <a className="deerflow" href="https://deerflow.tech" target="_blank" rel="noreferrer" title="Created By Deerflow">
