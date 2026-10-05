@@ -237,21 +237,12 @@ export function slimAutoPublishCheck(check: AutoPublishCheck, limit = 20): Recor
   return {
     eligible: check.eligible,
     mode: check.mode,
-    reasons: check.reasons,
-    reasonDetails: check.reasonDetails,
     changedComponents: sampleArray(check.changedComponentIds, limit),
-    blockingTasks: sampleArray(check.blockingTaskIds, limit),
-    trustDeclines: {
-      count: check.trustDeclines.length,
-      sample: check.trustDeclines.slice(0, limit),
-      truncated: check.trustDeclines.length > limit,
-    },
     pendingSourceCorrections: {
       count: check.pendingSourceCorrections.length,
       sample: check.pendingSourceCorrections.slice(0, limit),
       truncated: check.pendingSourceCorrections.length > limit,
     },
-    lintRemediation: check.lintRemediation,
   };
 }
 

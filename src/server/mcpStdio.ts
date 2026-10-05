@@ -5,7 +5,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { config } from "./config";
 import { createDatabase } from "./db";
 import { createKnowledgeMcpServer } from "./mcpTools";
-import { createGovernanceProfileService } from "./services/governanceProfileService";
 import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 
 const root = process.cwd();
@@ -18,13 +17,7 @@ if (config.mcpStdioRequireToken && !config.mcpServiceToken.trim()) {
 const db = await createDatabase({
   databaseUrl: config.databaseUrl,
 });
-const governanceProfileService = createGovernanceProfileService(db, {
-  autoPublishRevisions: config.autoPublishRevisions,
-  autoPublishMode: config.autoPublishMode,
-  lintAutoGovernanceEnabled: true,
-  lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
-});
-const queryService = createKnowledgeQueryService(db, dataDir, undefined, governanceProfileService);
+const queryService = createKnowledgeQueryService(db, dataDir);
 
 const server = createKnowledgeMcpServer(queryService, {
   sessionId: "mcp-stdio",

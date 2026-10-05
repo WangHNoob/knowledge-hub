@@ -118,94 +118,6 @@ describe("knowledge hub api", () => {
     expect(workbench.json().publishItems).toEqual([]);
   });
 
-  it("serves legislation profile read, create, and activate endpoints", async () => {
-    const { app, token } = await getToken();
-
-    const current = await app.inject({
-      method: "GET",
-      url: "/api/legislation/profile",
-      headers: { authorization: `Bearer ${token}` }
-    });
-    expect(current.statusCode).toBe(200);
-    expect(current.json().profile.profileId).toBeTruthy();
-    expect(current.json().profile.config.pageTypes.system).toBeTruthy();
-
-    const created = await app.inject({
-      method: "POST",
-      url: "/api/legislation/profile",
-      headers: { authorization: `Bearer ${token}` },
-      payload: {
-        name: "API profile",
-        activate: false,
-        config: {
-          ...current.json().profile.config,
-          entityTypes: [...current.json().profile.config.entityTypes, { id: "buff", label: "Buff", publishable: true }]
-        }
-      }
-    });
-    expect(created.statusCode).toBe(200);
-    expect(created.json().profile.active).toBe(false);
-
-    const activated = await app.inject({
-      method: "POST",
-      url: "/api/legislation/profile/activate",
-      headers: { authorization: `Bearer ${token}` },
-      payload: { profileId: created.json().profile.profileId }
-    });
-    expect(activated.statusCode).toBe(200);
-    expect(activated.json().profile.profileId).toBe(created.json().profile.profileId);
-    expect(activated.json().profile.active).toBe(true);
-  });
-
-  it("seeds a planner-friendly default knowledge rule profile with document wiki templates", async () => {
-    const { app, token } = await getToken();
-
-    const current = await app.inject({
-      method: "GET",
-      url: "/api/legislation/profile",
-      headers: { authorization: `Bearer ${token}` }
-    });
-
-    expect(current.statusCode).toBe(200);
-    const config = current.json().profile.config;
-    expect(config.documentTypes.system_rule.wikiSpecTemplate.requiredSections).toContain("背景与目标");
-    expect(config.documentTypes.activity_gameplay.wikiSpecTemplate.requiredFacts).toContain("reward");
-    expect(config.documentTypes.table_schema.defaultPageTypeId).toBe("table");
-    expect(config.documentTypes.qa_checklist.defaultPageTypeId).toBe("qa");
-    expect(config.pageTypes.field.requiredFacts).toContain("field_meaning");
-    expect(config.entityTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["system", "hero", "skill", "buff", "config_table", "field", "item", "numeric_item"]));
-    expect(config.relationTypes.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(["depends_on", "affects", "contains", "references", "produces", "consumes", "prerequisite_of", "mutually_exclusive_with", "applies", "fk_to"]));
-    expect(config.qualityRules.source_trace_missing.severity).toBe("blocking");
-  });
-
-  it("creates and lists agent output attribution audits through the api", async () => {
-    const { app, token } = await getToken();
-
-    const created = await app.inject({
-      method: "POST",
-      url: "/api/agent/output-audits",
-      headers: { authorization: `Bearer ${token}` },
-      payload: {
-        releaseId: "rel_api_demo",
-        title: "API output audit",
-        segments: [
-          { text: "Battle uses Skill.", trace: { componentIds: ["cmp_1"], evidenceIds: ["ev_1"] } },
-          { text: "Add a new burst mode.", trace: { componentIds: [], evidenceIds: [] } }
-        ]
-      }
-    });
-    expect(created.statusCode).toBe(200);
-    expect(created.json().audit.segments.map((segment: { attributionType: string }) => segment.attributionType)).toEqual(["引用", "创作"]);
-
-    const list = await app.inject({
-      method: "GET",
-      url: "/api/agent/output-audits",
-      headers: { authorization: `Bearer ${token}` }
-    });
-    expect(list.statusCode).toBe(200);
-    expect(list.json().audits.some((audit: { auditId: string }) => audit.auditId === created.json().audit.auditId)).toBe(true);
-  });
-
   it("writes diagnostic logs for api requests and returns a trace id", async () => {
     const { app, token } = await getToken();
 
@@ -361,7 +273,6 @@ describe("knowledge hub api", () => {
   it("starts one-click build and publish only for admins", async () => {
     const { app, token } = await getToken("admin", "adminpw", {
       enableBackgroundAutomations: true,
-      enableLintRemediationAutomation: false,
     });
     try {
       const sourceRoot = join(dir, "quick-publish-src");

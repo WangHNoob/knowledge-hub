@@ -8,20 +8,8 @@ import { createDiagnosticLogger, type DiagnosticLogger } from "./services/diagno
 import { createKbBuilderPipelineService } from "./services/kbBuilderService";
 import { createKnowledgeQueryService } from "./services/knowledgeQueryService";
 import { createKnowledgeService } from "./services/knowledgeService";
-import { createFlywheelService } from "./services/flywheelService";
-import { createLintRemediationService, registerLintRemediationAutomation } from "./services/lintRemediationService";
-import { createGovernanceProfileService } from "./services/governanceProfileService";
-import { createLegislationService } from "./services/legislationService";
-import { createAttributionAuditService } from "./services/attributionAuditService";
 import { createReleaseService } from "./services/releaseService";
-import { registerAnnotationWritebackAutomation } from "./services/annotationWritebackAutomationService";
-import { registerAutoRemediation } from "./services/autoRemediationService";
-import { registerLintAutoRemediation } from "./services/lintAutoRemediation";
 import { createTableAliasService } from "./services/tableAliasService";
-import { registerFeedbackAutomation } from "./services/feedbackAutomationService";
-import { registerReleaseAutomation } from "./services/releaseAutomationService";
-import { registerSourceIngestAutomation } from "./services/sourceIngestAutomationService";
-import { registerHealthSweepScheduler } from "./services/healthSweepScheduler";
 import { configureKnowledgeEventBus } from "./services/eventService";
 import { registerEventOutboxWorker } from "./services/eventOutboxWorker";
 import { createSourceBundleService } from "./services/sourceBundleService";
@@ -32,15 +20,11 @@ import { registerAuthRoutes } from "./routes/auth";
 import { registerOpsRoutes } from "./routes/ops";
 import { registerBuilderRoutes } from "./routes/builder";
 import { registerDashboardRoutes } from "./routes/dashboard";
-import { registerFlywheelRoutes } from "./routes/flywheel";import { registerGovernanceRoutes } from "./routes/governance";
 import { registerDiagnosticsRoutes } from "./routes/diagnostics";
-import { registerLegacyRoutes } from "./routes/legacy";
-import { registerLegislationRoutes } from "./routes/legislation";
 import { registerMcpRoutes } from "./routes/mcp";
 import { registerPackageRoutes } from "./routes/packages";
 import { registerQualityRoutes } from "./routes/quality";
 import { registerReleaseRoutes } from "./routes/releases";
-import { registerReviewRoutes } from "./routes/review";
 import { registerSearchRoutes } from "./routes/search";
 import { registerSourceRoutes } from "./routes/sources";
 import { registerStorageRoutes } from "./routes/storage";
@@ -63,17 +47,6 @@ export interface BuildAppOptions {
   diagnosticLogger?: DiagnosticLogger;
   closeDatabaseOnClose?: boolean;
   enableBackgroundAutomations?: boolean;
-  enableLintRemediationAutomation?: boolean;
-  /**
-   * 上传即自动构建/发布（registerSourceIngestAutomation）。默认关闭，由生产入口 index.ts
-   * 依据 config.autoBuildOnUpload 显式开启；测试默认不触发后台构建，避免污染断言。
-   */
-  enableSourceIngestAutomation?: boolean;
-  /**
-   * 周期性知识健康巡检调度器（registerHealthSweepScheduler）。默认关闭，由生产入口 index.ts
-   * 依据 config.healthSweepIntervalHours 显式开启；测试默认不启动定时器。
-   */
-  enableHealthSweep?: boolean;
   /**
    * 多实例事件 outbox worker。默认跟随 config.eventBusMode；测试保持 inline 且不启 worker。
    */
@@ -94,77 +67,16 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   const bundleService = createSourceBundleService(options.db, dataDir);
   const kbBuilderService = createKbBuilderPipelineService(options.db, dataDir, diagnostics);
   const projectService = createProjectService(options.db);
-  const lintRemediationService = createLintRemediationService(options.db);
-  const governanceProfileService = createGovernanceProfileService(options.db, {
-    autoPublishRevisions: config.autoPublishRevisions,
-    autoPublishMode: config.autoPublishMode,
-    // Lint 自动治理与 Agent 反馈 auto-remediation 语义分离：前者默认开启，后者用 KH_AUTO_REMEDIATION_ENABLED。
-    lintAutoGovernanceEnabled: config.autoRemediationEnabled,
-    lintAutoEligibleThreshold: config.autoRemediationConfidenceThreshold,
-    evalEnabled: config.retrievalEvalEnabled,
-    evalGoldPath: config.retrievalEvalGoldPath,
-    evalMinHitAtK: config.retrievalEvalMinHitAtK,
-    evalMinCitationCoverage: config.retrievalEvalMinCitationCoverage,
-    evalBlockOnRegression: config.retrievalEvalBlockOnRegression,
-    ...(config.publishRelaxed
-      ? {
-          minAutoPublishScore: Number.isFinite(config.minAutoPublishScore) ? config.minAutoPublishScore : 0.35,
-          requireEvidence: false,
-          blockOnDeletes: false,
-          blockOnTrustDecline: false,
-          blockOnPendingCorrections: false,
-          blockOnQualityRegression: false,
-        }
-      : {
-          minAutoPublishScore: Number.isFinite(config.minAutoPublishScore) ? config.minAutoPublishScore : 0.5,
-          blockOnQualityRegression: config.blockOnQualityRegression,
-        }),
-  });
-  const releaseService = createReleaseService(
-    options.db,
-    dataDir,
-    diagnostics,
-    governanceProfileService,
-    async ({ projectId, goldPath }) => {
-      const { createRetrievalEvalService } = await import("./services/retrievalEvalService");
-      const summary = await createRetrievalEvalService(
-        options.db,
-        dataDir,
-        diagnostics,
-        governanceProfileService,
-      ).run({ projectId, goldPath, emitEvent: true });
-      return {
-        hitAtK: summary.hitAtK,
-        citationCoverage: summary.citationCoverage,
-        trustPassRate: summary.trustPassRate,
-        total: summary.total,
-      };
-    },
-  );
+  const releaseService = createReleaseService(options.db, dataDir, diagnostics);
   const ctx: RouteContext = {
     db: options.db,
     dataDir,
     diagnostics,
     service: knowledgeService,
-    flywheelService: createFlywheelService({
-      db: options.db,
-      knowledgeService,
-      bundleService,
-      kbBuilderService,
-      releaseService,
-      projectService,
-      lintRemediationService,
-      governanceProfileService,
-      diagnostics,
-    }),
     bundleService,
     kbBuilderService,
     releaseService,
-    lintRemediationService,
-    governanceProfileService,
-    queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics, governanceProfileService),
-    legislationService: createLegislationService(options.db),
-    attributionAuditService: createAttributionAuditService(options.db),
+    queryService: createKnowledgeQueryService(options.db, dataDir, diagnostics),
     projectService,
     storageService: createStorageMaintenanceService(options.db, dataDir, diagnostics, {
       webImportRetentionHours: config.webImportRetentionHours,
@@ -172,70 +84,6 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
     })
   };
   const backgroundAutomationsEnabled = options.enableBackgroundAutomations !== false;
-  const unsubscribeFeedbackAutomation = backgroundAutomationsEnabled
-    ? registerFeedbackAutomation({
-        db: options.db,
-        kbBuilderService: ctx.kbBuilderService,
-        diagnostics,
-      })
-    : () => {};
-  const unsubscribeAnnotationWritebackAutomation = backgroundAutomationsEnabled
-    ? registerAnnotationWritebackAutomation({
-        db: options.db,
-        kbBuilderService: ctx.kbBuilderService,
-        diagnostics,
-      })
-    : () => {};
-  const unsubscribeLintRemediationAutomation = !backgroundAutomationsEnabled || options.enableLintRemediationAutomation === false
-    ? () => {}
-    : registerLintRemediationAutomation({
-        db: options.db,
-        lintRemediationService: ctx.lintRemediationService,
-        kbBuilderService: ctx.kbBuilderService,
-        requestedBy: "system",
-      });
-  const unsubscribeReleaseAutomation = backgroundAutomationsEnabled
-    ? registerReleaseAutomation({
-        db: options.db,
-        releaseService: ctx.releaseService,
-        governanceProfileService: ctx.governanceProfileService,
-        autoRollbackOnRegression: config.autoRollbackOnRegression,
-        diagnostics,
-        autoPublishRevisions: async (projectId) => (await ctx.governanceProfileService.resolve(projectId)).release.autoPublishRevisions,
-        autoPublishMode: async (projectId) => (await ctx.governanceProfileService.resolve(projectId)).release.autoPublishMode,
-      })
-    : () => {};
-  const unsubscribeAutoRemediation = backgroundAutomationsEnabled && config.autoRemediationEnabled
-    ? registerAutoRemediation({
-        db: options.db,
-        knowledgeService: ctx.service,
-        diagnostics,
-      })
-    : () => {};
-  const unsubscribeLintAutoRemediation = backgroundAutomationsEnabled && config.autoAliasRemediationEnabled
-    ? registerLintAutoRemediation({
-        db: options.db,
-        tableAliases: createTableAliasService(options.db),
-        flywheel: ctx.flywheelService,
-        dataDir: ctx.dataDir,
-        diagnostics,
-      })
-    : () => {};
-  const unsubscribeSourceIngestAutomation = backgroundAutomationsEnabled && options.enableSourceIngestAutomation === true
-    ? registerSourceIngestAutomation({
-        db: options.db,
-        flywheelService: ctx.flywheelService,
-        diagnostics,
-      })
-    : () => {};
-  const unsubscribeHealthSweep = backgroundAutomationsEnabled && options.enableHealthSweep === true && config.healthSweepIntervalHours > 0
-    ? registerHealthSweepScheduler({
-        projectService: ctx.projectService,
-        queryService: ctx.queryService,
-        diagnostics,
-        intervalMs: config.healthSweepIntervalHours * 60 * 60 * 1000,
-      })
-    : () => {};
   const enableOutboxWorker = options.enableEventOutboxWorker === true
     || (options.enableEventOutboxWorker !== false && config.eventBusMode === "outbox" && backgroundAutomationsEnabled);
   const unsubscribeEventOutbox = enableOutboxWorker
@@ -267,32 +115,19 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerOpsRoutes(app, ctx);
   registerProjectRoutes(app, ctx);
   registerDashboardRoutes(app, ctx);
-  registerFlywheelRoutes(app, ctx);
-  registerGovernanceRoutes(app, ctx);
   registerSourceRoutes(app, ctx);
   registerBuilderRoutes(app, ctx);
   registerPackageRoutes(app, ctx);
-  registerReviewRoutes(app, ctx);
   registerQualityRoutes(app, ctx);
-  registerLegislationRoutes(app, ctx);
   registerReleaseRoutes(app, ctx);
   registerMcpRoutes(app, ctx);
   registerAgentRoutes(app, ctx);
   registerDiagnosticsRoutes(app, ctx);
-  registerLegacyRoutes(app, ctx);
   registerStorageRoutes(app, ctx);
   registerSearchRoutes(app, ctx);
   registerTableAliasRoutes(app, ctx);
 
   app.addHook("onClose", async () => {
-    unsubscribeReleaseAutomation();
-    unsubscribeFeedbackAutomation();
-    unsubscribeAnnotationWritebackAutomation();
-    unsubscribeLintRemediationAutomation();
-    unsubscribeAutoRemediation();
-    unsubscribeLintAutoRemediation();
-    unsubscribeSourceIngestAutomation();
-    unsubscribeHealthSweep();
     unsubscribeEventOutbox();
     if (options.closeDatabaseOnClose !== false) await options.db.close();
   });

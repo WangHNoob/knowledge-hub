@@ -23,48 +23,35 @@ import { useUiMode } from "./uiMode";
 
 const loadDashboard = () => import("../pages/Dashboard").then((module) => ({ default: module.Dashboard }));
 const loadSources = () => import("../pages/Sources").then((module) => ({ default: module.Sources }));
-const loadRules = () => import("../pages/Rules").then((module) => ({ default: module.Rules }));
 const loadBuildRelease = () => import("../pages/BuildRelease").then((module) => ({ default: module.BuildRelease }));
 const loadAssets = () => import("../pages/Assets").then((module) => ({ default: module.Assets }));
-const loadReview = () => import("../pages/Review").then((module) => ({ default: module.Review }));
-const loadAgentFeedback = () => import("../pages/AgentFeedback").then((module) => ({ default: module.AgentFeedback }));
 const loadSystem = () => import("../pages/System").then((module) => ({ default: module.System }));
 
 const Dashboard = lazy(loadDashboard);
 const Sources = lazy(loadSources);
-const Rules = lazy(loadRules);
 const BuildRelease = lazy(loadBuildRelease);
 const Assets = lazy(loadAssets);
-const Review = lazy(loadReview);
-const AgentFeedback = lazy(loadAgentFeedback);
 const System = lazy(loadSystem);
 
 const PAGE_PRELOADERS: Record<View, () => Promise<unknown>> = {
   dashboard: loadDashboard,
   sources: loadSources,
-  rules: loadRules,
   buildrelease: loadBuildRelease,
   assets: loadAssets,
-  review: loadReview,
-  agent: loadAgentFeedback,
   system: loadSystem
 };
 
 const NAV_FULL: Array<{ id: View; label: string; icon: typeof Activity }> = [
-  { id: "dashboard", label: "飞轮总览", icon: Activity },
+  { id: "dashboard", label: "概览", icon: Activity },
   { id: "sources", label: "资料库", icon: Database },
-  { id: "rules", label: "规则治理", icon: ScrollText },
   { id: "buildrelease", label: "构建发布", icon: PackagePlus },
   { id: "assets", label: "知识资产", icon: Boxes },
-  { id: "review", label: "异常收件箱", icon: CheckCircle2 },
-  { id: "agent", label: "MCP / 审计", icon: SearchCheck },
   { id: "system", label: "系统", icon: HardDrive },
 ];
 
 const NAV_SIMPLE: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "dashboard", label: "工作台", icon: Activity },
   { id: "sources", label: "上传资料", icon: Database },
-  { id: "review", label: "待我处理", icon: CheckCircle2 },
   { id: "assets", label: "浏览知识", icon: Boxes },
 ];
 
@@ -197,11 +184,8 @@ export function App() {
           <Suspense fallback={<div className="state">正在加载页面...</div>}>
             {view === "dashboard" && <Dashboard />}
             {view === "sources" && <Sources />}
-            {view === "rules" && <Rules />}
             {view === "buildrelease" && <BuildRelease />}
             {view === "assets" && <Assets />}
-            {view === "review" && <Review />}
-            {view === "agent" && <AgentFeedback />}
             {view === "system" && <System />}
           </Suspense>
         </main>

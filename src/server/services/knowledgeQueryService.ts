@@ -6,19 +6,13 @@ import xlsx from "xlsx";
 
 import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeEnvelope, KnowledgeEnvelopeTrustScore, KnowledgeTrace, ReleaseRecord, TrustScore } from "../types";
 import { jsonArray, jsonObject, mapComponent, mapPackage } from "../db/mappers";
-import { createAttributionAuditService } from "./attributionAuditService";
 import type { DiagnosticLogger } from "./diagnosticService";
-import { createFeedbackService, type FeedbackService, type FeedbackType } from "./feedbackService";
-import { createReleaseService, type AutoPublishCheck } from "./releaseService";
+import { createReleaseService } from "./releaseService";
 import { createKbBuilderPipelineService } from "./kbBuilderService";
-import { createLintRemediationService } from "./lintRemediationService";
-import { createGovernanceProfileService, type GovernanceProfileService } from "./governanceProfileService";
 import { emitKnowledgeEvent } from "./eventService";
 import { createSourceBundleService } from "./sourceBundleService";
 import { createProjectService } from "./projectService";
 import { createKnowledgeService } from "./knowledgeService";
-import { createFlywheelService, type FlywheelService } from "./flywheelService";
-import { createTaskPolicyService } from "./taskPolicyService";
 import { flagLowConsumptionStale } from "./consumptionMetricsService";
 import { isComponentVisibleToRole } from "./knowledgeAcl";
 import { searchOkfIndex, tokenizeSearchText, type OkfSearchIndex, type OkfSearchResultItem } from "./okf/searchIndex";
@@ -27,7 +21,6 @@ import { scoreFromQuality, trustFromQuality } from "./trustScore";
 import { OkfBundleReader } from "./kbQuery/OkfBundleReader.js";
 import { KbEnvelopeAssembler } from "./kbQuery/KbEnvelopeAssembler.js";
 import { KbGraphTools } from "./kbQuery/KbGraphTools.js";
-import { KbGovernanceTools } from "./kbQuery/KbGovernanceTools.js";
 import { KbSearchTools } from "./kbQuery/KbSearchTools.js";
 import { KbPageTools } from "./kbQuery/KbPageTools.js";
 import { KbTableTools } from "./kbQuery/KbTableTools.js";
@@ -79,21 +72,6 @@ import {
 } from "./kbQuery/utils.js";
 
 const EVIDENCE_REQUIRED_COMPONENT_KINDS = new Set(["wiki_page"]);
-const GOVERNANCE_TOOLS = new Set([
-  "kb_list_projects",
-  "kb_get_flywheel_status",
-  "kb_run_health_check",
-  "kb_submit_correction",
-  "kb_apply_correction",
-  "kb_start_incremental_check",
-  "kb_publish_if_ready",
-  "kb_get_correction_status",
-  "kb_govern_flywheel",
-  "kb_submit_attribution",
-  "kb_list_feedback_clusters",
-  "kb_rollback_release",
-]);
-
 export interface KnowledgeQueryContext {
   sessionId?: string;
   agentRole?: string;
@@ -292,42 +270,31 @@ interface HealthCorrectionSummary {
   updatedAt: string;
 }
 
-export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger, governanceProfileService?: GovernanceProfileService) {
-  return new KnowledgeQueryService(db, dataDir, diagnostics, governanceProfileService);
+export function createKnowledgeQueryService(db: DatabaseHandle, dataDir: string, diagnostics?: DiagnosticLogger) {
+  return new KnowledgeQueryService(db, dataDir, diagnostics);
 }
 
 export class KnowledgeQueryService {
   private readonly adapter;
   private readonly releaseService;
   private readonly sourceService;
-  private readonly feedback: FeedbackService;
   private readonly builderService;
-  private readonly lintRemediationService;
-  private readonly governanceProfileService;
-  private readonly attributionAuditService;
   private readonly okfReader: OkfBundleReader;
   private readonly envelope: KbEnvelopeAssembler;
   private readonly graphTools: KbGraphTools;
-  private readonly govTools: KbGovernanceTools;
   private readonly searchTools: KbSearchTools;
   private readonly pageTools: KbPageTools;
   private readonly tableTools: KbTableTools;
-  private flywheelService: FlywheelService | null = null;
 
   constructor(
     private readonly db: DatabaseHandle,
     private readonly dataDir: string,
     private readonly diagnostics?: DiagnosticLogger,
-    governanceProfileService?: GovernanceProfileService,
   ) {
     this.adapter = db.adapter;
-    this.governanceProfileService = governanceProfileService ?? createGovernanceProfileService(db);
-    this.releaseService = createReleaseService(db, dataDir, diagnostics, this.governanceProfileService);
+    this.releaseService = createReleaseService(db, dataDir, diagnostics);
     this.sourceService = createSourceBundleService(db, dataDir);
-    this.feedback = createFeedbackService(db);
     this.builderService = createKbBuilderPipelineService(db, dataDir, diagnostics);
-    this.lintRemediationService = createLintRemediationService(db);
-    this.attributionAuditService = createAttributionAuditService(db);
     this.okfReader = new OkfBundleReader(dataDir);
     this.envelope = new KbEnvelopeAssembler({ adapter: db.adapter, okfReader: this.okfReader });
     // 域类：table 无外部依赖先建；graph/search/page 间经 bindDomains 晚绑定（构造期不调用）
@@ -360,36 +327,6 @@ export class KnowledgeQueryService {
     });
     this.searchTools.bindDomains(this.pageTools, this.tableTools);
     this.pageTools.bindDomains(this.searchTools, this.tableTools);
-    this.govTools = new KbGovernanceTools({
-      db,
-      adapter: db.adapter,
-      diagnostics,
-      releaseService: this.releaseService,
-      builderService: this.builderService,
-      lintRemediationService: this.lintRemediationService,
-      attributionAuditService: this.attributionAuditService,
-      governanceProfileService: this.governanceProfileService,
-      flywheel: () => this.flywheel(),
-      shared: {
-        trustSummaryForComponents: (release, componentIds) => this.envelope.trustSummaryForComponents(release, componentIds),
-      },
-    });
-  }
-
-  private flywheel(): FlywheelService {
-    if (this.flywheelService) return this.flywheelService;
-    this.flywheelService = createFlywheelService({
-      db: this.db,
-      knowledgeService: createKnowledgeService(this.db),
-      bundleService: this.sourceService,
-      kbBuilderService: this.builderService,
-      releaseService: this.releaseService,
-      projectService: createProjectService(this.db),
-      lintRemediationService: this.lintRemediationService,
-      governanceProfileService: this.governanceProfileService,
-      diagnostics: this.diagnostics,
-    });
-    return this.flywheelService;
   }
 
   async runTool(toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext = {}): Promise<KnowledgeEnvelope<any>> {
@@ -403,9 +340,6 @@ export class KnowledgeQueryService {
       requestPayload: payload
     });
     const projectId = optionalString(payload, "projectId") || context.projectId || "default_project";
-    if (GOVERNANCE_TOOLS.has(toolName)) {
-      return this.runGovernanceTool(toolName, payload, context, projectId, started, span);
-    }
     const release = await this.releaseService.getCurrent(projectId);
     if (!release) {
       const error = new Error("No current published release. Publish a release before using Knowledge MCP tools.");
@@ -460,7 +394,6 @@ export class KnowledgeQueryService {
         status,
         latencyMs: Date.now() - started,
       });
-      await this.feedback.applyRules({ release, toolName, payload, hitComponentIds, qualityFlags, status });
       await span?.complete({
         releaseId: release.releaseId,
         status,
@@ -483,83 +416,6 @@ export class KnowledgeQueryService {
       });
       await span?.fail(error, { releaseId: release.releaseId, hitComponentIds, qualityFlags });
       throw error;
-    }
-  }
-
-  private async runGovernanceTool(
-    toolName: string,
-    payload: Record<string, unknown>,
-    context: KnowledgeQueryContext,
-    projectId: string,
-    started: number,
-    span: ReturnType<NonNullable<DiagnosticLogger["startSpan"]>> | undefined,
-  ): Promise<KnowledgeEnvelope<any>> {
-    const release = await this.releaseService.getCurrent(projectId);
-    let status: "hit" | "miss" | "error" = "error";
-    let hitComponentIds: string[] = [];
-    try {
-      const toolResult = await this.executeGovernanceTool(projectId, toolName, payload, context);
-      hitComponentIds = uniqueSorted(toolResult.componentIds);
-      status = toolResult.forceHit || hitComponentIds.length > 0 ? "hit" : "miss";
-      const envelope = await this.governanceEnvelope(toolName, release, toolResult.result, hitComponentIds, toolResult.artifactIds ?? []);
-      await this.writeAudit({
-        context,
-        projectId,
-        toolName,
-        releaseId: release?.releaseId ?? "",
-        payload,
-        hitComponentIds,
-        qualityFlags: [],
-        status,
-        latencyMs: Date.now() - started,
-      });
-      await span?.complete({ releaseId: release?.releaseId ?? "", status, hitComponentIds, latencyMs: Date.now() - started });
-      return envelope;
-    } catch (error) {
-      await this.writeAudit({
-        context,
-        projectId,
-        toolName,
-        releaseId: release?.releaseId ?? "",
-        payload,
-        hitComponentIds,
-        qualityFlags: [],
-        status: "error",
-        latencyMs: Date.now() - started,
-      });
-      await span?.fail(error, { releaseId: release?.releaseId ?? "", hitComponentIds });
-      throw error;
-    }
-  }
-
-  private async executeGovernanceTool(projectId: string, toolName: string, payload: Record<string, unknown>, context: KnowledgeQueryContext): Promise<ToolResult> {
-    switch (toolName) {
-      case "kb_list_projects":
-        return this.govTools.kbListProjects(projectId);
-      case "kb_get_flywheel_status":
-        return this.govTools.kbGetFlywheelStatus(projectId);
-      case "kb_run_health_check":
-        return this.govTools.kbRunHealthCheck(projectId, payload, context);
-      case "kb_submit_correction":
-        return this.govTools.kbSubmitCorrection(projectId, payload, context);
-      case "kb_apply_correction":
-        return this.govTools.kbApplyCorrection(projectId, stringArg(payload, "correctionId"), context, optionalString(payload, "note"));
-      case "kb_start_incremental_check":
-        return this.govTools.kbStartIncrementalCheck(projectId, payload, context);
-      case "kb_publish_if_ready":
-        return this.govTools.kbPublishIfReady(projectId, payload, context);
-      case "kb_get_correction_status":
-        return this.govTools.kbGetCorrectionStatus(projectId, stringArg(payload, "correctionId"));
-      case "kb_govern_flywheel":
-        return this.govTools.kbGovernFlywheel(projectId, payload, context);
-      case "kb_submit_attribution":
-        return this.govTools.kbSubmitAttribution(projectId, payload, context);
-      case "kb_list_feedback_clusters":
-        return this.govTools.kbListFeedbackClusters(projectId);
-      case "kb_rollback_release":
-        return this.govTools.kbRollbackRelease(projectId, payload, context);
-      default:
-        throw new Error(`Unknown Knowledge MCP governance tool: ${toolName}`);
     }
   }
 
@@ -605,12 +461,6 @@ export class KnowledgeQueryService {
         return this.tableTools.kbGetQuality(release, optionalString(payload, "componentId"));
       case "kb_get_evidence":
         return this.kbGetEvidence(release, optionalString(payload, "componentId"), optionalString(payload, "page"), optionalString(payload, "query", "q", "topic"));
-      case "kb_report_gap":
-        return this.kbReportFeedback(release, "kb_report_gap", payload, "knowledge_gap");
-      case "kb_report_bad_hit":
-        return this.kbReportFeedback(release, "kb_report_bad_hit", payload, "bad_hit");
-      case "kb_report_stale":
-        return this.kbReportFeedback(release, "kb_report_stale", payload, "stale_knowledge");
       default:
         throw new Error(`Unknown Knowledge MCP tool: ${toolName}`);
     }
@@ -646,31 +496,6 @@ export class KnowledgeQueryService {
       result: { componentIds, records, source: okfRecords.length ? "okf_bundle" : "database" },
       componentIds,
       evidenceIds: records.map((record) => String("evidenceId" in record ? record.evidenceId : record.evidence_id)),
-    };
-  }
-
-  private async kbReportFeedback(release: ReleaseRecord, toolName: string, payload: Record<string, unknown>, feedbackType: FeedbackType): Promise<ToolResult> {
-    const hitComponentIds = await this.feedbackComponentIds(release, payload);
-    const result = await this.feedback.recordExplicitFeedback({
-      release,
-      toolName,
-      payload,
-      feedbackType,
-      hitComponentIds,
-      qualityFlags: feedbackType === "knowledge_gap" ? [] : [`agent_reported:${feedbackType}`],
-    });
-    return {
-      result: {
-        ...result,
-        message: result.recorded
-          ? "Feedback recorded and routed to review center."
-          : "Feedback accepted but no target component/package was available for review routing.",
-        nextStep: result.recorded
-          ? "Review center can now triage this Agent feedback; rebuild and republish after fixing."
-          : "Publish at least one package before routing Agent feedback into review tasks.",
-      },
-      componentIds: hitComponentIds,
-      forceHit: true,
     };
   }
 
@@ -710,72 +535,6 @@ export class KnowledgeQueryService {
   }
 
 
-
-  async runScheduledHealthCheck(projectId: string, actor = "health-sweep-scheduler"): Promise<{ projectId: string; status: string }> {
-    // 预设规则任务收敛（info 自动 dismiss + gap_fill 无源自动收敛）——不依赖人工。
-    const policy = await createTaskPolicyService(this.db).applyOpenTaskPolicies(projectId);
-    if (policy.dismissedTasks > 0 || policy.dismissedGapFill > 0) {
-      await this.diagnostics?.write({
-        traceId: "",
-        level: "info",
-        category: "flywheel",
-        message: "task policy auto-converged open items",
-        status: "completed",
-        actor,
-        entityType: "project",
-        entityId: projectId,
-        context: { projectId, dismissedTasks: policy.dismissedTasks, dismissedGapFill: policy.dismissedGapFill },
-      });
-    }
-    // R5（flywheel 02 收尾）：低消费组件 → stale_knowledge 信号（去重，不重复建任务）
-    const stale = await flagLowConsumptionStale(this.db, projectId, { actor });
-    if (stale.flagged > 0) {
-      await this.diagnostics?.write({
-        traceId: "",
-        level: "info",
-        category: "flywheel",
-        message: `flagged ${stale.flagged} low-consumption stale candidate(s)`,
-        status: "completed",
-        actor,
-        entityType: "project",
-        entityId: projectId,
-        context: { projectId, flagged: stale.flagged, sample: stale.sample },
-      });
-    }
-    const outcome = await this.govTools.kbRunHealthCheck(projectId, {}, { sessionId: actor });
-    const status = typeof (outcome.result as { status?: unknown })?.status === "string"
-      ? String((outcome.result as { status?: unknown }).status)
-      : "unknown";
-    return { projectId, status };
-  }
-
-
-
-  private async governanceEnvelope<T>(
-    toolName: string,
-    release: ReleaseRecord | null,
-    result: T,
-    componentIds: string[],
-    artifactIds: string[],
-  ): Promise<KnowledgeEnvelope<T>> {
-    const trust = release ? await this.envelope.trustSummaryForComponents(release, componentIds) : { averageScore: null, minScore: null, summary: emptyTrustSummary(null), components: [] };
-    return {
-      contract: envelopeContract(toolName, []),
-      release: release ? releaseEnvelope(release) : { releaseId: "", version: "", publishedAt: null, manifestHash: "" },
-      result,
-      qualityFlags: [],
-      trust: slimTrustEnvelope(trust),
-      trace: {
-        releaseId: release?.releaseId ?? "",
-        ...slimTraceArrays({
-          componentIds,
-          artifactIds,
-          sourceVersionIds: release ? releaseSourceVersionIds(release) : [],
-          evidenceIds: [],
-        }),
-      },
-    };
-  }
 
   private async writeAudit(input: {
     context: KnowledgeQueryContext;

@@ -309,13 +309,9 @@ async function withAutoSync(input: {
   result: any;
   autoSync: boolean;
 }) {
-  if (!input.autoSync) return input.result;
-  const sync = await input.ctx.flywheelService.sync({
-    projectId: input.projectId,
-    requestedBy: input.request.user.username,
-    traceId: input.request.traceId,
-  });
-  return { ...input.result, sync };
+  // flywheel 自动同步已随治理模块移除：保留函数形状以兼容既有调用点
+  void input;
+  return input.result;
 }
 
 async function requireProjectVersion(

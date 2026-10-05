@@ -5,8 +5,7 @@ export type { SvnSyncResult } from "./ops";
 export { login } from "./auth";
 export { createProject, listProjects, selectProject, updateProject } from "./projects";
 export { getDashboard, getFlywheelWorkbench } from "./dashboard";
-export { getFlywheelStatus, listFlywheelExceptions, syncFlywheel, listFlywheelRemediations, retryFlywheelRemediation, listFeedbackClusters, listDismissedExceptions, dismissException, restoreException, rebuildComponent, rebuildGraph, stopFlywheelBuilds } from "./flywheel";
-export { getGovernanceProfile, updateGovernanceProfile, resetGovernanceProfile } from "./governance";
+export { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks } from "./review";
 export {
   browseLocalFiles,
   getBundleBuildPlan,
@@ -33,19 +32,7 @@ export type { PackageFilter } from "./packages";
 export { getStorageOverview, reclaimStorage, scanStorage } from "./storage";
 export { searchAll } from "./search";
 export { listTableAliases, saveTableAliases, importTableAliases, pruneTableAliases } from "./tableAliases";
-export { annotateReviewTask, listAutoFixedTasks, listReviewTasks, rollbackAutoFix, startReviewTaskRebuild, transitionReviewTasks } from "./review";
 export { getQualityProfile, getTrustPolicy, updateQualityProfile } from "./quality";
-export {
-  activateLegislationProfile,
-  confirmSourceCorrection,
-  createAnnotationExampleReviewTask,
-  createLegislationProfile,
-  getLegislationProfile,
-  listAnnotationExamples,
-  listSourceCorrections,
-  retireSourceCorrection,
-  setAnnotationExampleActive
-} from "./legislation";
 export {
   createRelease,
   deleteRelease,

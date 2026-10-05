@@ -4,12 +4,10 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { nanoid } from "nanoid";
 
-import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, LintRemediationSummary, ReleaseRecord, ReviewTask } from "../types";
+import type { AssetComponent, AssetPackage, DatabaseHandle, KnowledgeRuleConfig, ReleaseRecord, ReviewTask } from "../types";
 import { mapComponent, mapPackage, mapRelease, mapReviewTask } from "../db/mappers";
 import type { DiagnosticLogger } from "./diagnosticService";
-import { createGovernanceProfileService, type GovernanceProfileService } from "./governanceProfileService";
 import { createLegislationService } from "./legislationService";
-import { createLintRemediationService } from "./lintRemediationService";
 import { createOkfExportService, type OkfExportManifest } from "./okf/exportService";
 import { buildReleaseAuditSummary, type ReleaseAuditSummary } from "./releaseAudit";
 import { computeTrustScore, consumptionScore, scoreFromQuality, type ConsumptionStats } from "./trustScore";
@@ -56,38 +54,11 @@ interface PublishOptions {
 export interface AutoPublishCheck {
   eligible: boolean;
   mode: "manual" | "auto";
-  reasons: string[];
-  reasonDetails: AutoPublishReasonDetail[];
   changedComponentIds: string[];
-  blockingTaskIds: string[];
-  trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
   pendingSourceCorrections: PendingSourceCorrection[];
-  lintRemediation: LintRemediationSummary;
-  retrievalEval?: {
-    hitAtK: number;
-    citationCoverage: number;
-    trustPassRate: number;
-    total: number;
-    minHitAtK: number;
-    minCitationCoverage: number;
-    /** golden↔release 绑定（EV-027 护栏）。 */
-    binding?: { boundReleaseId: string; currentReleaseId: string; ok: boolean };
-  } | null;
-  /** 发布级质量回归明细（quality_gate 对比父发布）。 */
   qualityRegressions: string[];
 }
 
-export type RetrievalEvalGateFn = (input: {
-  projectId: string;
-  goldPath: string;
-}) => Promise<{
-  hitAtK: number;
-  citationCoverage: number;
-  trustPassRate: number;
-  total: number;
-  /** golden↔release 绑定（EV-027 护栏）；golden 未绑定则缺省。 */
-  binding?: { boundReleaseId: string; currentReleaseId: string; ok: boolean };
-} | null>;
 
 export interface AutoPublishReasonDetail {
   code: string;
@@ -130,35 +101,21 @@ export function createReleaseService(
   db: DatabaseHandle,
   dataDirOrDiagnostics?: string | DiagnosticLogger,
   diagnostics?: DiagnosticLogger,
-  governanceProfileService?: GovernanceProfileService,
-  retrievalEvalGate?: RetrievalEvalGateFn,
 ) {
   return typeof dataDirOrDiagnostics === "string"
-    ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics, governanceProfileService, retrievalEvalGate)
-    : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics, governanceProfileService, retrievalEvalGate);
-}
-
-export class AutoPublishEligibilityError extends Error {
-  constructor(readonly check: AutoPublishCheck) {
-    super(`Auto publish is not eligible: ${check.reasons.join(", ")}`);
-  }
+    ? new ReleaseService(db, dataDirOrDiagnostics, diagnostics)
+    : new ReleaseService(db, process.cwd(), dataDirOrDiagnostics);
 }
 
 export class ReleaseService {
   private readonly adapter;
-  private readonly governanceProfileService: GovernanceProfileService;
-  private readonly retrievalEvalGate?: RetrievalEvalGateFn;
 
   constructor(
     private readonly db: DatabaseHandle,
     private readonly dataDir: string,
     private readonly diagnostics?: DiagnosticLogger,
-    governanceProfileService?: GovernanceProfileService,
-    retrievalEvalGate?: RetrievalEvalGateFn,
   ) {
     this.adapter = db.adapter;
-    this.governanceProfileService = governanceProfileService ?? createGovernanceProfileService(db);
-    this.retrievalEvalGate = retrievalEvalGate;
   }
 
   async createDraft(input: CreateReleaseDraftInput): Promise<ReleaseRecord> {
@@ -269,10 +226,7 @@ export class ReleaseService {
       const revisionDiff = buildReleaseDiff(parentRelease, packages, trustedComponents);
       const revision = buildReleaseRevision(release, revisionDiff);
       const pendingSourceCorrections = await this.loadPendingSourceCorrections(packages);
-      const autoPublish = await this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode), pendingSourceCorrections, qualityGate);
-      if (options.autoMode && !autoPublish.eligible) {
-        throw new AutoPublishEligibilityError(autoPublish);
-      }
+      const autoPublish = this.buildAutoPublishCheck(release, parentRelease, revision, trustedComponents, Boolean(options.autoMode), pendingSourceCorrections, qualityGate);
       const auditSummary = await buildReleaseAuditSummary({
         adapter: this.adapter,
         release,
@@ -373,28 +327,7 @@ export class ReleaseService {
           },
         });
       }
-      // 同步记录 Knowledge Lint 治理队列（发布目录已写出 knowledge_lint.json）。
-      // 必须在此处顺序执行，而非通过事件总线异步：DB 适配器的事务客户端不可重入，
-      // 异步写入会与请求路径的 BEGIN/COMMIT 竞争。治理记录尽力而为，失败不回滚发布。
-      try {
-        await createLintRemediationService(this.db).recordFromReleaseDir({
-          projectId: published.projectId,
-          releaseId: published.releaseId,
-          dataDir: this.dataDir,
-        });
-      } catch (error) {
-        await this.diagnostics?.write({
-          traceId: "",
-          level: "warn",
-          category: "release",
-          message: "failed to record lint remediation queue",
-          status: "failed",
-          entityType: "release",
-          entityId: published.releaseId,
-          releaseId: published.releaseId,
-          error,
-        });
-      }
+
       return published;
     } catch (error) {
       await span?.fail(error);
@@ -424,23 +357,7 @@ export class ReleaseService {
     }
   }
 
-  /**
-   * 对当前发布通道跑一次检索 eval（发布后验证用）。eval 未启用、无黄金集或
-   * 未注入 retrievalEvalGate（测试环境）时返回 null，调用方应视为「无需验证」。
-   */
-  async runRetrievalEval(projectId = "default_project"): Promise<NonNullable<AutoPublishCheck["retrievalEval"]> | null> {
-    const governance = await this.governanceProfileService.resolve(projectId);
-    if (!governance.eval.enabled || !governance.eval.blockOnRegression || !this.retrievalEvalGate) return null;
-    const summary = await this.retrievalEvalGate({ projectId, goldPath: governance.eval.goldPath });
-    if (!summary || summary.total === 0) return null;
-    return {
-      ...summary,
-      minHitAtK: governance.eval.minHitAtK,
-      minCitationCoverage: governance.eval.minCitationCoverage,
-    };
-  }
-
-  async deleteRelease(releaseId: string, requestedBy: string): Promise<ReleaseRecord> {
+    async deleteRelease(releaseId: string, requestedBy: string): Promise<ReleaseRecord> {
     const span = this.diagnostics?.startSpan({
       category: "release",
       message: "delete release",
@@ -647,7 +564,11 @@ export class ReleaseService {
     return tasks.filter((t) => !trusted.has(`${t.component_id}::${t.rule_id}`));
   }
 
-  private async buildAutoPublishCheck(
+  /**
+   * 精简平台：发布不再做治理资格判定（治理/飞轮/lint/评测已移除）。
+   * 保留 changed/quality 回归信息写入 manifest 供追溯。
+   */
+  private buildAutoPublishCheck(
     release: ReleaseRecord,
     parentRelease: ReleaseRecord | null,
     revision: ReleaseRevision,
@@ -655,102 +576,16 @@ export class ReleaseService {
     autoMode: boolean,
     pendingSourceCorrections: PendingSourceCorrection[],
     qualityGate: Record<string, unknown>,
-  ): Promise<AutoPublishCheck> {
-    const governance = await this.governanceProfileService.resolve(release.projectId);
-    const changedComponentIds = uniqueSorted([...revision.diff.componentIds.added, ...revision.diff.changedComponents]);
-    const reasons: string[] = [];
-    if (!parentRelease || !release.parentReleaseId) reasons.push("missing_parent_release");
-    if (governance.release.blockOnDeletes && revision.diff.componentIds.removed.length > 0) {
-      reasons.push("removed_components_present");
-    }
-    if (changedComponentIds.length === 0) reasons.push("no_component_changes");
-
-    const blockingTasksRaw = await this.findOpenBlockingTasksForComponents(changedComponentIds);
-    const blockingTasks = await this.filterAutoFixedInheritedBlocking(blockingTasksRaw);
-    if (blockingTasks.length > 0) reasons.push("changed_components_have_blocking_tasks");
-
-    const trustDeclines = trustDeclinesAgainstParent(parentRelease, components, changedComponentIds);
-    if (governance.release.blockOnTrustDecline && trustDeclines.length > 0) {
-      reasons.push("trust_score_declined_or_missing");
-    }
-    if (governance.release.blockOnPendingCorrections && pendingSourceCorrections.length > 0) {
-      reasons.push("has_pending_review_corrections");
-    }
-    const belowMinTrust = changedComponentsBelowMinTrust(
-      components,
-      changedComponentIds,
-      governance.trust.minAutoPublishScore,
-    );
-    if (belowMinTrust.length > 0) reasons.push("changed_components_below_min_trust_score");
-    // 发布级质量回归门禁：quality_gate（含未变更组件）对比父发布，任一恶化即挡。
-    // 这是「知识质量只升不降」的硬保障：averageScore 下降或 blockingCount 上升都算回归。
-    const qualityRegressions = qualityRegressedAgainstParent(parentRelease, qualityGate);
-    if (governance.release.blockOnQualityRegression && qualityRegressions.length > 0) {
-      reasons.push("quality_regressed");
-    }
-    const lintRemediation = await createLintRemediationService(this.db).summary(release.projectId);
-    if (lintRemediation.pending > 0 || lintRemediation.failed > 0 || lintRemediation.needsHuman > 0) {
-      reasons.push("knowledge_lint_remediation_unresolved");
-    }
-
-    let retrievalEval: AutoPublishCheck["retrievalEval"] = null;
-    // 检索黄金集回归闸只作用于自动发布（autoMode）：手动发布由发布者人工把关，
-    // 不为此承担全量黄金集检索成本。
-    if (autoMode && governance.eval.enabled && governance.eval.blockOnRegression && this.retrievalEvalGate) {
-      const summary = await this.retrievalEvalGate({
-        projectId: release.projectId,
-        goldPath: governance.eval.goldPath,
-      });
-      if (summary && summary.total > 0) {
-        retrievalEval = {
-          ...summary,
-          minHitAtK: governance.eval.minHitAtK,
-          minCitationCoverage: governance.eval.minCitationCoverage,
-        };
-        if (summary.hitAtK + 1e-9 < governance.eval.minHitAtK) {
-          reasons.push("retrieval_eval_regression");
-        } else if (
-          governance.eval.minCitationCoverage > 0
-          && summary.citationCoverage + 1e-9 < governance.eval.minCitationCoverage
-        ) {
-          reasons.push("retrieval_eval_regression");
-        }
-        // golden↔release 绑定不一致（golden 过时，EV-027 机制性护栏）→ 拦截自动发布
-        if (summary.binding && !summary.binding.ok) {
-          reasons.push("retrieval_gold_binding_mismatch");
-        }
-      }
-    }
-
-    const details = buildAutoPublishReasonDetails({
-      reasons,
-      revision,
-      changedComponentIds,
-      blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
-      trustDeclines,
-      pendingSourceCorrections,
-      lintRemediation,
-      belowMinTrust,
-      minAutoPublishScore: governance.trust.minAutoPublishScore,
-      retrievalEval,
-      qualityRegressions,
-    });
-
+  ): AutoPublishCheck {
+    void release; void parentRelease; void revision; void components; void qualityGate;
     return {
-      eligible: reasons.length === 0,
+      eligible: true,
       mode: autoMode ? "auto" : "manual",
-      reasons,
-      reasonDetails: details,
-      changedComponentIds,
-      blockingTaskIds: blockingTasks.map((task) => String(task.task_id)),
-      trustDeclines,
+      changedComponentIds: uniqueSorted([...revision.diff.componentIds.added, ...revision.diff.changedComponents]),
       pendingSourceCorrections,
-      lintRemediation,
-      retrievalEval,
-      qualityRegressions,
+      qualityRegressions: qualityRegressedAgainstParent(parentRelease, qualityGate),
     };
   }
-
   private async loadPendingSourceCorrections(packages: AssetPackage[]): Promise<PendingSourceCorrection[]> {
     const versionIds = uniqueSorted(packages.flatMap((pkg) => pkg.sourceVersionIds));
     if (versionIds.length === 0) return [];
@@ -1022,166 +857,7 @@ function buildManifest(input: {
   };
 }
 
-function buildAutoPublishReasonDetails(input: {
-  reasons: string[];
-  revision: ReleaseRevision;
-  changedComponentIds: string[];
-  blockingTaskIds: string[];
-  trustDeclines: Array<{ componentId: string; previousScore: number | null; nextScore: number | null }>;
-  pendingSourceCorrections: PendingSourceCorrection[];
-  lintRemediation: LintRemediationSummary;
-  belowMinTrust?: Array<{ componentId: string; score: number | null }>;
-  minAutoPublishScore?: number;
-  retrievalEval?: AutoPublishCheck["retrievalEval"];
-  qualityRegressions?: string[];
-}): AutoPublishReasonDetail[] {
-  return input.reasons.map((reason) => {
-    switch (reason) {
-      case "missing_parent_release":
-        return {
-          code: reason,
-          label: "缺少可比较的发布基线",
-          severity: "blocking",
-          description: "自动发布只处理基于当前版本的小修订；首次发布或没有 parent release 时，系统无法判断本次变化是否安全。",
-          action: "先由管理员手动发布一个基线版本，后续增量 revision 才能进入自动发布判断。",
-          count: input.revision.parentReleaseId ? 0 : 1,
-          sampleIds: input.revision.parentReleaseId ? [input.revision.parentReleaseId] : [],
-        };
-      case "removed_components_present":
-        return {
-          code: reason,
-          label: "本次变更包含组件删除",
-          severity: "blocking",
-          description: "组件删除会直接影响 Agent 可检索的知识范围，不能由自动发布静默完成。",
-          action: "确认这些知识确实应该下线后，改用手动发布；如果是增量构建误删，需要重新构建完整或正确的目标范围。",
-          count: input.revision.diff.componentIds.removed.length,
-          sampleIds: input.revision.diff.componentIds.removed.slice(0, 8),
-        };
-      case "no_component_changes":
-        return {
-          code: reason,
-          label: "没有检测到可发布的组件变化",
-          severity: "info",
-          description: "与父发布相比，没有新增或正文变化的组件，自动发布不会制造一个空 revision。",
-          action: "通常不需要处理；如果你预期有变化，回到构建页确认增量目标是否命中了正确资料。",
-          count: input.changedComponentIds.length,
-          sampleIds: [],
-        };
-      case "changed_components_have_blocking_tasks":
-        return {
-          code: reason,
-          label: "变更组件仍有阻断任务",
-          severity: "blocking",
-          description: "至少一个本次新增或修改的组件还有 open blocking 审核任务，发布后会把未解决问题暴露给 Agent。",
-          action: "进入异常收件箱处理这些 blocking 任务，或确认规则不适用后再重新发布。",
-          count: input.blockingTaskIds.length,
-          sampleIds: input.blockingTaskIds.slice(0, 8),
-        };
-      case "trust_score_declined_or_missing":
-        return {
-          code: reason,
-          label: "可信度下降或缺失",
-          severity: "blocking",
-          description: "变更组件相对父发布的可信度降低，或无法计算可信度；自动发布要求变更不能降低 Agent 消费质量。",
-          action: "查看资产组件的可信度明细，优先补证据、完成标注复核，或修正导致低分的来源覆盖。",
-          count: input.trustDeclines.length,
-          sampleIds: input.trustDeclines.map((item) => `${item.componentId} ${formatScore(item.previousScore)}→${formatScore(item.nextScore)}`).slice(0, 8),
-        };
-      case "changed_components_below_min_trust_score":
-        return {
-          code: reason,
-          label: "变更组件可信度低于自动发布门槛",
-          severity: "blocking",
-          description: `项目治理要求变更组件可信度不低于 ${Math.round((input.minAutoPublishScore ?? 0) * 100)}%，当前有组件未达标。`,
-          action: "补证据或完成复核以提升可信度，或由管理员下调项目 minAutoPublishScore 后再自动发布。",
-          count: (input.belowMinTrust ?? []).length,
-          sampleIds: (input.belowMinTrust ?? [])
-            .map((item) => `${item.componentId} ${formatScore(item.score)}`)
-            .slice(0, 8),
-        };
-      case "has_pending_review_corrections":
-        return {
-          code: reason,
-          label: "存在待复核的确定性源覆盖",
-          severity: "warning",
-          description: "本次发布仍携带人工回写的源覆盖，但这些覆盖还没有随最新资料变化完成复核。",
-          action: "在策划立法/审核链路中确认这些源覆盖仍然有效，或退役过期覆盖后重新构建。",
-          count: input.pendingSourceCorrections.length,
-          sampleIds: input.pendingSourceCorrections.map((item) => `${item.sourcePath} · ${item.factKey || item.ruleId}`).slice(0, 8),
-        };
-      case "knowledge_lint_remediation_unresolved":
-        return {
-          code: reason,
-          label: "Knowledge Lint 治理未完成",
-          severity: input.lintRemediation.failed > 0 || input.lintRemediation.needsHuman > 0 ? "blocking" : "warning",
-          description: "当前项目还有自动治理中的 Lint 问题，或存在需要人工判断/失败的治理项；自动发布需要先让治理队列收敛。",
-          action: "在异常收件箱查看 Knowledge Lint 自动治理链路；等待 running 完成，处理 failed/needs_human 后再发布。",
-          count: input.lintRemediation.pending + input.lintRemediation.failed + input.lintRemediation.needsHuman,
-          sampleIds: [
-            `running=${input.lintRemediation.byStatus.running}`,
-            `pending=${input.lintRemediation.byStatus.pending}`,
-            `failed=${input.lintRemediation.failed}`,
-            `needs_human=${input.lintRemediation.needsHuman}`,
-          ].filter((item) => !item.endsWith("=0")),
-        };
-      case "retrieval_eval_regression":
-        return {
-          code: reason,
-          label: "检索黄金集回归未通过",
-          severity: "blocking",
-          description: `当前发布通道上的检索评测 hit@k=${formatScore(input.retrievalEval?.hitAtK ?? null)}（门槛 ${formatScore(input.retrievalEval?.minHitAtK ?? null)}），citation=${formatScore(input.retrievalEval?.citationCoverage ?? null)}。自动发布拒绝质量回退。`,
-          action: "修复检索命中/证据覆盖后重跑评测，或由管理员下调治理 Profile.eval 门槛后重试。",
-          count: input.retrievalEval?.total ?? 0,
-          sampleIds: [
-            `hitAtK=${formatScore(input.retrievalEval?.hitAtK ?? null)}`,
-            `citation=${formatScore(input.retrievalEval?.citationCoverage ?? null)}`,
-            `trustPass=${formatScore(input.retrievalEval?.trustPassRate ?? null)}`,
-          ],
-        };
-      case "retrieval_gold_binding_mismatch":
-        return {
-          code: reason,
-          label: "黄金集与当前发布绑定不一致（golden 过时）",
-          severity: "blocking",
-          description: `golden 集绑定的 kbReleaseId=${input.retrievalEval?.binding?.boundReleaseId ?? "?"}，当前发布通道为 ${input.retrievalEval?.binding?.currentReleaseId ?? "?"}。黄金期望未随数据更新（EV-027 类），禁止以过时黄金集放行自动发布。`,
-          action: "运行 scripts/check-retrieval-gold-binding.ts 核对期望值一致性；确认数据变更后以 --bind 更新 golden 的 kbReleaseId 并重跑 audit_evals.py。",
-          count: 1,
-          sampleIds: [
-            `bound=${input.retrievalEval?.binding?.boundReleaseId ?? ""}`,
-            `current=${input.retrievalEval?.binding?.currentReleaseId ?? ""}`,
-          ],
-        };
-      case "quality_regressed":
-        return {
-          code: reason,
-          label: "发布级质量回归",
-          severity: "blocking",
-          description: "本次发布相对父发布的质量快照（quality_gate，覆盖全部组件）出现恶化；自动发布保证知识质量只升不降。",
-          action: "检查质量回归明细（averageScore 下降 / blockingCount 上升）对应的构建内容，修复后重新构建发布。",
-          count: input.qualityRegressions?.length ?? 0,
-          sampleIds: (input.qualityRegressions ?? []).slice(0, 8),
-        };
-      default:
-        return {
-          code: reason,
-          label: reason,
-          severity: "warning",
-          description: "系统返回了未登记的自动发布约束。",
-          action: "查看关联构建、资产包和审核任务后决定是否手动发布。",
-          count: 0,
-          sampleIds: [],
-        };
-    }
-  });
-}
 
-/**
- * 发布级质量回归检测：对比父发布的 quality_gate（summarizePackages 产物，
- * 覆盖**全部**组件——含未变更组件）。
- * - averageScore 下降超过容差（吸收浮点噪声）→ 回归
- * - blockingCount 上升 → 回归
- * 父发布无质量快照（空对象/缺字段）时不做比较，返回空数组。
- */
 const QUALITY_REGRESSION_SCORE_TOLERANCE = 0.005;
 
 function qualityRegressedAgainstParent(parentRelease: ReleaseRecord | null, next: Record<string, unknown>): string[] {

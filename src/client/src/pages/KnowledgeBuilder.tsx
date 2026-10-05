@@ -21,7 +21,6 @@ import {
 import { Badge, Page, Tabs, type TabItem } from "../components/Atoms";
 import { BuildLogConsole } from "../components/BuildLogConsole";
 import { BuildRunCard, type BuildReleaseAutomation } from "../components/BuildRunCard";
-import { LintRemediationPanel } from "../components/LintRemediationPanel";
 import { WorkbenchStrip } from "../components/WorkbenchStrip";
 import { useWorkbench } from "../hooks/useWorkbench";
 import { useNav } from "../ui/navigation";
@@ -278,8 +277,8 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
         const retest = wb.retestItems[0];
         const release = wb.publishItems[0];
         const actions: Array<{ label: string; onClick: () => void }> = [];
-        if (annotation) actions.push({ label: "处理标注", onClick: () => navigate("review", { taskId: annotation.taskId }) });
-        if (!annotation && retest) actions.push({ label: "复测反馈", onClick: () => navigate("agent", { query: retest.query }) });
+        if (annotation) actions.push({ label: "处理标注", onClick: () => navigate("buildrelease", { taskId: annotation.taskId }) });
+        if (!annotation && retest) actions.push({ label: "复测反馈", onClick: () => navigate("buildrelease", { query: retest.query }) });
         if (!annotation && !retest && release) actions.push({ label: "检查发布", onClick: () => navigate("buildrelease", { releaseId: release.releaseId }) });
         return (
           <WorkbenchStrip
@@ -440,15 +439,6 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                 <RefreshCw size={16} />
               </button>
             </div>
-            <LintRemediationPanel
-              projectId={currentProjectId}
-              compact
-              title="自动治理触发的构建"
-              onShowBuild={(runId) => {
-                setActiveRunId(runId);
-                setTab("runs");
-              }}
-            />
             <div className="run-list">
               {selectedRuns.length === 0 && <p>暂无构建记录。</p>}
               {selectedRuns.map((run) => (
@@ -460,7 +450,7 @@ export function KnowledgeBuilder({ onShowPackage }: { onShowPackage: (packageId:
                   onDelete={() => deleteRunMutation.mutate(run.runId)}
                   onShowPackage={onShowPackage}
                   onShowRelease={(releaseId, eventId) => navigate("buildrelease", { releaseId, eventId })}
-                  onShowReview={(taskId, packageId) => navigate("review", { severity: "blocking", packageId: packageId ?? run.packageId ?? undefined, taskId })}
+                  onShowReview={(taskId, packageId) => navigate("buildrelease", { severity: "blocking", packageId: packageId ?? run.packageId ?? undefined, taskId })}
                   busy={stopRunMutation.isPending || deleteRunMutation.isPending}
                 />
               ))}

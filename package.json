@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch src/server/index.ts",
     "dev:web": "vite --host 0.0.0.0",
-    "build": "tsc -p tsconfig.json && vite build",
+    "build": "tsc -p tsconfig.json && VITE_APP_BASE=/kb/ vite build",
     "start": "tsx src/server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -24,7 +24,8 @@
     "eval:gold:binding": "tsx scripts/check-retrieval-gold-binding.ts",
     "eval:retrieval:paraphrase": "tsx scripts/eval-retrieval.ts --compare-v1-v2 --gold evals/retrieval-paraphrase.json",
     "eval:paraphrase:check": "tsx scripts/check-paraphrase-set.ts",
-    "okf:dense:v2": "tsx scripts/build-dense-v2.mts"
+    "okf:dense:v2": "tsx scripts/build-dense-v2.mts",
+    "build:root": "tsc -p tsconfig.json && vite build"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",

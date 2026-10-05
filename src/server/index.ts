@@ -21,8 +21,6 @@ const app = await buildApp({
   db,
   jwtSecret: config.jwtSecret,
   dataDir,
-  enableSourceIngestAutomation: config.autoBuildOnUpload,
-  enableHealthSweep: true,
 });
 
 const clientDist = join(root, "dist", "client");

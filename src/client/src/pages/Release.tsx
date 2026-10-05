@@ -154,7 +154,7 @@ export function Release() {
         const blocking = wb.riskItems.filter((item) => item.label === "阻断").length;
         const actions: Array<{ label: string; onClick: () => void }> = [];
         if (firstDraft) actions.push({ label: "定位待发布", onClick: () => { setTab("current"); navigate("buildrelease", { releaseId: firstDraft.releaseId }); } });
-        if (blocking > 0) actions.push({ label: "处理阻断", onClick: () => navigate("review") });
+        if (blocking > 0) actions.push({ label: "处理阻断", onClick: () => navigate("buildrelease") });
         if (actions.length === 0) return null;
         return (
           <WorkbenchStrip
@@ -285,7 +285,7 @@ export function Release() {
           <AutoPublishEventsPanel
             events={autoPublishEvents}
             focusedEventId={params.eventId}
-            onNavigateReview={() => navigate("review")}
+            onNavigateReview={() => navigate("buildrelease")}
             onNavigateBuilder={() => navigate("buildrelease")}
             onNavigateAssets={(packageId) => navigate("assets", { packageId })}
           />

@@ -5,10 +5,7 @@ export type View =
   | "dashboard"
   | "sources"
   | "buildrelease"
-  | "rules"
   | "assets"
-  | "review"
-  | "agent"
   | "system";
 
 export interface NavParams {

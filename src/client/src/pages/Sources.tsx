@@ -6,7 +6,7 @@ import {
   browseLocalFiles,
   getBundleBuildPlan,
   getBundleVersion,
-  getFlywheelStatus,
+  getDashboard,
   getSourceFilePreview,
   getSourceVersionPreview,
   importSourceBundle,
@@ -144,7 +144,7 @@ export function Sources() {
   return (
     <Page
       title={isSimple ? "上传资料" : "资料库"}
-      subtitle={isSimple ? "上传文档或配表作为兜底导入；日常请优先走 SVN 同步。" : "批量导入 gamedata/ 与 gamedocs/，按内容哈希去重并按时间生成版本。"}
+      subtitle={isSimple ? "上传文档或配表，按内容哈希去重并按时间生成版本。" : "批量导入 gamedata/ 与 gamedocs/，按内容哈希去重并按时间生成版本。"}
     >
       <p className="context-line">当前项目：{currentProject?.name ?? currentProjectId}</p>
       <Tabs items={tabs} active={tab} onChange={setTab} />
@@ -470,43 +470,29 @@ interface PipelineStep {
 }
 
 /**
- * 上传后的实时流水线状态条：把飞轮的粗粒度状态映射成
- * 「构建 → 治理 → 发布」三步的可视进度，构建中自动轮询。
+ * 上传后的流水线状态条：展示当前发布版本与阻塞任务数（数据来自 dashboard 汇总）。
  */
 function PipelineStatusStrip({ projectId }: { projectId: string }) {
-  const statusQuery = useQuery({
-    queryKey: ["flywheel", "status", projectId],
-    queryFn: () => getFlywheelStatus(projectId),
-    refetchInterval: (query) => {
-      const state = query.state.data?.state;
-      return state === "building" || state === "source_changed" ? 3000 : false;
-    },
+  const dashQuery = useQuery({
+    queryKey: ["dashboard", projectId],
+    queryFn: () => getDashboard(projectId),
+    refetchInterval: 10000,
   });
-  const status = statusQuery.data;
-  if (!status) return null;
-
-  const steps = derivePipelineSteps(status);
-  const building = status.state === "building" || status.metrics.runningBuilds > 0;
-  const version = status.metrics.currentReleaseVersion;
+  const dash = dashQuery.data;
+  if (!dash) return null;
+  const version = dash.release.current?.version;
+  const blocking = dash.review.blocking;
 
   return (
-    <section className={`pipeline-strip ${status.state}`}>
+    <section className="pipeline-strip ok">
       <div className="pipeline-strip-head">
-        {building ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
+        {blocking > 0 ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
         <div>
-          <strong>{status.headline}</strong>
-          <p>{status.summary}</p>
+          <strong>{blocking > 0 ? `有 ${blocking} 个阻塞级待处理` : "知识库状态正常"}</strong>
+          <p>组件 {dash.components.total} · 知识包 {dash.packages.total} · Agent 近期查询 {dash.agent.recentQueries}</p>
         </div>
         {version && <span className="pipeline-strip-version">当前发布 {version}</span>}
       </div>
-      <ol className="pipeline-steps">
-        {steps.map((step) => (
-          <li key={step.key} className={`pipeline-step ${step.state}`}>
-            <PipelineStepIcon state={step.state} />
-            <span>{step.label}</span>
-          </li>
-        ))}
-      </ol>
     </section>
   );
 }

@@ -3,15 +3,10 @@ import type { FastifyInstance } from "fastify";
 import type { DatabaseHandle } from "../types";
 import type { DiagnosticLogger } from "../services/diagnosticService";
 import type { KnowledgeService } from "../services/knowledgeService";
-import type { FlywheelService } from "../services/flywheelService";
-import type { LintRemediationService } from "../services/lintRemediationService";
-import type { GovernanceProfileService } from "../services/governanceProfileService";
 import type { SourceBundleService } from "../services/sourceBundleService";
 import type { KbBuilderPipelineService } from "../services/kbBuilderService";
 import type { ReleaseService } from "../services/releaseService";
 import type { KnowledgeQueryService } from "../services/knowledgeQueryService";
-import type { LegislationService } from "../services/legislationService";
-import type { AttributionAuditService } from "../services/attributionAuditService";
 import type { StorageMaintenanceService } from "../services/storageMaintenanceService";
 import type { ProjectService } from "../services/projectService";
 
@@ -20,15 +15,10 @@ export interface RouteContext {
   dataDir: string;
   diagnostics: DiagnosticLogger;
   service: KnowledgeService;
-  flywheelService: FlywheelService;
-  lintRemediationService: LintRemediationService;
-  governanceProfileService: GovernanceProfileService;
   bundleService: SourceBundleService;
   kbBuilderService: KbBuilderPipelineService;
   releaseService: ReleaseService;
   queryService: KnowledgeQueryService;
-  legislationService: LegislationService;
-  attributionAuditService: AttributionAuditService;
   storageService: StorageMaintenanceService;
   projectService: ProjectService;
 }
