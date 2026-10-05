@@ -74,7 +74,7 @@ describe("KbBuilderPipelineService", () => {
         bundleId: "default",
         versionId: imported.version.versionId,
         requestedBy: "admin",
-        stages: ["convert", "extract", "tables", "graph", "viz"],
+        stages: ["convert", "extract", "tables"],
         model: "deterministic",
         force: false,
         only: null,

@@ -27,8 +27,6 @@ import { loadWikiSpecs } from "./kbBuilder/specs";
 import { runConvertStage } from "./kbBuilder/convertStage";
 import { runExtractStage, type ExtractedPage, type FrozenExtractPage, type PendingUnfrozenCorrection, type PromptAnnotationExample } from "./kbBuilder/extractStage";
 import { runTableStage } from "./kbBuilder/tableStage";
-import { runGraphStage } from "./kbBuilder/graphStage";
-import { runVizStage } from "./kbBuilder/vizStage";
 import { evaluateQualityGate, type QualityRuleDismissal } from "./kbBuilder/qualityGate";
 import { collectPipelineArtifacts } from "./kbBuilder/collector";
 import { enrichFindings, fallbackEnrichment, type EnrichedFinding } from "./kbBuilder/findingEnrichment";
@@ -49,7 +47,7 @@ function shanghaiStamp(): string {
   return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().replace(/[-:.TZ]/g, "");
 }
 
-const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables", "graph", "viz"];
+const STAGE_ORDER: PipelineStage[] = ["convert", "extract", "tables"];
 const TRACKED_STAGES: ReadonlySet<string> = new Set<string>(STAGE_ORDER);
 const AUTO_EVIDENCE_COMPONENT_KINDS = new Set(["wiki_page"]);
 
@@ -300,9 +298,7 @@ export class KbBuilderPipelineService {
         removedPaths: context.sourceChanges.filter((change) => change.kind === "removed").map((change) => change.logicalPath),
       }));
       await this.ensureRunActive(runId);
-      if (stages.includes("graph")) await this.withStage(runId, options, "graph", async () => runGraphStage({ dataDir: workspace.dataDir, rules: ruleProfile.config }));
       await this.ensureRunActive(runId);
-      if (stages.includes("viz")) await this.withStage(runId, options, "viz", async () => runVizStage({ dataDir: workspace.dataDir }));
       await this.ensureRunActive(runId);
 
       const sourceLogicalPaths = new Set(workspace.files.map((file) => file.logicalPath));

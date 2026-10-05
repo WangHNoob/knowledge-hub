@@ -27,7 +27,7 @@ import { useNav } from "../ui/navigation";
 import { useProject } from "../ui/projectContext";
 import { parseAutoPublishReasons } from "../utils/automation";
 
-const BUILD_STAGES = ["convert", "extract", "tables", "graph", "viz"];
+const BUILD_STAGES = ["convert", "extract", "tables"];
 const MODEL_PREFS_KEY = "kh_builder_model_prefs";
 type ModelProvider = "deterministic" | "openai-compatible" | "anthropic";
 type BuilderTab = "build" | "advanced" | "runs";

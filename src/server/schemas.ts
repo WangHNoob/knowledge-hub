@@ -87,7 +87,7 @@ export const importBundleSchema = z.object({
   autoSync: z.boolean().optional()
 });
 
-export const pipelineStageSchema = z.enum(["convert", "extract", "tables", "graph", "viz"]);
+export const pipelineStageSchema = z.enum(["convert", "extract", "tables"]);
 
 export const modelConfigSchema = z.discriminatedUnion("provider", [
   z.object({
@@ -109,7 +109,7 @@ export const modelConfigSchema = z.discriminatedUnion("provider", [
 ]);
 
 export const buildRequestSchema = z.object({
-  stages: z.array(pipelineStageSchema).min(1).default(["convert", "extract", "tables", "graph", "viz"]),
+  stages: z.array(pipelineStageSchema).min(1).default(["convert", "extract", "tables"]),
   model: z.string().min(1).default("deterministic"),
   modelConfig: modelConfigSchema.optional(),
   force: z.boolean().default(false),

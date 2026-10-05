@@ -968,7 +968,7 @@ export interface DiagnosticSummary {
   llmErrors24h: number;
 }
 
-export type PipelineStage = "convert" | "extract" | "tables" | "graph" | "viz";
+export type PipelineStage = "convert" | "extract" | "tables";
 export type BuildRunStatus = "running" | "completed" | "failed";
 export type QualitySeverity = "blocking" | "warning" | "info";
 
